@@ -1,0 +1,14 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    # Supabase runs separately via `supabase start` on the host.
+    # DATABASE_URL in .env should point to host.docker.internal (Mac/Win)
+    # or the gateway IP (Linux) instead of 127.0.0.1.
+    # Example: postgresql://postgres:postgres@host.docker.internal:54322/postgres
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
