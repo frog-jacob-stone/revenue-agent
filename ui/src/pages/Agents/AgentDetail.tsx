@@ -1,7 +1,10 @@
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate, NavLink } from 'react-router-dom';
 import { Play, ToggleLeft, ToggleRight, Clock, CheckCircle2, XCircle } from 'lucide-react';
 import { AGENTS, AUDIT_ENTRIES, APPROVAL_ITEMS } from '../../mocks';
 import type { AgentId } from '../../mocks';
+import { listAgents } from '../../api';
+import type { AgentRecord } from '../../types';
 import StatusChip from '../../components/shared/StatusChip';
 import ActionTypeChip from '../../components/shared/ActionTypeChip';
 import StubBadge from '../../components/shared/StubBadge';
@@ -11,6 +14,15 @@ import ContentWriterConfig from './config-panels/ContentWriter';
 import ProposalGeneratorConfig from './config-panels/ProposalGenerator';
 import SlideDeckAgentConfig from './config-panels/SlideDeckAgent';
 import RevenueRecognitionConfig from './config-panels/RevenueRecognition';
+
+const AGENT_COLORS: Record<string, string> = {
+  'sdr-researcher': '#6366f1',
+  'outreach-agent': '#06b6d4',
+  'content-writer': '#10b981',
+  'proposal-generator': '#f59e0b',
+  'slide-deck-agent': '#ec4899',
+  'revenue-recognition': '#8b5cf6',
+};
 
 const CONFIG_PANELS: Record<AgentId, React.ComponentType> = {
   'sdr-researcher': SDRResearcherConfig,
@@ -28,6 +40,12 @@ function fmt(iso: string) {
 export default function AgentDetail() {
   const { agentId } = useParams<{ agentId: string }>();
   const navigate = useNavigate();
+  const [sidebarAgents, setSidebarAgents] = useState<AgentRecord[]>([]);
+
+  useEffect(() => {
+    listAgents().then(setSidebarAgents).catch(() => {});
+  }, []);
+
   const agent = AGENTS.find((a) => a.id === agentId);
 
   if (!agent) {
@@ -46,17 +64,17 @@ export default function AgentDetail() {
     <div className="flex h-full">
       {/* Agent sidebar nav */}
       <aside className="w-44 flex-shrink-0 border-r border-slate-800 py-4 px-2 space-y-0.5">
-        {AGENTS.map((a) => (
+        {sidebarAgents.map((a) => (
           <NavLink
             key={a.id}
-            to={`/agents/${a.id}`}
+            to={`/agents/${a.slug}`}
             className={({ isActive }) =>
               `flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
                 isActive ? 'bg-slate-800 text-slate-100' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
               }`
             }
           >
-            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: a.color }} />
+            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: AGENT_COLORS[a.slug] ?? '#64748b' }} />
             <span className="truncate">{a.name}</span>
           </NavLink>
         ))}

@@ -40,3 +40,19 @@ export interface Action {
 }
 
 export type NavTab = 'pending' | 'approved' | 'rejected' | 'all';
+
+export interface AgentRecord {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  requires_approval: boolean;
+  is_active: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface TriggerResult {
+  workflow_id: string;
+  proposals: number;
+}

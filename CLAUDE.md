@@ -1,19 +1,11 @@
 # CLAUDE.md — Revenue Agent System
 
-This file is loaded automatically by Claude Code at the start of every session.
-Read it before doing anything else.
+AI-powered revenue operations for Frogslayer. Agents replace an entire revenue team —
+this is operational infrastructure, not a personal assistant.
 
-## What This Repo Is
+Docs: `docs/STACK.md` (sprint status) · `docs/SCHEMA.md` (database) · `docs/AGENTS.md` (agents)
 
-An AI-powered revenue operations system for Frogslayer. Agents handle the work of an
-entire revenue team (SDR research, outreach, proposals, content, revenue recognition).
-This is not a personal assistant — it is operational infrastructure.
-
-Full context: `docs/STACK.md`
-Database schema: `docs/SCHEMA.md`
-Agent definitions: `docs/AGENTS.md` (once created)
-
-## Stack at a Glance
+## Stack
 
 | Layer | Tool |
 |---|---|
@@ -22,31 +14,14 @@ Agent definitions: `docs/AGENTS.md` (once created)
 | Database | Supabase (Postgres + pgvector) |
 | Secrets | Doppler (`doppler run -- uvicorn ...`) |
 | Runtime | Docker Compose locally |
-| Integrations | n8n → FastAPI (n8n triggers only, no business logic) |
-
-## Project Structure
-
-```
-app/
-  main.py            # FastAPI app, router mounts, lifespan
-  config.py          # Settings via pydantic-settings (reads from env/Doppler)
-  db.py              # Async Postgres connection pool
-  models/            # Pydantic v2 request/response models
-  routers/           # One file per resource (workflows, actions, agents, memories)
-  agents/            # Agent implementations (base.py + one file per agent)
-  services/          # Business logic: audit.py, approval.py, execution.py
-  integrations/      # External API clients: hubspot.py, apollo.py, anthropic_client.py
-tests/
-docs/
-supabase/migrations/
-```
+| UI | React + TypeScript + Vite (ui/) |
+| Integrations | n8n → FastAPI (triggers only, no business logic in n8n) |
 
 ## The One Rule That Cannot Be Broken
 
 **No agent may execute a create, update, or delete operation without a prior
 `action.approved` row in the database.**
 
-The flow is always:
 ```
 agent proposes → action row created (status: proposed)
 human approves → action row updated (status: approved)
@@ -58,86 +33,38 @@ Every state transition writes a row to `audit_log`. No exceptions.
 ## Code Conventions
 
 - **Routers contain no business logic.** Routers validate input and call services.
-- **Services contain business logic.** Routers call services, not the other way.
+- **Services contain business logic.** Services never call routers.
 - **Agents propose; the framework executes.** Agents never call HubSpot/Gmail directly.
-- **Pydantic v2 patterns.** Use `model_config`, not `class Config`.
-- **Async everywhere.** All DB calls, all HTTP calls, all agent calls.
 - **Every service function that changes state must call `write_audit_event()`.**
+- **Async everywhere.** All DB, HTTP, and agent calls must be async.
+- **Pydantic v2.** Use `model_config`, not `class Config`.
 
 ## Secrets and Environment
 
-Secrets live in Doppler — never in `.env` files committed to git, never hardcoded.
+Secrets live in Doppler — never in committed `.env` files, never hardcoded.
 
-Secrets live in Doppler — never in `.env` files committed to git, never hardcoded.
-
-For local development without Doppler:
+For local dev without Doppler:
 ```bash
-cp app/.env.example app/.env   # then populate manually from `supabase status`
-cp ui/.env.example ui/.env     # UI public vars (VITE_ prefixed only)
+cp app/.env.example app/.env   # populate from `supabase status`
+cp ui/.env.example ui/.env     # VITE_ prefixed vars only
 ```
 
-Env file layout:
-- `app/.env` — all backend secrets and config (loaded by Docker Compose api service and pytest)
-- `ui/.env` — VITE_ prefixed public vars only (loaded by Vite)
-- Root `.env` — Docker Compose-level overrides only (empty by default)
+## Local Dev
 
-Required vars in `app/.env`:
-- `ANTHROPIC_API_KEY`
-- `SUPABASE_URL` — e.g. `http://host.docker.internal:54321`
-- `SUPABASE_SECRET_KEY` — starts with `sb_secret_`
-- `SUPABASE_PUBLISHABLE_KEY` — starts with `sb_publishable_`
-- `DATABASE_URL` — direct Postgres, e.g. `postgresql://postgres:postgres@host.docker.internal:54322/postgres`
-- `TEST_DATABASE_URL` — points to port 54323 (test DB)
-- `HUBSPOT_TOKEN`
-- `APOLLO_API_KEY`
-- `LOG_LEVEL` — default `INFO`
-- `ALLOWED_ORIGINS` — comma-separated UI origins (e.g. `http://localhost:3000,https://app.railway.app`)
-
-## Local Dev Setup
-
-Supabase runs separately from Docker Compose:
 ```bash
-supabase start                  # start local Supabase
-supabase db reset               # apply all migrations from scratch
-docker compose up               # start FastAPI
-```
-
-To run tests (requires Supabase already running):
-```bash
-pytest                          # or: doppler run -- pytest
+supabase start && supabase db reset   # start Supabase, apply migrations
+docker compose up                     # start FastAPI
+cd ui && npm run dev                  # start UI on localhost:3000
+pytest                                # run tests (Supabase must be running)
 ```
 
 ## Database
 
-- Schema is defined in `supabase/migrations/0001_initial_schema.sql`
-- Reference doc is `docs/SCHEMA.md` — keep them in sync
-- Migrations are applied with `supabase db reset` (local) or `supabase db push` (cloud)
-- Never edit the database by hand — always write a migration
-- RLS is enabled on all tables; permissive `service_role` policy for v1
+- Schema: `supabase/migrations/` — never edit the DB by hand, always write a migration
+- Keep `docs/SCHEMA.md` in sync with migrations
+- RLS enabled on all tables; permissive `service_role` policy for v1
+- **Tests use `TEST_DATABASE_URL` (port 54323), never the real DB (port 54322).** The conftest.py transaction-rollback pattern ensures no test data persists.
 
-## What NOT to Do
+## Build Status
 
-- Do not put business logic in n8n — n8n triggers FastAPI endpoints and nothing more
-- Do not let agents execute CUD operations directly — always go through the action queue
-- Do not store secrets in code, `.env` files in git, or anywhere other than Doppler
-- Do not build agent-specific UI before the shared approval inbox exists
-- Do not use synchronous DB or HTTP calls — this is an async codebase
-- Tests must never run against the real database (port 54322). Tests use TEST_DATABASE_URL pointing to port 54323. The transaction-rollback pattern in conftest.py ensures no test data persists.
-
-## Current Build Status
-
-Check `docs/STACK.md` for the current sprint and what's been completed.
-When you finish a task, update `docs/STACK.md` with what changed.
-
-## Agent Roster
-
-| Agent | Status | Trigger |
-|---|---|---|
-| SDR Researcher | 🔲 Not started | New account in HubSpot / manual |
-| Outreach Agent | 🔲 Not started | SDR Researcher completes |
-| Content Writer | 🔲 Not started | Manual or scheduled |
-| Proposal Generator | 🔲 Not started | Deal stage change in HubSpot |
-| Slide Deck Agent | 🔲 Not started | Proposal Generator completes |
-| Revenue Recognition | 🔲 Not started | Monthly schedule |
-
-Update the status emoji when an agent is in progress (🔄) or complete (✅).
+Check `docs/STACK.md` for current sprint and completed work. Update it when you finish a task.

@@ -1,4 +1,3 @@
-import json
 import logging
 
 from app.agents.registry import AGENT_REGISTRY
@@ -27,8 +26,8 @@ async def seed_agents() -> None:
                 fields["name"],
                 fields["description"],
                 fields["requires_approval"],
-                json.dumps(fields["allowed_tools"]),
-                json.dumps(fields["config"]),
+                fields["allowed_tools"],
+                fields["config"],
             )
             logger.debug("seeded agent: %s", slug)
 

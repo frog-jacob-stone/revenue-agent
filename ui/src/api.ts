@@ -1,4 +1,4 @@
-import type { Action } from './types';
+import type { Action, AgentRecord, TriggerResult } from './types';
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 
@@ -32,5 +32,17 @@ export function rejectAction(id: string, rejectionReason: string): Promise<Actio
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ rejected_by: 'system', rejection_reason: rejectionReason }),
+  });
+}
+
+export function listAgents(): Promise<AgentRecord[]> {
+  return apiFetch<AgentRecord[]>('/agents');
+}
+
+export function triggerAgent(slug: string): Promise<TriggerResult> {
+  return apiFetch<TriggerResult>(`/agents/${slug}/trigger`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initiated_by: 'system', context: {} }),
   });
 }
