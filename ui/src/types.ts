@@ -14,6 +14,7 @@ export type ActionType =
   | 'publish_content'
   | 'generate_document'
   | 'write_rev_rec'
+  | 'configure_rev_rec_projects'
   | 'other';
 
 export type RiskLevel = 'low' | 'medium' | 'high';
@@ -55,4 +56,15 @@ export interface AgentRecord {
 export interface TriggerResult {
   workflow_id: string;
   proposals: number;
+}
+
+export interface WorkflowRecord {
+  id: string;
+  kind: string;
+  status: string;
+  trigger_source: string | null;
+  initiated_by: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
 }

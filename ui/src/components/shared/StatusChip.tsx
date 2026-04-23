@@ -1,7 +1,3 @@
-import type { AgentStatus, AuditOutcome, ApprovalStatus } from '../../mocks';
-
-type Status = AgentStatus | AuditOutcome | ApprovalStatus;
-
 const STYLES: Record<string, string> = {
   idle: 'bg-slate-700 text-slate-300',
   running: 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
@@ -27,7 +23,7 @@ const LABELS: Record<string, string> = {
 };
 
 interface Props {
-  status: Status;
+  status: string;
   size?: 'sm' | 'md';
 }
 

@@ -23,6 +23,7 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
   publish_content: 'publish',
   generate_document: 'gen_doc',
   write_rev_rec: 'rev_rec',
+  configure_rev_rec_projects: 'rev_rec_setup',
   other: 'other',
 };
 

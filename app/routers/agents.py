@@ -36,6 +36,18 @@ async def get_agent(slug: str, pool: asyncpg.Pool = Depends(_db)):
     return Agent.model_validate(dict(row))
 
 
+@router.patch("/{slug}/active", response_model=Agent)
+async def set_agent_active(slug: str, is_active: bool, pool: asyncpg.Pool = Depends(_db)):
+    row = await pool.fetchrow(
+        "UPDATE agents SET is_active = $1 WHERE slug = $2 RETURNING *",
+        is_active,
+        slug,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Agent '{slug}' not found")
+    return Agent.model_validate(dict(row))
+
+
 @router.post("/{slug}/trigger", status_code=202)
 async def trigger_agent(slug: str, body: TriggerRequest):
     try:

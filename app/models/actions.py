@@ -16,6 +16,7 @@ class ActionType(str, Enum):
     publish_content = "publish_content"
     generate_document = "generate_document"
     write_rev_rec = "write_rev_rec"
+    configure_rev_rec_projects = "configure_rev_rec_projects"
     other = "other"
 
 

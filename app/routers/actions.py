@@ -22,15 +22,30 @@ def _row_to_action(row: asyncpg.Record) -> ActionResponse:
 @router.get("", response_model=list[ActionResponse])
 async def list_actions(
     status: str = "proposed",
+    agent_slug: str | None = None,
     pool: asyncpg.Pool = Depends(_db),
 ):
-    if status == "all":
-        rows = await pool.fetch("SELECT * FROM actions ORDER BY created_at DESC")
-    else:
-        rows = await pool.fetch(
-            "SELECT * FROM actions WHERE status::text = $1 ORDER BY created_at DESC",
-            status,
-        )
+    conditions: list[str] = []
+    params: list = []
+
+    if status != "all":
+        params.append(status)
+        conditions.append(f"a.status::text = ${len(params)}")
+
+    if agent_slug:
+        params.append(agent_slug)
+        conditions.append(f"ag.slug = ${len(params)}")
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    rows = await pool.fetch(
+        f"""
+        SELECT a.* FROM actions a
+        JOIN agents ag ON ag.id = a.agent_id
+        {where}
+        ORDER BY a.created_at DESC
+        """,
+        *params,
+    )
     return [_row_to_action(r) for r in rows]
 
 

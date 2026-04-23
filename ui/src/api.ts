@@ -1,4 +1,4 @@
-import type { Action, AgentRecord, TriggerResult } from './types';
+import type { Action, AgentRecord, TriggerResult, WorkflowRecord } from './types';
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 
@@ -39,10 +39,30 @@ export function listAgents(): Promise<AgentRecord[]> {
   return apiFetch<AgentRecord[]>('/agents');
 }
 
+export function getAgent(slug: string): Promise<AgentRecord> {
+  return apiFetch<AgentRecord>(`/agents/${slug}`);
+}
+
+export function setAgentActive(slug: string, isActive: boolean): Promise<AgentRecord> {
+  return apiFetch<AgentRecord>(`/agents/${slug}/active?is_active=${isActive}`, {
+    method: 'PATCH',
+  });
+}
+
 export function triggerAgent(slug: string): Promise<TriggerResult> {
   return apiFetch<TriggerResult>(`/agents/${slug}/trigger`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ initiated_by: 'system', context: {} }),
   });
+}
+
+export function getAgentActions(slug: string, status = 'all'): Promise<Action[]> {
+  return apiFetch<Action[]>(
+    `/actions?agent_slug=${encodeURIComponent(slug)}&status=${encodeURIComponent(status)}`,
+  );
+}
+
+export function getAgentWorkflows(slug: string): Promise<WorkflowRecord[]> {
+  return apiFetch<WorkflowRecord[]>(`/workflows?kind=${encodeURIComponent(slug)}`);
 }

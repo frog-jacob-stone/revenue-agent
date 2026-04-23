@@ -15,6 +15,20 @@ class Settings(BaseSettings):
     apollo_api_key: str = ""
     log_level: str = "INFO"
 
+    # Airtable
+    airtable_api_key: str = ""
+    airtable_base_id: str = ""            # e.g. appntjko6fQEC8Mnk
+    airtable_clients_table_id: str = ""   # e.g. tblk0yEaixNQAd3Ij
+    airtable_projects_table_id: str = ""  # e.g. tblqIWj0OJTUcj0yr
+    airtable_revenue_table_id: str = ""   # e.g. tblxL8zHuKuIgqCew
+
+    # Harvest
+    harvest_token: str = ""
+    harvest_account_id: str = ""          # e.g. 1560653
+
+    # Forecast (uses same bearer token as Harvest)
+    forecast_account_id: str = ""         # e.g. 1967278
+
     # Stored as str so pydantic-settings doesn't try to JSON-decode it.
     # Reads from ALLOWED_ORIGINS env var (comma-separated).
     allowed_origins_raw: str = Field(

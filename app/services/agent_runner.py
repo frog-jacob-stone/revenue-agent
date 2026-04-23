@@ -92,6 +92,25 @@ async def run_agent(
     async with pool.acquire() as conn:
         async with conn.transaction():
             for seq, proposal in enumerate(proposals, start=1):
+                # Cancel any stale proposed actions of the same type + period
+                # so re-triggering doesn't stack up duplicates in the inbox.
+                if proposal["action_type"] == "configure_rev_rec_projects":
+                    date_rec = (proposal.get("proposed_payload") or {}).get("date_recognized")
+                    if date_rec:
+                        await conn.execute(
+                            """
+                            UPDATE actions
+                            SET status = 'rejected',
+                                rejection_reason = 'Superseded by newer run'
+                            WHERE agent_id = $1
+                              AND action_type = 'configure_rev_rec_projects'
+                              AND status = 'proposed'
+                              AND proposed_payload->>'date_recognized' = $2
+                            """,
+                            agent_id,
+                            date_rec,
+                        )
+
                 action_row = await conn.fetchrow(
                     """
                     INSERT INTO actions
