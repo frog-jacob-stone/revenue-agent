@@ -105,6 +105,11 @@ async def propose_action(
             if not workflow:
                 raise HTTPException(status_code=404, detail="Workflow not found")
 
+            agent = await conn.fetchrow("SELECT id FROM agents WHERE slug = $1", body.agent_slug)
+            if not agent:
+                raise HTTPException(status_code=404, detail=f"Agent '{body.agent_slug}' not found")
+            agent_id = agent["id"]
+
             next_seq = await conn.fetchval(
                 "SELECT COALESCE(MAX(sequence), 0) + 1 FROM actions WHERE workflow_id = $1",
                 workflow_id,
@@ -119,7 +124,7 @@ async def propose_action(
                 RETURNING *
                 """,
                 workflow_id,
-                body.agent_id,
+                agent_id,
                 next_seq,
                 body.action_type.value,
                 body.summary,
@@ -130,10 +135,10 @@ async def propose_action(
             await audit.write_audit_event(
                 conn,
                 "action.proposed",
-                agent_id=body.agent_id,
+                agent_id=agent_id,
                 workflow_id=workflow_id,
                 action_id=row["id"],
-                actor=f"system:{body.agent_id}",
+                actor=f"system:{body.agent_slug}",
                 payload={"action_type": body.action_type.value, "summary": body.summary},
             )
     return _row_to_action(row)

@@ -9,7 +9,12 @@ from app.services import audit, execution
 logger = logging.getLogger(__name__)
 
 
-async def approve_action(pool: asyncpg.Pool, action_id: UUID) -> dict:
+async def approve_action(
+    pool: asyncpg.Pool,
+    action_id: UUID,
+    approved_by: str = "system",
+    executed_payload: dict | None = None,
+) -> dict:
     async with pool.acquire() as conn:
         async with conn.transaction():
             action = await conn.fetchrow(
@@ -29,9 +34,10 @@ async def approve_action(pool: asyncpg.Pool, action_id: UUID) -> dict:
             await conn.execute(
                 """
                 UPDATE actions
-                SET status = 'approved', approved_by = 'system', approved_at = now()
-                WHERE id = $1
+                SET status = 'approved', approved_by = $1, approved_at = now()
+                WHERE id = $2
                 """,
+                approved_by,
                 action_id,
             )
             await audit.write_audit_event(
@@ -40,8 +46,8 @@ async def approve_action(pool: asyncpg.Pool, action_id: UUID) -> dict:
                 agent_id=action_dict["agent_id"],
                 workflow_id=action_dict["workflow_id"],
                 action_id=action_id,
-                actor="system",
-                payload={"approved_by": "system"},
+                actor=approved_by,
+                payload={"approved_by": approved_by},
             )
 
             await conn.execute(
@@ -62,7 +68,7 @@ async def approve_action(pool: asyncpg.Pool, action_id: UUID) -> dict:
                 RETURNING *
                 """,
                 result,
-                action_dict["proposed_payload"],
+                executed_payload if executed_payload is not None else action_dict["proposed_payload"],
                 action_id,
             )
             await audit.write_audit_event(

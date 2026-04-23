@@ -77,7 +77,18 @@ Or apply just the migration:
 supabase db push
 ```
 
-### 4. Start the API
+### 4. Start the Approval Inbox UI
+
+```bash
+cd ui
+cp .env.example .env
+npm install
+npm run dev
+```
+
+UI runs at http://localhost:3000. Set `VITE_API_URL` in `ui/.env` if the API is on a different host.
+
+### 5. Start the API
 
 #### With Docker Compose (recommended)
 

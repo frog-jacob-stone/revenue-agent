@@ -1,4 +1,4 @@
-from pydantic import model_validator
+from pydantic import AliasChoices, Field, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +14,18 @@ class Settings(BaseSettings):
     hubspot_token: str = ""
     apollo_api_key: str = ""
     log_level: str = "INFO"
+
+    # Stored as str so pydantic-settings doesn't try to JSON-decode it.
+    # Reads from ALLOWED_ORIGINS env var (comma-separated).
+    allowed_origins_raw: str = Field(
+        "http://localhost:3000,http://127.0.0.1:3000",
+        validation_alias=AliasChoices("ALLOWED_ORIGINS", "allowed_origins_raw"),
+    )
+
+    @computed_field
+    @property
+    def allowed_origins(self) -> list[str]:
+        return [o.strip() for o in self.allowed_origins_raw.split(",") if o.strip()]
 
     @model_validator(mode="after")
     def _guard_test_db(self) -> "Settings":

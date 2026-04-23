@@ -68,20 +68,30 @@ Every state transition writes a row to `audit_log`. No exceptions.
 
 Secrets live in Doppler — never in `.env` files committed to git, never hardcoded.
 
+Secrets live in Doppler — never in `.env` files committed to git, never hardcoded.
+
 For local development without Doppler:
 ```bash
-cp .env.example .env   # then populate manually from `supabase status`
+cp app/.env.example app/.env   # then populate manually from `supabase status`
+cp ui/.env.example ui/.env     # UI public vars (VITE_ prefixed only)
 ```
 
-Required env vars:
+Env file layout:
+- `app/.env` — all backend secrets and config (loaded by Docker Compose api service and pytest)
+- `ui/.env` — VITE_ prefixed public vars only (loaded by Vite)
+- Root `.env` — Docker Compose-level overrides only (empty by default)
+
+Required vars in `app/.env`:
 - `ANTHROPIC_API_KEY`
-- `SUPABASE_URL` — e.g. `http://127.0.0.1:54321`
-- `SUPABASE_SECRET_KEY` — starts with `sb_secret_` (replaces old service_role key)
-- `SUPABASE_PUBLISHABLE_KEY` — starts with `sb_publishable_` (replaces old anon key)
-- `DATABASE_URL` — direct Postgres, e.g. `postgresql://postgres:postgres@127.0.0.1:54322/postgres`
+- `SUPABASE_URL` — e.g. `http://host.docker.internal:54321`
+- `SUPABASE_SECRET_KEY` — starts with `sb_secret_`
+- `SUPABASE_PUBLISHABLE_KEY` — starts with `sb_publishable_`
+- `DATABASE_URL` — direct Postgres, e.g. `postgresql://postgres:postgres@host.docker.internal:54322/postgres`
+- `TEST_DATABASE_URL` — points to port 54323 (test DB)
 - `HUBSPOT_TOKEN`
 - `APOLLO_API_KEY`
-- `LOG_LEVEL` — default `info`
+- `LOG_LEVEL` — default `INFO`
+- `ALLOWED_ORIGINS` — comma-separated UI origins (e.g. `http://localhost:3000,https://app.railway.app`)
 
 ## Local Dev Setup
 

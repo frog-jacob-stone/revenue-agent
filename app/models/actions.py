@@ -35,7 +35,7 @@ class RiskLevel(str, Enum):
 
 
 class ActionCreate(ORMBase):
-    agent_id: UUID
+    agent_slug: str
     action_type: ActionType
     summary: str
     proposed_payload: dict[str, Any]
@@ -43,7 +43,13 @@ class ActionCreate(ORMBase):
     risk_level: RiskLevel | None = None
 
 
+class ActionApprove(ORMBase):
+    approved_by: str = "system"
+    executed_payload: dict[str, Any] | None = None
+
+
 class ActionReject(ORMBase):
+    rejected_by: str = "system"
     rejection_reason: str
 
 
