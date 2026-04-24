@@ -1,8 +1,16 @@
+import { useState, useEffect } from 'react';
 import {
   LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
-import { DAILY_RUNS, APPROVAL_RATES, SUMMARY_STATS, AGENTS } from '../mocks';
+import {
+  DAILY_RUNS as MOCK_DAILY_RUNS,
+  APPROVAL_RATES as MOCK_APPROVAL_RATES,
+  SUMMARY_STATS as MOCK_SUMMARY_STATS,
+  AGENTS,
+} from '../mocks';
+import { getAnalytics } from '../api';
+import type { DailyRunRow, ApprovalRateRow, SummaryStats } from '../api';
 import StubBadge from '../components/shared/StubBadge';
 
 const AGENT_COLORS = Object.fromEntries(AGENTS.map((a) => [a.name, a.color]));
@@ -10,6 +18,20 @@ const AGENT_COLORS = Object.fromEntries(AGENTS.map((a) => [a.name, a.color]));
 const RANGE_OPTS = ['7 days', '30 days', '90 days', 'Custom'] as const;
 
 export default function Analytics() {
+  const [summaryStats, setSummaryStats] = useState<SummaryStats>(MOCK_SUMMARY_STATS);
+  const [dailyRuns, setDailyRuns] = useState<DailyRunRow[]>(MOCK_DAILY_RUNS);
+  const [approvalRates, setApprovalRates] = useState<ApprovalRateRow[]>(MOCK_APPROVAL_RATES);
+
+  useEffect(() => {
+    getAnalytics(30)
+      .then((data) => {
+        setSummaryStats(data.summaryStats);
+        setDailyRuns(data.dailyRuns);
+        setApprovalRates(data.approvalRates);
+      })
+      .catch(() => {});
+  }, []);
+
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
       {/* Header */}
@@ -37,10 +59,10 @@ export default function Analytics() {
       {/* Summary cards */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         {[
-          { label: 'Accounts researched', value: SUMMARY_STATS.accountsResearched },
-          { label: 'Outreach sent', value: SUMMARY_STATS.outreachSent },
-          { label: 'Proposals generated', value: SUMMARY_STATS.proposalsGenerated },
-          { label: 'Approval rate', value: `${SUMMARY_STATS.approvalRate}%` },
+          { label: 'Accounts researched', value: summaryStats.accountsResearched },
+          { label: 'Outreach sent', value: summaryStats.outreachSent },
+          { label: 'Proposals generated', value: summaryStats.proposalsGenerated },
+          { label: 'Approval rate', value: `${summaryStats.approvalRate}%` },
         ].map(({ label, value }) => (
           <div key={label} className="bg-slate-900 border border-slate-800 rounded-xl p-5">
             <p className="text-xs text-slate-500 mb-1">{label}</p>
@@ -53,7 +75,7 @@ export default function Analytics() {
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
         <h2 className="text-sm font-semibold text-slate-300 mb-4">Agent Runs per Day (last 30 days)</h2>
         <ResponsiveContainer width="100%" height={260}>
-          <LineChart data={DAILY_RUNS} margin={{ top: 0, right: 16, left: -10, bottom: 0 }}>
+          <LineChart data={dailyRuns} margin={{ top: 0, right: 16, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
             <XAxis
               dataKey="date"
@@ -87,7 +109,7 @@ export default function Analytics() {
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
         <h2 className="text-sm font-semibold text-slate-300 mb-4">Approval Rate by Agent</h2>
         <ResponsiveContainer width="100%" height={220}>
-          <BarChart data={APPROVAL_RATES} margin={{ top: 0, right: 16, left: -10, bottom: 0 }}>
+          <BarChart data={approvalRates} margin={{ top: 0, right: 16, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
             <XAxis dataKey="agent" tick={{ fill: '#64748b', fontSize: 10 }} />
             <YAxis domain={[0, 100]} tick={{ fill: '#64748b', fontSize: 10 }} unit="%" />
@@ -98,7 +120,7 @@ export default function Analytics() {
               formatter={(v) => [`${v}%`, 'Approval rate']}
             />
             <Bar dataKey="rate" radius={[4, 4, 0, 0]}>
-              {APPROVAL_RATES.map((entry) => (
+              {approvalRates.map((entry) => (
                 <Cell key={entry.agent} fill={AGENT_COLORS[entry.agent] ?? '#3b82f6'} />
               ))}
             </Bar>
@@ -110,11 +132,11 @@ export default function Analytics() {
       <div className="grid grid-cols-2 gap-4">
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
           <p className="text-xs text-slate-500 mb-1">Avg time to approve</p>
-          <p className="text-2xl font-bold text-slate-100">{SUMMARY_STATS.avgTimeToApprove}</p>
+          <p className="text-2xl font-bold text-slate-100">{summaryStats.avgTimeToApprove}</p>
         </div>
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
           <p className="text-xs text-slate-500 mb-1">Most active agent</p>
-          <p className="text-2xl font-bold text-slate-100">{SUMMARY_STATS.mostActiveAgent}</p>
+          <p className="text-2xl font-bold text-slate-100">{summaryStats.mostActiveAgent}</p>
         </div>
       </div>
     </div>

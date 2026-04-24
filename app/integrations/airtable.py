@@ -43,6 +43,31 @@ async def get_projects(cfg: Settings) -> list[dict[str, Any]]:
     return [{"airtableId": r["id"], **r["fields"]} for r in records]
 
 
+async def get_revenue_records(
+    cfg: Settings,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return revenue recognition records, optionally filtered by date range."""
+    parts: list[str] = []
+    if date_from:
+        parts.append(f"{{Date Recognized}} >= '{date_from}'")
+    if date_to:
+        parts.append(f"{{Date Recognized}} <= '{date_to}'")
+
+    params: dict[str, Any] = {
+        "sort[0][field]": "Date Recognized",
+        "sort[0][direction]": "desc",
+    }
+    if len(parts) == 2:
+        params["filterByFormula"] = f"AND({parts[0]}, {parts[1]})"
+    elif len(parts) == 1:
+        params["filterByFormula"] = parts[0]
+
+    records = await _get_all(cfg, cfg.airtable_revenue_table_id, params)
+    return [{"airtableId": r["id"], **r["fields"]} for r in records]
+
+
 async def get_most_recent_revenue_entry(cfg: Settings) -> dict[str, Any] | None:
     """Return the most recently recognized revenue entry, or None if table is empty."""
     url = f"{_BASE}/{cfg.airtable_base_id}/{cfg.airtable_revenue_table_id}"

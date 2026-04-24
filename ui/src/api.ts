@@ -1,5 +1,30 @@
 import type { Action, AgentRecord, TriggerResult, WorkflowRecord } from './types';
 
+export interface SummaryStats {
+  accountsResearched: number;
+  outreachSent: number;
+  proposalsGenerated: number;
+  approvalRate: number;
+  avgTimeToApprove: string;
+  mostActiveAgent: string;
+}
+
+export interface DailyRunRow {
+  date: string;
+  [agentName: string]: number | string;
+}
+
+export interface ApprovalRateRow {
+  agent: string;
+  rate: number;
+}
+
+export interface AnalyticsData {
+  summaryStats: SummaryStats;
+  dailyRuns: DailyRunRow[];
+  approvalRates: ApprovalRateRow[];
+}
+
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -65,4 +90,26 @@ export function getAgentActions(slug: string, status = 'all'): Promise<Action[]>
 
 export function getAgentWorkflows(slug: string): Promise<WorkflowRecord[]> {
   return apiFetch<WorkflowRecord[]>(`/workflows?kind=${encodeURIComponent(slug)}`);
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface ChatResponse {
+  answer: string;
+  tool_used: string | null;
+}
+
+export function agentChat(agentSlug: string, messages: ChatMessage[]): Promise<ChatResponse> {
+  return apiFetch<ChatResponse>(`/chat/${encodeURIComponent(agentSlug)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages }),
+  });
+}
+
+export function getAnalytics(days = 30): Promise<AnalyticsData> {
+  return apiFetch<AnalyticsData>(`/analytics?days=${days}`);
 }
