@@ -113,3 +113,33 @@ export function agentChat(agentSlug: string, messages: ChatMessage[]): Promise<C
 export function getAnalytics(days = 30): Promise<AnalyticsData> {
   return apiFetch<AnalyticsData>(`/analytics?days=${days}`);
 }
+
+export interface AuditLogEntry {
+  id: number;
+  timestamp: string;
+  agent_slug: string | null;
+  event_type: string;
+  action_type: string | null;
+  target: string | null;
+  outcome: 'success' | 'failed' | 'pending' | 'rejected';
+  reason: string | null;
+  payload: Record<string, unknown>;
+}
+
+export interface AuditLogFilters {
+  agent_slug?: string;
+  from_date?: string;
+  to_date?: string;
+  outcome?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export function getAuditLog(filters: AuditLogFilters = {}): Promise<AuditLogEntry[]> {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([k, v]) => {
+    if (v !== undefined && v !== '') params.set(k, String(v));
+  });
+  const qs = params.toString();
+  return apiFetch<AuditLogEntry[]>(`/audit-log${qs ? `?${qs}` : ''}`);
+}

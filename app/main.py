@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.db import close_pool, get_pool
-from app.routers import actions, agents, analytics, chat, memories, workflows
+from app.routers import actions, agents, analytics, audit_log, chat, memories, workflows
 from app.seed import seed_agents
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
@@ -38,6 +38,7 @@ app.include_router(workflows.router)
 app.include_router(actions.router)
 app.include_router(analytics.router)
 app.include_router(agents.router)
+app.include_router(audit_log.router)
 app.include_router(memories.router)
 app.include_router(chat.router)
 
