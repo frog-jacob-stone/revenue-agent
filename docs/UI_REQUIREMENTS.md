@@ -73,6 +73,7 @@ Every feature that is stubbed but not yet wired to the backend must be visually 
 - Pending approvals panel (filtered inbox view for this agent only)
 - Run history (last N runs — timestamp, outcome, items produced)
 - Manual trigger button (where applicable)
+- For read-only analytics agents, the "Pending approvals panel" and "Run history" sections are hidden; replaced with "Recent queries" showing chat history and questions answered.
 
 ### Agent-Specific Config Panels
 
@@ -84,6 +85,9 @@ Every feature that is stubbed but not yet wired to the backend must be visually 
 | Proposal Generator | Template selector, default sections checklist, pricing tier inputs |
 | Slide Deck Agent | Theme/template selector, output format (PPTX / Google Slides) |
 | Revenue Recognition | Reporting period selector, source accounts to include |
+| Invoice Operations | Invoice template selector, default payment terms, Slack channel for review digest, send schedule |
+| Invoice Analytics | Data sources to query (invoice store, HubSpot), default reporting period |
+| Router (future) | Registered specialist agents, routing prompt, fallback behavior when intent is unclear |
 
 ---
 
@@ -106,6 +110,13 @@ Every feature that is stubbed but not yet wired to the backend must be visually 
 - Actions proposed in chat still route to approval inbox — no direct execution from chat
 - Markdown rendering in agent responses (tables, bullets, code blocks)
 - Ability to attach context (paste company description, deal notes, etc.)
+
+### Routing Behavior
+
+- **v1 — Explicit agent selector:** Agent selector at top of chat; user picks which agent they're addressing. Simple, no routing logic required.
+- **Future — Router agent as default option:** Router agent appears as the default selection in the agent selector. It reads the message and dispatches to the appropriate specialist. Specialist agents remain directly selectable even after the router exists.
+- **Analytics agents** respond inline with answers — no inbox entry is created.
+- **Ops agents** respond with a "proposed action — see inbox" confirmation when a write is triggered.
 
 ---
 

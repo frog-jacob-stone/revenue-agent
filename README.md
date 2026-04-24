@@ -8,6 +8,7 @@ FastAPI service that orchestrates AI agents for revenue operations. Every action
 - **Supabase** — local Postgres (via Docker), RLS, and migrations
 - **Anthropic SDK** — Claude-powered agents (next sprint)
 - **n8n** — triggers and third-party integration routing only; complex logic lives here in FastAPI
+- **Agents are scoped by coherent identity** — separate agents for write-proposing operations vs. read-only analytics, even within the same domain. See [docs/STACK.md](docs/STACK.md) for the scoping principles.
 
 ## Prerequisites
 

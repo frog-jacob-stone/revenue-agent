@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from typing import Any
 from uuid import UUID
 
-from app.agents.base import BaseAgent
+from app.agents.base import ConversationalAgent
 from app.config import settings
 from app.integrations import airtable, forecast, harvest
 from app.services import airtable_sync
@@ -59,9 +59,138 @@ def _calc_revenue(project: dict[str, Any], invoice_data: dict[str, Any]) -> tupl
     return revenue, percent_complete, notes
 
 
-class RevenueRecognitionAgent(BaseAgent):
+_FIELDS = {
+    "Project Name": "project_name",
+    "Date Recognized": "date_recognized",
+    "Billing Type": "billing_type",
+    "Total Recognized Revenue": "total_recognized_revenue",
+    "Logged Hours": "logged_hours",
+    "Scheduled Hours": "scheduled_hours",
+    "Percentage Complete": "percentage_complete",
+    "Contracted Fees": "contracted_fees",
+    "Invoiced to Date": "invoiced_to_date",
+    "Notes": "notes",
+}
+
+
+class RevenueRecognitionAgent(ConversationalAgent):
     slug = "revenue-recognition"
     name = "Revenue Recognition"
+
+    # ── Conversational identity ──────────────────────────────────────────────
+
+    def get_system_prompt(self) -> str:
+        today = date.today().isoformat()
+        return f"""You are a revenue operations assistant for Frogslayer, a software consulting firm.
+You help the revenue team understand revenue trends and manage the recognition process.
+
+Today's date is {today}.
+
+## Behavioral guidance
+
+When calling get_revenue_data, use the narrowest date range that answers the question.
+When you trigger a revenue recognition run, always confirm it will appear in the Approval Inbox.
+
+## Revenue Record Fields
+
+- project_name: project name
+- date_recognized: ISO recognition date
+- billing_type: Fixed Fee | T&M | MSF | Hosting | Retainer
+- total_recognized_revenue: dollars recognized
+- logged_hours: hours logged to recognition date
+- scheduled_hours: forecast hours remaining
+- blended_rate: revenue / logged_hours (null if no hours logged)
+- percentage_complete: 0–1 (Fixed Fee only)
+- contracted_fees: total contract value (Fixed Fee only)
+- invoiced_to_date: amount invoiced
+- notes: flags or special notes
+
+Answer accurately based only on data returned by get_revenue_data."""
+
+    def get_tools(self) -> list[dict[str, Any]]:
+        # OpenAI tool schemas (swap "parameters" → "input_schema" when migrating to Claude)
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_revenue_data",
+                    "description": (
+                        "Fetch revenue recognition records for a date range. "
+                        "Choose the narrowest range that answers the question — "
+                        "last quarter for snapshots, last 12 months for trends, omit dates for all-time."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "date_from": {
+                                "type": "string",
+                                "description": "Start date ISO YYYY-MM-DD (inclusive), optional.",
+                            },
+                            "date_to": {
+                                "type": "string",
+                                "description": "End date ISO YYYY-MM-DD (inclusive), optional.",
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "trigger_revenue_recognition",
+                    "description": (
+                        "Trigger the monthly revenue recognition process. "
+                        "Use when the user asks to run, kick off, or start revenue recognition. "
+                        "This creates a proposed action in the Approval Inbox."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "date_recognized": {
+                                "type": "string",
+                                "description": "Recognition date ISO YYYY-MM-DD. Defaults to today.",
+                            },
+                        },
+                    },
+                },
+            },
+        ]
+
+    async def execute_tool(self, name: str, tool_input: dict[str, Any]) -> Any:
+        from app.integrations.airtable import get_revenue_records
+        from app.services import agent_runner
+
+        if name == "get_revenue_data":
+            date_from = tool_input.get("date_from")
+            date_to = tool_input.get("date_to")
+            # Default to last 12 months when no range specified to keep context size manageable
+            if not date_from and not date_to:
+                date_from = (date.today().replace(day=1) - timedelta(days=365)).strftime("%Y-%m-%d")
+
+            records = await get_revenue_records(settings, date_from=date_from, date_to=date_to)
+
+            slim = []
+            for r in records:
+                row: dict[str, Any] = {}
+                for airtable_key, slim_key in _FIELDS.items():
+                    row[slim_key] = r.get(airtable_key)
+                logged = row.get("logged_hours") or 0
+                revenue = row.get("total_recognized_revenue") or 0
+                row["blended_rate"] = round(revenue / logged, 2) if logged > 0 else None
+                slim.append(row)
+            return slim
+
+        if name == "trigger_revenue_recognition":
+            date_recognized = tool_input.get("date_recognized") or date.today().isoformat()
+            return await agent_runner.run_agent(
+                "revenue-recognition",
+                initiated_by="chat",
+                context={"date_recognized": date_recognized},
+            )
+
+        raise ValueError(f"Unknown tool: {name}")
+
+    # ── Workflow execution ───────────────────────────────────────────────────
 
     async def run(self, workflow_id: UUID, context: dict[str, Any]) -> list[dict[str, Any]]:
         date_recognized = context.get("date_recognized") or _last_day_of_prev_month()
