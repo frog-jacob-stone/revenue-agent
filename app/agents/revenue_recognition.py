@@ -129,7 +129,7 @@ class RevenueRecognitionAgent(BaseAgent):
                     "risk_level": "low",
                 }
             ]
-
+        
         # 5. Fetch supporting data in parallel
         # date_recognized + 1 day as the Forecast "from" date (matches n8n behavior)
         rec_date = date.fromisoformat(date_recognized)
@@ -173,8 +173,10 @@ class RevenueRecognitionAgent(BaseAgent):
                 "Project Id": [project["airtableId"]] if project.get("airtableId") else [],
                 "_blended_rate": blended_rate,
             }
-
-        entries = await asyncio.gather(*[process_project(p) for p in projects])
+        
+        entries = []
+        for p in projects:
+            entries.append(await process_project(p))
 
         total_recognized = _round2(sum(e["Total Recognized Revenue"] for e in entries))
         logger.info(

@@ -8,6 +8,7 @@ import {
   getAgentActions,
   getAgentWorkflows,
   setAgentActive,
+  triggerAgent,
 } from '../../api';
 import type { AgentRecord, WorkflowRecord, Action } from '../../types';
 import StatusChip from '../../components/shared/StatusChip';
@@ -99,6 +100,8 @@ export default function AgentDetail() {
   const [actions, setActions] = useState<Action[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowRecord[]>([]);
   const [toggling, setToggling] = useState(false);
+  const [triggering, setTriggering] = useState(false);
+  const [triggerError, setTriggerError] = useState<string | null>(null);
 
   useEffect(() => {
     listAgents().then(setSidebarAgents).catch(() => {});
@@ -124,6 +127,19 @@ export default function AgentDetail() {
       isToday(a.executed_at ?? a.created_at),
   ).length;
   const lastRun = workflows[0]?.started_at ?? null;
+
+  async function handleTrigger() {
+    if (!agentId || triggering) return;
+    setTriggering(true);
+    setTriggerError(null);
+    try {
+      await triggerAgent(agentId);
+    } catch (err) {
+      setTriggerError((err as Error).message);
+    } finally {
+      setTriggering(false);
+    }
+  }
 
   async function handleToggleActive() {
     if (!agentRecord || !agentId || toggling) return;
@@ -183,13 +199,16 @@ export default function AgentDetail() {
               {agentRecord.is_active ? 'Disable' : 'Enable'}
             </button>
             <button
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-cyan-500/15 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/25 transition-colors"
-              onClick={() => console.log('trigger', agentId)}
+              disabled={triggering}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-cyan-500/15 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/25 disabled:opacity-50 transition-colors"
+              onClick={handleTrigger}
             >
               <Play className="w-3.5 h-3.5" />
-              Trigger
-              <StubBadge />
+              {triggering ? 'Triggering…' : 'Trigger'}
             </button>
+            {triggerError && (
+              <p className="text-xs text-red-400 mt-1">{triggerError}</p>
+            )}
           </div>
         </div>
 
@@ -247,15 +266,15 @@ export default function AgentDetail() {
           </div>
         )}
 
-        {/* Run history */}
+        {/* Approval history */}
         <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-800">
             <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
-              Run History
+              Approval History
             </h2>
           </div>
           {historyActions.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-slate-600 text-center">No run history yet.</p>
+            <p className="px-4 py-6 text-sm text-slate-600 text-center">No approvals yet.</p>
           ) : (
             <table className="w-full text-sm">
               <thead>

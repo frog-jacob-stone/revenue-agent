@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any
 
@@ -37,6 +38,7 @@ async def _get_all(
             if data.get("next_page") is None:
                 break
             page += 1
+            await asyncio.sleep(0.1) # be nice to the API or risk a 429 Too Many Requests. 100ms throttle between pages.
     return results
 
 
