@@ -168,10 +168,25 @@ async def agent_chat(agent_slug: str, messages: list[dict]) -> dict[str, Any]:
     last_tool_used: str | None = None
 
     while True:
+        logger.info(
+            "LLM REQUEST | model=gpt-4o | messages=%d\n%s",
+            len(msg_list),
+            json.dumps(msg_list, default=str, indent=2),
+        )
+
         response = await client.chat.completions.create(
             model="gpt-4o",
             messages=msg_list,
             tools=tools,
+        )
+
+        usage = response.usage
+        logger.info(
+            "LLM RESPONSE | prompt_tokens=%s | completion_tokens=%s | total_tokens=%s\n%s",
+            usage.prompt_tokens if usage else "?",
+            usage.completion_tokens if usage else "?",
+            usage.total_tokens if usage else "?",
+            json.dumps(response.choices[0].message.model_dump(), default=str, indent=2),
         )
 
         choice = response.choices[0]
