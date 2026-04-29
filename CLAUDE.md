@@ -1,77 +1,40 @@
 # CLAUDE.md — Revenue Agent System
 
-AI-powered revenue operations for Frogslayer. Agents replace an entire revenue team —
-this is operational infrastructure, not a personal assistant.
+AI-powered revenue operations for Frogslayer. Agents replace an entire revenue team — operational infrastructure, not a personal assistant.
 
-Docs: `docs/STACK.md` (sprint status) · `docs/SCHEMA.md` (database) · `docs/AGENTS.md` (agents)
+Reference docs:
+- `docs/ARCHITECTURE.md` — system architecture and agent pattern
+- `docs/SCHEMA.md` — database (mirror of `supabase/migrations/`)
+- `docs/AGENTS.md` — agent roster and prompts
+- `docs/BACKLOG.md` — what's next, deferred, blocked, open questions
 
-## Stack
+## Unbreakable Rules
 
-| Layer | Tool |
-|---|---|
-| API | FastAPI + Python 3.12 |
-| LLM | Anthropic SDK (Claude) |
-| Database | Supabase (Postgres + pgvector) |
-| Secrets | Doppler (`doppler run -- uvicorn ...`) |
-| Runtime | Docker Compose locally |
-| UI | React + TypeScript + Vite (ui/) |
-| Integrations | n8n → FastAPI (triggers only, no business logic in n8n) |
+1. **Never test invoice generation against the live Harvest account.** Mocked unit tests of `run()` are fine. Do not trigger `trigger_invoice_generation`, `POST /agents/invoice-operations/trigger`, or the Invoice Operations chat invoice path during any verification.
 
-## The One Rule That Cannot Be Broken
-
-**Never test invoice generation end-to-end.** The `invoice-operations` workflow
-creates real drafts in a live Harvest account. Do not trigger
-`trigger_invoice_generation`, `POST /agents/invoice-operations/trigger`, or the
-Invoice Operations chat's invoice-generation path as part of any verification
-or smoke test. Mocked unit tests of `run()` are fine; anything that goes over
-the network is not.
-
-**No agent may execute a create, update, or delete operation without a prior
-`action.approved` row in the database.**
-
-```
-agent proposes → action row created (status: proposed)
-human approves → action row updated (status: approved)
-system executes → action row updated (status: completed or failed)
-```
-
-Every state transition writes a row to `audit_log`. No exceptions.
+2. **No write without an approved action row.** Every create/update/delete flows through:
+   ```
+   agent proposes → action (proposed) → human approves → system executes → completed | failed
+   ```
+   Every state transition writes a row to `audit_log`.
 
 ## Code Conventions
 
-- **Routers contain no business logic.** Routers validate input and call services.
-- **Services contain business logic.** Services never call routers.
-- **Agents propose; the framework executes.** Agents never call HubSpot/Gmail directly.
-- **Every service function that changes state must call `write_audit_event()`.**
-- **Async everywhere.** All DB, HTTP, and agent calls must be async.
-- **Pydantic v2.** Use `model_config`, not `class Config`.
+- Routers validate input and call services; routers contain no business logic.
+- Services hold business logic; services never call routers.
+- Agents propose actions only; agents never call HubSpot/Gmail/Harvest directly.
+- Every state-changing service function calls `write_audit_event()`.
+- Async everywhere. Pydantic v2 (`model_config`, not `class Config`).
+- Schema changes go through migrations in `supabase/migrations/` — never edit the DB by hand.
+- Tests use `TEST_DATABASE_URL` (port 54323), never the prod port (54322).
 
-## Secrets and Environment
+## Keep These Docs in Sync
 
-Secrets live in Doppler — never in committed `.env` files, never hardcoded.
+After a change, update whatever just went stale — this is not optional:
 
-For local dev without Doppler:
-```bash
-cp app/.env.example app/.env   # populate from `supabase status`
-cp ui/.env.example ui/.env     # VITE_ prefixed vars only
-```
-
-## Local Dev
-
-```bash
-supabase start && supabase db reset   # start Supabase, apply migrations
-docker compose up                     # start FastAPI
-cd ui && npm run dev                  # start UI on localhost:3000
-pytest                                # run tests (Supabase must be running)
-```
-
-## Database
-
-- Schema: `supabase/migrations/` — never edit the DB by hand, always write a migration
-- Keep `docs/SCHEMA.md` in sync with migrations
-- RLS enabled on all tables; permissive `service_role` policy for v1
-- **Tests use `TEST_DATABASE_URL` (port 54323), never the real DB (port 54322).** The conftest.py transaction-rollback pattern ensures no test data persists.
-
-## Build Status
-
-Check `docs/STACK.md` for current sprint and completed work. Update it when you finish a task.
+| If you... | Update... |
+|---|---|
+| Wrote a migration | `docs/SCHEMA.md` |
+| Changed agent boundaries, layering, or integration flow | `docs/ARCHITECTURE.md` |
+| Added or retired an agent | `docs/AGENTS.md` |
+| Finished, started, deferred, or blocked work | `docs/BACKLOG.md` |
