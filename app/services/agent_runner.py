@@ -2,16 +2,11 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from app.agents.base import BaseAgent
-from app.agents.revenue_recognition import RevenueRecognitionAgent
+from app.agents.registry import AGENTS_BY_SLUG
 from app.db import get_pool
 from app.services import audit
 
 logger = logging.getLogger(__name__)
-
-AGENT_CLASSES: dict[str, type[BaseAgent]] = {
-    "revenue-recognition": RevenueRecognitionAgent,
-}
 
 
 async def run_agent(
@@ -55,7 +50,7 @@ async def run_agent(
                 payload={"slug": slug, "trigger_source": "manual"},
             )
 
-    agent_cls = AGENT_CLASSES.get(slug)
+    agent_cls = AGENTS_BY_SLUG.get(slug)
     if not agent_cls:
         async with pool.acquire() as conn:
             async with conn.transaction():
@@ -66,7 +61,11 @@ async def run_agent(
                 )
         raise NotImplementedError(f"No implementation for agent '{slug}'")
 
-    agent = agent_cls(agent_id=agent_id, config=agent_config)
+    agent = agent_cls(
+        agent_id=agent_id,
+        config=agent_config,
+        allowed_tools=list(agent_cls.allowed_tools),
+    )
 
     try:
         proposals = await agent.run(workflow_id=workflow_id, context=context)

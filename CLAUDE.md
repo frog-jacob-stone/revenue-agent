@@ -19,6 +19,13 @@ Docs: `docs/STACK.md` (sprint status) · `docs/SCHEMA.md` (database) · `docs/AG
 
 ## The One Rule That Cannot Be Broken
 
+**Never test invoice generation end-to-end.** The `invoice-operations` workflow
+creates real drafts in a live Harvest account. Do not trigger
+`trigger_invoice_generation`, `POST /agents/invoice-operations/trigger`, or the
+Invoice Operations chat's invoice-generation path as part of any verification
+or smoke test. Mocked unit tests of `run()` are fine; anything that goes over
+the network is not.
+
 **No agent may execute a create, update, or delete operation without a prior
 `action.approved` row in the database.**
 

@@ -4,19 +4,21 @@ from typing import Any
 from uuid import UUID
 
 from app.agents.base import ConversationalAgent
+from app.agents.registry import AGENTS_BY_SLUG
 from app.integrations.openai_client import get_client
-from app.services.agent_runner import AGENT_CLASSES
 
 logger = logging.getLogger(__name__)
 
 
 def _get_agent(slug: str) -> ConversationalAgent:
-    cls = AGENT_CLASSES.get(slug)
-    if not cls:
+    cls = AGENTS_BY_SLUG.get(slug)
+    if cls is None or not issubclass(cls, ConversationalAgent):
         raise ValueError(f"Chat not supported for agent '{slug}'")
-    agent = cls(agent_id=UUID(int=0), config={})  # no workflow DB row for chat
-    if not isinstance(agent, ConversationalAgent):
-        raise ValueError(f"Agent '{slug}' does not support chat")
+    agent = cls(
+        agent_id=UUID(int=0),
+        config={},
+        allowed_tools=list(cls.allowed_tools),
+    )
     return agent
 
 

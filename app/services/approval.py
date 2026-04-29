@@ -55,7 +55,24 @@ async def approve_action(
                 action_id,
             )
 
-            result = await execution.execute(conn, action_dict)
+            try:
+                result = await execution.execute(conn, action_dict)
+            except NotImplementedError as exc:
+                await conn.execute(
+                    "UPDATE actions SET status = 'failed', error = $1 WHERE id = $2",
+                    str(exc),
+                    action_id,
+                )
+                await audit.write_audit_event(
+                    conn,
+                    "action.failed",
+                    agent_id=action_dict["agent_id"],
+                    workflow_id=action_dict["workflow_id"],
+                    action_id=action_id,
+                    actor="system",
+                    payload={"error": str(exc)},
+                )
+                raise HTTPException(status_code=501, detail=str(exc))
 
             updated = await conn.fetchrow(
                 """

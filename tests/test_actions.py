@@ -5,7 +5,7 @@ from httpx import AsyncClient
 
 
 @pytest.fixture
-async def workflow_with_action(client: AsyncClient, test_agent_id: uuid.UUID) -> dict:
+async def workflow_with_action(client: AsyncClient, test_agent_slug: str) -> dict:
     wf_resp = await client.post(
         "/workflows",
         json={"kind": "sdr_outreach", "trigger_source": "manual", "initiated_by": "system"},
@@ -16,7 +16,7 @@ async def workflow_with_action(client: AsyncClient, test_agent_id: uuid.UUID) ->
     act_resp = await client.post(
         f"/workflows/{wf['id']}/actions",
         json={
-            "agent_id": str(test_agent_id),
+            "agent_slug": test_agent_slug,
             "action_type": "research",
             "summary": "Research target accounts",
             "proposed_payload": {"target": "enterprise"},
@@ -28,7 +28,7 @@ async def workflow_with_action(client: AsyncClient, test_agent_id: uuid.UUID) ->
 
 
 @pytest.fixture
-async def fresh_action(client: AsyncClient, test_agent_id: uuid.UUID) -> dict:
+async def fresh_action(client: AsyncClient, test_agent_slug: str) -> dict:
     wf = (
         await client.post(
             "/workflows",
@@ -39,7 +39,7 @@ async def fresh_action(client: AsyncClient, test_agent_id: uuid.UUID) -> dict:
         await client.post(
             f"/workflows/{wf['id']}/actions",
             json={
-                "agent_id": str(test_agent_id),
+                "agent_slug": test_agent_slug,
                 "action_type": "send_email",
                 "summary": "Send intro email",
                 "proposed_payload": {"to": "ceo@example.com"},

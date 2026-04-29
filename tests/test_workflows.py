@@ -72,11 +72,11 @@ async def test_list_workflows_kind_filter(client: AsyncClient, workflow: dict):
     assert any(w["id"] == workflow["id"] for w in data)
 
 
-async def test_propose_action(client: AsyncClient, workflow: dict, test_agent_id: uuid.UUID):
+async def test_propose_action(client: AsyncClient, workflow: dict, test_agent_slug: str):
     resp = await client.post(
         f"/workflows/{workflow['id']}/actions",
         json={
-            "agent_id": str(test_agent_id),
+            "agent_slug": test_agent_slug,
             "action_type": "research",
             "summary": "Research Acme Corp contacts",
             "proposed_payload": {"query": "Acme Corp decision makers"},
@@ -91,9 +91,9 @@ async def test_propose_action(client: AsyncClient, workflow: dict, test_agent_id
     assert data["workflow_id"] == workflow["id"]
 
 
-async def test_propose_action_auto_sequence(client: AsyncClient, workflow: dict, test_agent_id: uuid.UUID):
+async def test_propose_action_auto_sequence(client: AsyncClient, workflow: dict, test_agent_slug: str):
     payload = {
-        "agent_id": str(test_agent_id),
+        "agent_slug": test_agent_slug,
         "action_type": "research",
         "summary": "Step N",
         "proposed_payload": {},
@@ -107,11 +107,11 @@ async def test_propose_action_auto_sequence(client: AsyncClient, workflow: dict,
     assert seq2 == seq1 + 1
 
 
-async def test_get_workflow_includes_actions(client: AsyncClient, workflow: dict, test_agent_id: uuid.UUID):
+async def test_get_workflow_includes_actions(client: AsyncClient, workflow: dict, test_agent_slug: str):
     await client.post(
         f"/workflows/{workflow['id']}/actions",
         json={
-            "agent_id": str(test_agent_id),
+            "agent_slug": test_agent_slug,
             "action_type": "research",
             "summary": "Gather info",
             "proposed_payload": {},

@@ -1,6 +1,6 @@
 import logging
 
-from app.agents.registry import AGENT_REGISTRY
+from app.agents.registry import AGENTS
 from app.db import get_pool
 
 logger = logging.getLogger(__name__)
@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 async def seed_agents() -> None:
     pool = await get_pool()
     async with pool.acquire() as conn:
-        for slug, fields in AGENT_REGISTRY.items():
+        for cls in AGENTS:
             await conn.execute(
                 """
                 insert into agents (slug, name, description, requires_approval, allowed_tools, config)
@@ -22,13 +22,13 @@ async def seed_agents() -> None:
                     config            = excluded.config,
                     updated_at        = now()
                 """,
-                slug,
-                fields["name"],
-                fields["description"],
-                fields["requires_approval"],
-                fields["allowed_tools"],
-                fields["config"],
+                cls.slug,
+                cls.name,
+                cls.description,
+                cls.requires_approval,
+                list(cls.allowed_tools),
+                dict(cls.default_config),
             )
-            logger.debug("seeded agent: %s", slug)
+            logger.debug("seeded agent: %s", cls.slug)
 
-    logger.info("agent registry seeded (%d agents)", len(AGENT_REGISTRY))
+    logger.info("agent registry seeded (%d agents)", len(AGENTS))

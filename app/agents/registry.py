@@ -1,53 +1,41 @@
-from typing import Any
+"""Registry of all agents in the system.
 
-# Keyed by slug. These are the code-owned fields — system_prompt and is_active
-# are operator-owned and will never be overwritten by the seeder.
-AGENT_REGISTRY: dict[str, dict[str, Any]] = {
-    "sdr-researcher": {
-        "name": "SDR Researcher",
-        "description": (
-            "Researches new accounts from HubSpot or manual triggers. "
-            "Enriches contact and company data via Apollo."
-        ),
-        "requires_approval": True,
-        "allowed_tools": ["apollo_search", "hubspot_read"],
-        "config": {},
-    },
-    "outreach-agent": {
-        "name": "Outreach Agent",
-        "description": (
-            "Drafts and queues personalised outreach emails after SDR Researcher completes."
-        ),
-        "requires_approval": True,
-        "allowed_tools": ["gmail_draft", "hubspot_read", "hubspot_update"],
-        "config": {},
-    },
-    "content-writer": {
-        "name": "Content Writer",
-        "description": "Produces marketing and thought-leadership content on a manual or scheduled trigger.",
-        "requires_approval": True,
-        "allowed_tools": ["hubspot_read"],
-        "config": {},
-    },
-    "proposal-generator": {
-        "name": "Proposal Generator",
-        "description": "Generates client proposals when a HubSpot deal advances to the proposal stage.",
-        "requires_approval": True,
-        "allowed_tools": ["hubspot_read", "hubspot_update"],
-        "config": {},
-    },
-    "slide-deck-agent": {
-        "name": "Slide Deck Agent",
-        "description": "Converts a completed proposal into a presentation deck.",
-        "requires_approval": True,
-        "allowed_tools": ["hubspot_read"],
-        "config": {},
-    },
-    "revenue-recognition": {
-        "name": "Revenue Recognition",
-        "description": "Runs monthly revenue recognition calculations and writes journal entries.",
-        "requires_approval": True,
-        "allowed_tools": ["hubspot_read"],
-        "config": {},
-    },
-}
+The agent class is the single source of truth for slug, name, description,
+requires_approval, and allowed_tools. This module only declares the list of
+classes and exposes a slug → class lookup. Never add metadata here — put it
+on the class.
+"""
+from app.agents.base import BaseAgent
+from app.agents.invoice_analytics import InvoiceAnalyticsAgent
+from app.agents.invoice_operations import InvoiceOperationsAgent
+from app.agents.planned import (
+    ContentWriterAgent,
+    OutreachAgent,
+    ProposalGeneratorAgent,
+    SDRResearcherAgent,
+    SlideDeckAgent,
+)
+from app.agents.revenue_recognition import RevenueRecognitionAgent
+
+AGENTS: tuple[type[BaseAgent], ...] = (
+    SDRResearcherAgent,
+    OutreachAgent,
+    ContentWriterAgent,
+    ProposalGeneratorAgent,
+    SlideDeckAgent,
+    RevenueRecognitionAgent,
+    InvoiceOperationsAgent,
+    InvoiceAnalyticsAgent,
+)
+
+
+def _assert_unique_slugs() -> None:
+    slugs = [cls.slug for cls in AGENTS]
+    if len(slugs) != len(set(slugs)):
+        dupes = sorted({s for s in slugs if slugs.count(s) > 1})
+        raise RuntimeError(f"Duplicate agent slugs: {dupes}")
+
+
+_assert_unique_slugs()
+
+AGENTS_BY_SLUG: dict[str, type[BaseAgent]] = {cls.slug: cls for cls in AGENTS}

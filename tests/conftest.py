@@ -23,9 +23,10 @@ import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-_MIGRATION_SQL = (
-    Path(__file__).parent.parent / "supabase" / "migrations" / "0001_initial_schema.sql"
-).read_text()
+_MIGRATIONS_DIR = Path(__file__).parent.parent / "supabase" / "migrations"
+_MIGRATION_SQLS = [
+    f.read_text() for f in sorted(_MIGRATIONS_DIR.glob("*.sql"))
+]
 
 
 # ── asyncpg JSONB codec ───────────────────────────────────────────────────────
@@ -86,12 +87,14 @@ async def _test_pool() -> asyncpg.Pool:
     db_name = _TEST_DB_URL.rstrip("/").rsplit("/", 1)[-1]
     admin_url = _TEST_DB_URL.rsplit("/", 1)[0] + "/postgres"
 
-    # CREATE DATABASE must run outside a transaction on a different DB.
+    # Drop and recreate the test DB each session for a clean slate.
+    # Necessary because CREATE POLICY is not idempotent in migration 0001.
     admin = await asyncpg.connect(admin_url)
     try:
-        exists = await admin.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", db_name)
-        if not exists:
-            await admin.execute(f'CREATE DATABASE "{db_name}"')
+        await admin.execute(
+            f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)'
+        )
+        await admin.execute(f'CREATE DATABASE "{db_name}"')
     finally:
         await admin.close()
 
@@ -99,7 +102,8 @@ async def _test_pool() -> asyncpg.Pool:
     migrate = await asyncpg.connect(_TEST_DB_URL)
     try:
         await _init_conn(migrate)
-        await migrate.execute(_MIGRATION_SQL)
+        for sql in _MIGRATION_SQLS:
+            await migrate.execute(sql)
     finally:
         await migrate.close()
 
@@ -115,6 +119,9 @@ async def _test_pool() -> asyncpg.Pool:
     await pool.close()
 
 
+_TEST_AGENT_SLUG = "test-agent"
+
+
 @pytest.fixture(scope="session")
 async def test_agent_id(_test_pool: asyncpg.Pool) -> uuid.UUID:
     """
@@ -122,13 +129,19 @@ async def test_agent_id(_test_pool: asyncpg.Pool) -> uuid.UUID:
     Committed before any per-test rollback transaction starts, so it is visible
     to all tests.
     """
-    slug = f"test_{uuid.uuid4().hex[:8]}"
     return await _test_pool.fetchval(
         "INSERT INTO agents (slug, name, requires_approval, approval_scope, config) "
         "VALUES ($1, $2, false, '{}'::text[], '{}'::jsonb) RETURNING id",
-        slug,
+        _TEST_AGENT_SLUG,
         "Test Agent",
     )
+
+
+@pytest.fixture(scope="session")
+async def test_agent_slug(test_agent_id: uuid.UUID) -> str:
+    # Requesting test_agent_id ensures the agent row is inserted before this fixture returns.
+    _ = test_agent_id
+    return _TEST_AGENT_SLUG
 
 
 @pytest.fixture(scope="session")

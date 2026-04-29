@@ -4,7 +4,7 @@ from typing import Any
 import asyncpg
 
 from app.config import settings
-from app.integrations import airtable
+from app.integrations import airtable, harvest
 
 logger = logging.getLogger(__name__)
 
@@ -35,18 +35,58 @@ async def execute(conn: asyncpg.Connection, action: dict[str, Any]) -> dict[str,
 
         case "configure_rev_rec_projects":
             # Human has fixed the Airtable data — re-trigger recognition
-            from app.services import agent_runner  # local import avoids circular dep
+            from app.agents.revenue_recognition import RevenueRecognitionAgent
 
             payload = action.get("proposed_payload", {})
             ctx = payload.get("context", {})
             ctx["date_recognized"] = payload.get("date_recognized")
-            result = await agent_runner.run_agent(
-                slug="revenue-recognition",
-                initiated_by=action.get("approved_by") or "system",
+            result = await RevenueRecognitionAgent.trigger(
                 context=ctx,
+                initiated_by=action.get("approved_by") or "system",
             )
-            logger.info("re-triggered revenue-recognition: workflow=%s", result.get("workflow_id"))
+            logger.info(
+                "re-triggered %s: workflow=%s",
+                RevenueRecognitionAgent.slug,
+                result.get("workflow_id"),
+            )
             return {"re_triggered": True, "workflow_id": result.get("workflow_id")}
+
+        case "generate_invoice":
+            payload = action.get("executed_payload") or action.get("proposed_payload", {})
+            harvest_payload = dict(payload.get("harvest_payload", {}))
+            # Strip display-only fields (prefixed with _) from line items before sending to Harvest
+            harvest_payload["line_items"] = [
+                {k: v for k, v in li.items() if not k.startswith("_")}
+                for li in harvest_payload.get("line_items", [])
+            ]
+            invoice = await harvest.create_invoice_draft(settings, harvest_payload)
+            logger.info(
+                "created Harvest invoice id=%s number=%s for client_id=%s",
+                invoice.get("id"),
+                invoice.get("number"),
+                harvest_payload.get("client_id"),
+            )
+            return {
+                "invoice_id": invoice.get("id"),
+                "invoice_number": invoice.get("number"),
+                "status": invoice.get("state"),
+            }
+
+        case "send_invoice":
+            # v1 stub — enable by implementing harvest.send_invoice()
+            payload = action.get("proposed_payload", {})
+            raise NotImplementedError(
+                f"send_invoice is not active in v1 (invoice_id={payload.get('invoice_id')}). "
+                "Enable by removing the NotImplementedError in harvest.send_invoice()."
+            )
+
+        case "delete_invoice":
+            # v1 stub — enable by implementing harvest.delete_invoice()
+            payload = action.get("proposed_payload", {})
+            raise NotImplementedError(
+                f"delete_invoice is not active in v1 (invoice_id={payload.get('invoice_id')}). "
+                "Enable by removing the NotImplementedError in harvest.delete_invoice()."
+            )
 
         case _:
             logger.info("no executor for action type %r — skipping", action_type)

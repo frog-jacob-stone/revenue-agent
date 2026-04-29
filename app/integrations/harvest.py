@@ -42,12 +42,68 @@ async def _get_all(
     return results
 
 
+async def _get_one(cfg: Settings, path: str) -> dict[str, Any]:
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{_BASE}{path}", headers=_headers(cfg))
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def get_clients(cfg: Settings) -> list[dict[str, Any]]:
     return await _get_all(cfg, "/clients", "clients", {"is_active": "true"})
 
 
+async def get_client(cfg: Settings, client_id: int) -> dict[str, Any]:
+    return await _get_one(cfg, f"/clients/{client_id}")
+
+
+async def get_project(cfg: Settings, project_id: int) -> dict[str, Any]:
+    return await _get_one(cfg, f"/projects/{project_id}")
+
+
 async def get_active_projects(cfg: Settings) -> list[dict[str, Any]]:
     return await _get_all(cfg, "/projects", "projects", {"is_active": "true"})
+
+
+async def get_time_entries_for_period(
+    cfg: Settings,
+    project_id: int,
+    from_date: str,
+    to_date: str,
+) -> list[dict[str, Any]]:
+    """Return all billable time entries for a project within a date range."""
+    return await _get_all(
+        cfg,
+        "/time_entries",
+        "time_entries",
+        {"project_id": project_id, "from": from_date, "to": to_date, "is_billed": "false"},
+    )
+
+
+async def list_invoices_for_client(cfg: Settings, client_id: int) -> list[dict[str, Any]]:
+    return await _get_all(cfg, "/invoices", "invoices", {"client_id": client_id})
+
+
+async def create_invoice_draft(cfg: Settings, payload: dict[str, Any]) -> dict[str, Any]:
+    """Create a draft invoice in Harvest. Called on approval of generate_invoice action."""
+    # v1 stub — enable when operationally ready
+    raise NotImplementedError(
+        "create_invoice_draft is not active in v1. Remove this guard when ready to enable."
+    )
+
+
+async def send_invoice(cfg: Settings, invoice_id: int) -> dict[str, Any]:
+    # v1 stub — enable when operationally ready
+    raise NotImplementedError(
+        "send_invoice is not active in v1. Remove this guard when ready to enable."
+    )
+
+
+async def delete_invoice(cfg: Settings, invoice_id: int) -> dict[str, Any]:
+    # v1 stub — enable when operationally ready
+    raise NotImplementedError(
+        "delete_invoice is not active in v1. Remove this guard when ready to enable."
+    )
 
 
 async def get_time_entries(cfg: Settings, project_id: int, to_date: str) -> float:
