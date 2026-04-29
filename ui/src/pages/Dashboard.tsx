@@ -1,13 +1,55 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Play, AlertTriangle } from 'lucide-react';
+import { Play, AlertTriangle, Send } from 'lucide-react';
 import { AGENTS, AUDIT_ENTRIES } from '../mocks';
 import StatusChip from '../components/shared/StatusChip';
 import ActionTypeChip from '../components/shared/ActionTypeChip';
 import AgentBadge from '../components/shared/AgentBadge';
 import StubBadge from '../components/shared/StubBadge';
+import { triggerOutreach } from '../api';
 
 function fmt(iso: string) {
   return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function OutreachTriggerButton() {
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const handleClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const hubspotId = window.prompt(
+      'HubSpot contact id (or any id — Phase D uses placeholder data when HUBSPOT_TOKEN is unset):',
+      'demo-contact-001',
+    );
+    if (!hubspotId) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await triggerOutreach(hubspotId);
+      // Background task writes the inbox row; give it a beat then jump to
+      // the inbox so the reviewer can watch the draft land.
+      setTimeout(() => navigate('/inbox'), 1200);
+    } catch (e) {
+      setErr((e as Error).message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <button
+        disabled={busy}
+        className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium bg-cyan-500/15 text-cyan-300 border border-cyan-500/20 hover:bg-cyan-500/25 disabled:opacity-40 transition-colors"
+        onClick={handleClick}
+      >
+        <Send className="w-3 h-3" />
+        {busy ? 'Starting…' : 'Reach out'}
+      </button>
+      {err && <p className="mt-1 text-[11px] text-red-400">{err}</p>}
+    </>
+  );
 }
 
 export default function Dashboard() {
@@ -69,14 +111,18 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <button
-              className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
-              onClick={(e) => { e.stopPropagation(); console.log('trigger agent', agent.id); }}
-            >
-              <Play className="w-3 h-3" />
-              Trigger manually
-              <StubBadge />
-            </button>
+            {agent.id === 'outreach-agent' ? (
+              <OutreachTriggerButton />
+            ) : (
+              <button
+                className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+                onClick={(e) => { e.stopPropagation(); console.log('trigger agent', agent.id); }}
+              >
+                <Play className="w-3 h-3" />
+                Trigger manually
+                <StubBadge />
+              </button>
+            )}
           </div>
         ))}
       </div>

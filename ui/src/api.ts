@@ -48,6 +48,20 @@ export function getWorkflowTrace(workflowId: string): Promise<WorkflowTrace> {
   return apiFetch<WorkflowTrace>(`/workflows/${workflowId}/trace`);
 }
 
+export interface OutreachTriggerResponse {
+  workflow_id: string;
+  kind: string;
+  status: string;
+}
+
+export function triggerOutreach(hubspotContactId: string): Promise<OutreachTriggerResponse> {
+  return apiFetch<OutreachTriggerResponse>('/workflows/outreach', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hubspot_contact_id: hubspotContactId, initiated_by: 'system' }),
+  });
+}
+
 export function approveAction(
   id: string,
   approvedBy: string,

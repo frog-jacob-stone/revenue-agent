@@ -1,16 +1,20 @@
 from uuid import UUID
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import Field
 
 from app.db import get_pool
 from app.models.actions import ActionCreate, ActionResponse
+from app.models.common import ORMBase
 from app.models.workflows import (
     TraceAction,
     WorkflowCreate,
     WorkflowResponse,
     WorkflowTraceResponse,
 )
+from app.orchestrator import orchestrator
+from app.orchestrator.chains.outreach import OUTREACH_KIND
 from app.services import audit
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
@@ -28,6 +32,44 @@ def _row_to_workflow(row: asyncpg.Record, actions: list[asyncpg.Record] | None =
     d = dict(row)
     d["actions"] = [dict(a) for a in (actions or [])]
     return WorkflowResponse.model_validate(d)
+
+
+class OutreachTrigger(ORMBase):
+    hubspot_contact_id: str
+    initiated_by: str = "system"
+    notes: dict | None = Field(default=None, description="Optional context to seed the chain")
+
+
+class OutreachTriggerResponse(ORMBase):
+    workflow_id: UUID
+    kind: str
+    status: str = "running"
+
+
+@router.post("/outreach", response_model=OutreachTriggerResponse, status_code=202)
+async def trigger_outreach(
+    body: OutreachTrigger,
+    background_tasks: BackgroundTasks,
+):
+    """Kick off an Outreach chain for a HubSpot contact.
+
+    Returns 202 immediately with the workflow_id. The chain runs in a
+    background task — clients should poll `/workflows/{id}/trace` (or watch
+    the inbox) to see progress.
+    """
+    workflow_id = await orchestrator.create_workflow(
+        OUTREACH_KIND,
+        context={
+            "hubspot_contact_id": body.hubspot_contact_id,
+            **(body.notes or {}),
+        },
+        initiated_by=body.initiated_by,
+        trigger_source="manual",
+        subject_type="contact",
+        subject_id=body.hubspot_contact_id,
+    )
+    background_tasks.add_task(orchestrator.resume, workflow_id)
+    return OutreachTriggerResponse(workflow_id=workflow_id, kind=OUTREACH_KIND)
 
 
 @router.post("", response_model=WorkflowResponse, status_code=201)

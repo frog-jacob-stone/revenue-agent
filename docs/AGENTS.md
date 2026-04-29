@@ -9,7 +9,9 @@ For the rules that govern how agents are bounded, see `ARCHITECTURE.md` (Agent S
 | Agent | Trigger | Approval Required? |
 |---|---|---|
 | SDR Researcher | New account in HubSpot / manual | Before outreach |
-| Outreach Agent | SDR Researcher completes | Always — before any email sends |
+| Outreach Agent | Manual ("Reach out" on dashboard) / SDR Researcher completes | Always — before any email sends |
+| Voice Critic (Phase E) | Invoked by Outreach chain | n/a — internal critic step |
+| Accuracy Critic (Phase E) | Invoked by Outreach chain | n/a — internal critic step |
 | Content Writer | Manual or scheduled | Before publishing |
 | Proposal Generator | Deal stage change in HubSpot | Before sending to client |
 | Slide Deck Agent | Triggered by Proposal Generator | Before delivery |
@@ -23,3 +25,22 @@ For the rules that govern how agents are bounded, see `ARCHITECTURE.md` (Agent S
 ## Prompts and SOUL Definitions
 
 _Agent prompt templates and behavioral rules live alongside the agent code in `app/agents/<agent>/`. Add references here as agents stabilize._
+
+## Outreach Agent (Phase D — happy path)
+
+Implemented as an orchestrator chain in [`app/orchestrator/chains/outreach.py`](../app/orchestrator/chains/outreach.py). Pattern: `prompt_chain_action`. Trigger: `POST /workflows/outreach { "hubspot_contact_id": "..." }` or the "Reach out" button on the Outreach Agent card on the dashboard.
+
+Chain steps:
+
+| Seq | step_kind | What it does |
+|---|---|---|
+| 1 | tool_call | Pull HubSpot contact + company (stubbed when `HUBSPOT_TOKEN` is unset) |
+| 2 | tool_call | Web search company signals (stub for Phase D — Apollo/web search ships later) |
+| 3 | llm_step  | Consolidate context into a brief |
+| 4 | tool_call | Retrieve Frogslayer GTM context (stub blurb until pgvector ingestion lands) |
+| 5 | llm_step  | Draft outreach email (subject + body) |
+| 6 | execution | Approve and send via Gmail (stub: logs `[gmail-stub] would send …`) |
+
+Phase E will insert voice and accuracy critique steps with retry loops between steps 5 and 6.
+
+When `ANTHROPIC_API_KEY` is unset, the LLM steps fall back to deterministic stub responses so the chain runs end-to-end in dev environments without creds.

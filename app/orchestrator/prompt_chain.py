@@ -59,6 +59,41 @@ class PromptChainOrchestrator(BaseOrchestrator):
         subject_id: str | None = None,
         subject_ref: dict[str, Any] | None = None,
     ) -> UUID:
+        """Create a workflow and drive it inline until it pauses or completes.
+
+        Used by tests and any caller that wants synchronous semantics. HTTP
+        triggers should prefer `create_workflow()` + a background `resume()`
+        so the request returns quickly even when LLM steps run for several
+        seconds.
+        """
+        workflow_id = await self.create_workflow(
+            kind,
+            context=context,
+            initiated_by=initiated_by,
+            trigger_source=trigger_source,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            subject_ref=subject_ref,
+        )
+        await self._drive(workflow_id)
+        return workflow_id
+
+    async def create_workflow(
+        self,
+        kind: str,
+        *,
+        context: dict[str, Any] | None = None,
+        initiated_by: str = "system",
+        trigger_source: str = "manual",
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        subject_ref: dict[str, Any] | None = None,
+    ) -> UUID:
+        """Insert the workflow row and write the workflow.started audit event.
+
+        Does NOT drive any steps. Pair with a subsequent `resume(workflow_id)`
+        (typically dispatched as a BackgroundTask) to run the chain.
+        """
         chain = get_chain(kind)
         pool = await get_pool()
 
@@ -90,8 +125,6 @@ class PromptChainOrchestrator(BaseOrchestrator):
                     actor=initiated_by,
                     payload={"kind": kind, "pattern": chain.pattern.value},
                 )
-
-        await self._drive(workflow_id)
         return workflow_id
 
     async def resume(self, workflow_id: UUID) -> None:
