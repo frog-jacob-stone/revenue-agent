@@ -30,12 +30,14 @@ agent proposes → action (proposed) → human approves → system executes → 
 
 ```
 router  →  service  →  (agent | integration client | db)
+                  ↘  orchestrator  →  chain → step (per-step agent or integration)
 ```
 
 - **Routers** validate input and call services. No business logic.
 - **Services** hold business logic. Never call routers. Every state-changing service function calls `write_audit_event()`.
 - **Agents** are services that propose actions via Anthropic SDK. They never reach out to third-party systems on their own.
 - **Integration clients** (HubSpot, Gmail, Harvest) are called only by services executing approved actions.
+- **Orchestrator** drives multi-step chains for workflows whose `pattern` is set. See "Prompt Chain Orchestrator" below.
 - All DB, HTTP, and agent calls are async.
 
 ## Integration Model
@@ -56,6 +58,16 @@ An agent has a single coherent identity: one job, one audit trail, one approval 
 **Read-only vs. write-proposing is a hard split.** An analytics agent and an operations agent for the same domain are distinct agents — different audit trails, different inbox behavior, different UI presentation.
 
 **Chat is an interface, not an agent type.** The same agent can be triggered by webhook, schedule, or chat. All paths that propose writes flow through the approval inbox. Chat-only read-only agents never touch the inbox.
+
+## Prompt Chain Orchestrator
+
+Lives in `app/orchestrator/`. Drives workflows whose `pattern` is set (see `docs/SCHEMA.md` "Agentic Patterns") through a declarative chain of `Step`s. Each step writes one row to `actions`; tool calls, LLM calls, and critiques auto-progress, while `checkpoint` and `execution` steps pause for human approval.
+
+- **Chain definition.** `Chain(kind, pattern, agent_slug, steps=(...))` registered at module import time via `register_chain()`. Looked up by workflow `kind`.
+- **Resume model.** When a paused action is approved, the approval router schedules `orchestrator.resume(workflow_id)` via FastAPI `BackgroundTasks` so the HTTP response returns immediately. Server restart loses in-flight resumes — recovery is via re-triggering the workflow (a UI-driven "Resume" button is on the backlog along with a real worker queue).
+- **State.** Reconstructed from `actions` rows on every entry; the orchestrator holds no in-memory state across calls. `WorkflowState` is a runtime view, never persisted.
+- **Reflection loops.** A `CritiqueStep` declares `critiques_step_index` and `max_attempts`. On fail with budget remaining, the orchestrator rewinds `current_step` to the critiqued step and writes a retry attempt (`retry_of_action_id` chains back to the prior failed attempt). Budget exhausted → workflow `failed`.
+- **Legacy approval flow** (action whose workflow has no `pattern`) is unchanged: approve → execute synchronously → complete.
 
 ## Multi-Agent Orchestration
 
