@@ -8,7 +8,7 @@ from app.config import settings
 from app.db import close_pool, get_pool
 from app.orchestrator.chains import register_all as register_chains
 from app.routers import actions, agents, analytics, audit_log, chat, memories, workflows
-from app.seed import seed_agents
+from app.seed import seed_agents, seed_voice_profile
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 
@@ -17,6 +17,7 @@ logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.I
 async def lifespan(app: FastAPI):
     await get_pool()
     await seed_agents()
+    await seed_voice_profile()
     register_chains()
     yield
     await close_pool()

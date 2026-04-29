@@ -60,3 +60,32 @@ class SlideDeckAgent(_PlannedAgent):
     slug = "slide-deck-agent"
     name = "Slide Deck Agent"
     description = "Converts a completed proposal into a presentation deck."
+
+
+class _CriticAgent(_PlannedAgent):
+    """Internal evaluator invoked by orchestrator chains, not by humans.
+
+    Critics never appear in the inbox: their step rows are `step_kind=critique`
+    which the inbox filter already excludes. They have no `run()` because they
+    are driven by chain step handlers, not the legacy agent_runner.
+    """
+
+    requires_approval: ClassVar[bool] = False
+
+
+class VoiceCriticAgent(_CriticAgent):
+    slug = "voice-critic"
+    name = "Voice Critic"
+    description = (
+        "Evaluates outbound drafts against the Frogslayer voice profile. Used as "
+        "an internal critique step inside the Outreach chain."
+    )
+
+
+class AccuracyCriticAgent(_CriticAgent):
+    slug = "accuracy-critic"
+    name = "Accuracy Critic"
+    description = (
+        "Cross-checks outbound drafts for factual claims that aren't supported by "
+        "the upstream context. Used as an internal critique step inside the Outreach chain."
+    )

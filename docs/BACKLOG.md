@@ -4,23 +4,23 @@ What's next, what's deferred, what's blocked, and what's still being decided. Up
 
 ## Now
 
-Agentic Workflow Patterns build. Phases A–D landed plus the Rev Rec migration:
+Agentic Workflow Patterns build is complete. All six phases plus the Rev Rec migration have shipped.
 
 - **Phase A** — Migration `0005_agentic_patterns.sql`, inbox filter on `step_kind`, Pydantic models updated.
-- **Phase B** — `app/orchestrator/` module with `PromptChainOrchestrator`, five step kinds, chain registry, BackgroundTasks-based resume hook, rejection→cancel for orchestrated workflows.
-- **Phase C** — `GET /workflows/{id}/trace` endpoint plus reusable `<WorkflowTrace workflowId={id} />` component in the inbox detail view.
-- **Phase D** — Outreach chain (`app/orchestrator/chains/outreach.py`) with 6 steps and a `POST /workflows/outreach` trigger.
-- **Rev Rec migration** — `app/orchestrator/chains/rev_rec.py` (`supervised_automation` pattern). Two divergent endings (configure-incomplete-projects checkpoint vs write-entries execution) live in one chain via new `skip_if` step predicates. `CheckpointStep.on_approve` fires when the user approves an incomplete-projects checkpoint, queuing a fresh validation cycle — replaces the special case that lived in `app/services/execution.py`. `RevenueRecognitionAgent.trigger()` now routes through the orchestrator; `run()` is no longer used.
-
-Remaining phases: E (Critique loops) → F (Tree UI + smoke doc).
+- **Phase B** — `app/orchestrator/` module with `PromptChainOrchestrator`, five step kinds, chain registry, BackgroundTasks-based resume hook, rejection→cancel.
+- **Phase C** — `GET /workflows/{id}/trace` endpoint and reusable `<WorkflowTrace>` component in the inbox detail.
+- **Phase D** — Outreach chain (happy path) with `POST /workflows/outreach` trigger and "Reach out" dashboard button.
+- **Rev Rec migration** — `rev_rec_monthly` chain replaces the `execution.py` re-trigger hack; introduces `skip_if` step predicates and `CheckpointStep.on_approve`.
+- **Phase E** — Voice + accuracy critique loops in the Outreach chain. New `voice-critic` and `accuracy-critic` agents (registered via `_CriticAgent` base in `app/agents/planned.py`). Voice profile lives in `memories` (`kind=preference`, `metadata.kind=voice_profile`), seeded by `seed.seed_voice_profile()`. Failed critiques rewind to the draft step; exhaustion marks workflow `failed`.
+- **Phase F** — `WorkflowTrace` upgraded to tree-grouped rendering: retry attempts indent under their root, latest attempt highlighted, originals dimmed/strikethrough. Default state is collapsed with a one-line summary. `docs/SMOKE_TEST_OUTREACH.md` documents the manual end-to-end run.
 
 ## Next
 
-Planned next, in rough order:
-
-1. Phase E — Voice + accuracy critique loops with `voice-critic` and `accuracy-critic` agents.
-2. Phase F — Tree-rendering trace UI (sibling retries grouped under their root); `docs/SMOKE_TEST_OUTREACH.md`.
-3. Wire real HubSpot / Gmail / Apollo (web search) integrations to remove the stubs in the outreach chain.
+1. Wire real HubSpot / Gmail / Apollo (web search) integrations to remove the stubs in the outreach chain.
+2. Document ingestion pipeline (SharePoint → parse → chunk → embed → `knowledge_base`) — required for pattern #3.
+3. Brand research workflow (pattern #3, `prompt_chain_artifact`) — needs ingestion pipeline plus a follow-up migration for output_artifact_url and possibly a `claims` table.
+4. Real worker queue (Arq + Redis) for orchestrator resume — needed before chains can survive server restarts reliably.
+5. Multi-gate workflows (multiple checkpoints in one chain) — schema supports it; the trace UI will need light polish.
 
 ## Later
 

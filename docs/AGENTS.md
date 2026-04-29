@@ -10,8 +10,8 @@ For the rules that govern how agents are bounded, see `ARCHITECTURE.md` (Agent S
 |---|---|---|
 | SDR Researcher | New account in HubSpot / manual | Before outreach |
 | Outreach Agent | Manual ("Reach out" on dashboard) / SDR Researcher completes | Always — before any email sends |
-| Voice Critic (Phase E) | Invoked by Outreach chain | n/a — internal critic step |
-| Accuracy Critic (Phase E) | Invoked by Outreach chain | n/a — internal critic step |
+| Voice Critic | Invoked by Outreach chain | n/a — internal critic step |
+| Accuracy Critic | Invoked by Outreach chain | n/a — internal critic step |
 | Content Writer | Manual or scheduled | Before publishing |
 | Proposal Generator | Deal stage change in HubSpot | Before sending to client |
 | Slide Deck Agent | Triggered by Proposal Generator | Before delivery |
@@ -41,21 +41,31 @@ The "fix incomplete projects then keep going" loop is realised via the checkpoin
 
 `RevenueRecognitionAgent.run()` is no longer used (raises `NotImplementedError`); all execution flows through the orchestrator.
 
-## Outreach Agent (Phase D — happy path)
+## Outreach Agent
 
 Implemented as an orchestrator chain in [`app/orchestrator/chains/outreach.py`](../app/orchestrator/chains/outreach.py). Pattern: `prompt_chain_action`. Trigger: `POST /workflows/outreach { "hubspot_contact_id": "..." }` or the "Reach out" button on the Outreach Agent card on the dashboard.
 
 Chain steps:
 
-| Seq | step_kind | What it does |
-|---|---|---|
-| 1 | tool_call | Pull HubSpot contact + company (stubbed when `HUBSPOT_TOKEN` is unset) |
-| 2 | tool_call | Web search company signals (stub for Phase D — Apollo/web search ships later) |
-| 3 | llm_step  | Consolidate context into a brief |
-| 4 | tool_call | Retrieve Frogslayer GTM context (stub blurb until pgvector ingestion lands) |
-| 5 | llm_step  | Draft outreach email (subject + body) |
-| 6 | execution | Approve and send via Gmail (stub: logs `[gmail-stub] would send …`) |
+| Seq | step_kind | Agent | What it does |
+|---|---|---|---|
+| 1 | tool_call | outreach-agent | Pull HubSpot contact + company (stubbed when `HUBSPOT_TOKEN` is unset) |
+| 2 | tool_call | outreach-agent | Web search company signals (stub) |
+| 3 | llm_step  | outreach-agent | Consolidate context into a brief |
+| 4 | tool_call | outreach-agent | Retrieve Frogslayer GTM context (stub blurb until pgvector ingestion lands) |
+| 5 | llm_step  | outreach-agent | Draft outreach email — receives critique feedback on retry |
+| 6 | critique  | voice-critic | Voice critique against the seeded voice profile (max_attempts=3) |
+| 7 | critique  | accuracy-critic | Cross-check claims against upstream context (max_attempts=2) |
+| 8 | execution | outreach-agent | Approve and send via Gmail (stub: logs `[gmail-stub] would send …`) |
 
-Phase E will insert voice and accuracy critique steps with retry loops between steps 5 and 6.
+Both critiques retry the draft step (idx 4) on failure; an exhausted budget marks the workflow `failed`. Successful critiques advance to the human approval gate.
 
-When `ANTHROPIC_API_KEY` is unset, the LLM steps fall back to deterministic stub responses so the chain runs end-to-end in dev environments without creds.
+When `ANTHROPIC_API_KEY` is unset, the LLM steps and critique steps fall back to deterministic stub responses (critics default to PASS) so the chain runs end-to-end in dev environments without creds.
+
+### Voice Critic + voice profile memory
+
+Voice Critic pulls its evaluation criteria from a `preference` memory tagged `metadata.kind = 'voice_profile'` and seeded by [`app/seed.py::seed_voice_profile()`](../app/seed.py) on app startup. The seed is idempotent and never overwrites a manually edited row. To update the voice profile, edit the memory directly in `memories` — no deploy required. The default profile lives in `app/seed.py` as `_VOICE_PROFILE_TEXT`.
+
+### Accuracy Critic
+
+Reads the draft plus all upstream context (HubSpot record, web signals, brief) and flags any factual claim in the draft that isn't supported by the context. No external memory or knowledge base lookups — accuracy is judged against the chain's own data.

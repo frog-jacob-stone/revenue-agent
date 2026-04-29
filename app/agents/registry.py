@@ -9,17 +9,21 @@ from app.agents.base import BaseAgent
 from app.agents.invoice_analytics import InvoiceAnalyticsAgent
 from app.agents.invoice_operations import InvoiceOperationsAgent
 from app.agents.planned import (
+    AccuracyCriticAgent,
     ContentWriterAgent,
     OutreachAgent,
     ProposalGeneratorAgent,
     SDRResearcherAgent,
     SlideDeckAgent,
+    VoiceCriticAgent,
 )
 from app.agents.revenue_recognition import RevenueRecognitionAgent
 
 AGENTS: tuple[type[BaseAgent], ...] = (
     SDRResearcherAgent,
     OutreachAgent,
+    VoiceCriticAgent,
+    AccuracyCriticAgent,
     ContentWriterAgent,
     ProposalGeneratorAgent,
     SlideDeckAgent,
