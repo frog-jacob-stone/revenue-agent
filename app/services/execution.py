@@ -52,25 +52,12 @@ async def execute(conn: asyncpg.Connection, action: dict[str, Any]) -> dict[str,
             return {"re_triggered": True, "workflow_id": result.get("workflow_id")}
 
         case "generate_invoice":
-            payload = action.get("executed_payload") or action.get("proposed_payload", {})
-            harvest_payload = dict(payload.get("harvest_payload", {}))
-            # Strip display-only fields (prefixed with _) from line items before sending to Harvest
-            harvest_payload["line_items"] = [
-                {k: v for k, v in li.items() if not k.startswith("_")}
-                for li in harvest_payload.get("line_items", [])
-            ]
-            invoice = await harvest.create_invoice_draft(settings, harvest_payload)
-            logger.info(
-                "created Harvest invoice id=%s number=%s for client_id=%s",
-                invoice.get("id"),
-                invoice.get("number"),
-                harvest_payload.get("client_id"),
+            # v1 stub — enable by implementing harvest.generate_invoice()
+            payload = action.get("proposed_payload", {})
+            raise NotImplementedError(
+                f"generate_invoice is not active in v1 (invoice_id={payload.get('invoice_id')}). "
+                "Enable by removing the NotImplementedError in harvest.generate_invoice()."
             )
-            return {
-                "invoice_id": invoice.get("id"),
-                "invoice_number": invoice.get("number"),
-                "status": invoice.get("state"),
-            }
 
         case "send_invoice":
             # v1 stub — enable by implementing harvest.send_invoice()
