@@ -179,6 +179,25 @@ class PromptChainOrchestrator(BaseOrchestrator):
                     return
 
                 step = chain.steps[state.current_step]
+
+                # Conditional steps: advance without writing an action row when
+                # skip_if returns True. Used by chains that branch on a prior
+                # step's result (e.g. rev rec's "configure" vs "write" paths).
+                if step.skip_if is not None:
+                    ctx = StepContext(
+                        workflow_id=state.workflow_id,
+                        workflow_kind=state.kind,
+                        step_index=state.current_step,
+                        attempt_number=1,
+                        state=state,
+                        conn=conn,
+                    )
+                    if step.skip_if(ctx):
+                        await self._set_current_step(
+                            conn, state.workflow_id, state.current_step + 1
+                        )
+                        continue
+
                 await self._run_next_step(conn, chain, state, step)
 
     async def _run_next_step(

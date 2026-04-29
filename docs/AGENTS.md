@@ -26,6 +26,21 @@ For the rules that govern how agents are bounded, see `ARCHITECTURE.md` (Agent S
 
 _Agent prompt templates and behavioral rules live alongside the agent code in `app/agents/<agent>/`. Add references here as agents stabilize._
 
+## Revenue Recognition (orchestrated)
+
+Implemented as a `supervised_automation` chain in [`app/orchestrator/chains/rev_rec.py`](../app/orchestrator/chains/rev_rec.py). Trigger: monthly cron, the chat tool `trigger_revenue_recognition`, or `RevenueRecognitionAgent.trigger()` directly.
+
+| Seq | step_kind | What it does | Skipped when |
+|---|---|---|---|
+| 0 | tool_call | Sync Harvest → Airtable, fetch projects, validate completeness | — |
+| 1 | tool_call | Compute revenue entries (per-project Forecast + Harvest invoice totals) | validation incomplete |
+| 2 | checkpoint | Configure incomplete projects (action_type `configure_rev_rec_projects`) | validation passed |
+| 3 | execution | Write entries to Airtable (action_type `write_rev_rec`) | validation incomplete |
+
+The "fix incomplete projects then keep going" loop is realised via the checkpoint's `on_approve` callback — approving the checkpoint queues a fresh `rev_rec_monthly` workflow so the user can iterate until validation passes. This replaces the previous special case that lived in `app/services/execution.py`.
+
+`RevenueRecognitionAgent.run()` is no longer used (raises `NotImplementedError`); all execution flows through the orchestrator.
+
 ## Outreach Agent (Phase D — happy path)
 
 Implemented as an orchestrator chain in [`app/orchestrator/chains/outreach.py`](../app/orchestrator/chains/outreach.py). Pattern: `prompt_chain_action`. Trigger: `POST /workflows/outreach { "hubspot_contact_id": "..." }` or the "Reach out" button on the Outreach Agent card on the dashboard.

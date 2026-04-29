@@ -4,12 +4,13 @@ What's next, what's deferred, what's blocked, and what's still being decided. Up
 
 ## Now
 
-Agentic Workflow Patterns build (six phases). Phases A, B, C, and D landed:
+Agentic Workflow Patterns build. Phases A–D landed plus the Rev Rec migration:
 
 - **Phase A** — Migration `0005_agentic_patterns.sql`, inbox filter on `step_kind`, Pydantic models updated.
 - **Phase B** — `app/orchestrator/` module with `PromptChainOrchestrator`, five step kinds, chain registry, BackgroundTasks-based resume hook, rejection→cancel for orchestrated workflows.
-- **Phase C** — `GET /workflows/{id}/trace` endpoint plus reusable `<WorkflowTrace workflowId={id} />` component in the inbox detail view. Renders all chain steps in `sequence` order with status icons, step_kind labels, retry attempt counters, and inline-collapsible critique results.
-- **Phase D** — Outreach chain (`app/orchestrator/chains/outreach.py`) with 6 steps: HubSpot/web/KB tool_calls, two LLM steps (consolidate, draft), and an execution step that gates on human approval before the (stubbed) Gmail send. `POST /workflows/outreach` trigger endpoint and "Reach out" button on the dashboard. LLM steps fall back to deterministic stubs when `ANTHROPIC_API_KEY` is unset; HubSpot fetch falls back to placeholder data when `HUBSPOT_TOKEN` is unset. Refactored `orchestrator.start` into `create_workflow` + `resume` so the trigger endpoint returns 202 immediately.
+- **Phase C** — `GET /workflows/{id}/trace` endpoint plus reusable `<WorkflowTrace workflowId={id} />` component in the inbox detail view.
+- **Phase D** — Outreach chain (`app/orchestrator/chains/outreach.py`) with 6 steps and a `POST /workflows/outreach` trigger.
+- **Rev Rec migration** — `app/orchestrator/chains/rev_rec.py` (`supervised_automation` pattern). Two divergent endings (configure-incomplete-projects checkpoint vs write-entries execution) live in one chain via new `skip_if` step predicates. `CheckpointStep.on_approve` fires when the user approves an incomplete-projects checkpoint, queuing a fresh validation cycle — replaces the special case that lived in `app/services/execution.py`. `RevenueRecognitionAgent.trigger()` now routes through the orchestrator; `run()` is no longer used.
 
 Remaining phases: E (Critique loops) → F (Tree UI + smoke doc).
 
@@ -17,10 +18,9 @@ Remaining phases: E (Critique loops) → F (Tree UI + smoke doc).
 
 Planned next, in rough order:
 
-1. **Migrate Revenue Recognition off the re-trigger hack** — convert it to a `supervised_automation` chain through the orchestrator (originally part of Phase D; deferred as separate scope to keep the Outreach PR focused).
-2. Phase E — Voice + accuracy critique loops with `voice-critic` and `accuracy-critic` agents.
-3. Phase F — Tree-rendering trace UI (sibling retries grouped under their root); `docs/SMOKE_TEST_OUTREACH.md`.
-4. Wire real HubSpot / Gmail / Apollo (web search) integrations to remove the stubs in the outreach chain.
+1. Phase E — Voice + accuracy critique loops with `voice-critic` and `accuracy-critic` agents.
+2. Phase F — Tree-rendering trace UI (sibling retries grouped under their root); `docs/SMOKE_TEST_OUTREACH.md`.
+3. Wire real HubSpot / Gmail / Apollo (web search) integrations to remove the stubs in the outreach chain.
 
 ## Later
 

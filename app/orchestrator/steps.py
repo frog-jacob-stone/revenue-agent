@@ -6,6 +6,11 @@ A Step is a node in a chain. Each step kind has different semantics:
 
 Concrete behavior is supplied by handler callables passed in at construction so
 chains can be defined declaratively without subclassing.
+
+Each step optionally takes a `skip_if` predicate that the orchestrator evaluates
+before running the step. When `skip_if` returns True the orchestrator advances
+without writing any action row — this is how chains express conditional paths
+("write to Airtable if validation passed; ask for fixes otherwise").
 """
 from __future__ import annotations
 
@@ -21,6 +26,8 @@ from app.orchestrator.state import StepContext
 # operation result (what actually happened).
 PropHandler = Callable[[StepContext], Awaitable[dict[str, Any]]]
 ExecHandler = Callable[[StepContext], Awaitable[dict[str, Any]]]
+# A skip predicate is evaluated synchronously against StepContext.
+SkipPredicate = Callable[[StepContext], bool]
 
 
 class Step(ABC):
@@ -35,6 +42,7 @@ class Step(ABC):
         agent_slug: str | None = None,
         action_type: str = "other",
         risk_level: str | None = None,
+        skip_if: SkipPredicate | None = None,
     ) -> None:
         self.summary = summary
         # If None, the orchestrator falls back to the chain's default agent.
@@ -43,6 +51,9 @@ class Step(ABC):
         # to "other" since the action_type enum is oriented around legacy executors.
         self.action_type = action_type
         self.risk_level = risk_level
+        # When set and returns True for the current StepContext, the orchestrator
+        # skips this step (no action row written) and advances current_step.
+        self.skip_if = skip_if
 
     @abstractmethod
     async def propose(self, ctx: StepContext) -> dict[str, Any]:
@@ -110,7 +121,12 @@ class CritiqueStep(Step):
 
 
 class CheckpointStep(Step):
-    """Pauses the workflow for a human review. No side effect on resume."""
+    """Pauses the workflow for a human review.
+
+    By default, approval is a pure gate — no side effect runs on resume. Pass
+    an `on_approve` callback to do something on approval (e.g. requeue a new
+    workflow because the human just fixed external data).
+    """
 
     step_kind: ClassVar[StepKind] = StepKind.checkpoint
 
@@ -118,12 +134,15 @@ class CheckpointStep(Step):
         self,
         summary: str,
         propose_handler: PropHandler | None = None,
+        *,
+        on_approve: ExecHandler | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(summary, **kwargs)
         # Optional: pre-populate proposed_payload (e.g. with the draft to review).
         # If None, payload is built from the prior step's result.
         self._propose_handler = propose_handler
+        self._on_approve = on_approve
 
     async def propose(self, ctx: StepContext) -> dict[str, Any]:
         if self._propose_handler is not None:
@@ -131,6 +150,11 @@ class CheckpointStep(Step):
         # Default: surface the most recent prior step's result for review.
         prior = ctx.state.latest_for_step(ctx.step_index - 1) if ctx.step_index > 0 else None
         return prior.result if prior and prior.result else {}
+
+    async def execute(self, ctx: StepContext) -> dict[str, Any]:
+        if self._on_approve is not None:
+            return await self._on_approve(ctx)
+        return {}
 
 
 class ExecutionStep(Step):
