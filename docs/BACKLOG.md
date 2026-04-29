@@ -4,21 +4,33 @@ What's next, what's deferred, what's blocked, and what's still being decided. Up
 
 ## Now
 
-_(In-flight work — what Claude or Jacob is actively building.)_
+Agentic Workflow Patterns build (six phases). Phase A landed:
+
+- Migration `0005_agentic_patterns.sql` — `step_kind`, parent/retry tracking, `critique_result` on actions; `pattern`, `current_step` on workflows
+- Inbox filter on `step_kind`
+- Pydantic models updated to expose new columns
+
+Remaining phases: B (Orchestrator) → C (Trace API + minimal UI) → D (Outreach happy path; also migrates Revenue Recognition off the re-trigger hack) → E (Critique loops) → F (Tree UI + smoke doc).
 
 ## Next
 
 Planned next, in rough order:
 
-1. Move complex n8n logic to FastAPI — revenue recognition first
-2. Expand agent roster from the foundation already built
-3. Invoice Operations agent + Invoice Analytics agent (first domain with both write and read agents)
+1. Phase B — Orchestrator (`app/orchestrator/` module, BackgroundTasks-based resume hook, mocked-step tests)
+2. Phase C — Trace API (`GET /workflows/{id}/trace`) + minimal flat-list trace panel in inbox detail
+3. Phase D — Outreach chain happy path (steps 1–5, 10, 11) with stubs; reroute Revenue Recognition through the orchestrator
+4. Phase E — Voice + accuracy critique loops with `voice-critic` and `accuracy-critic` agents
+5. Phase F — Tree-rendering trace UI; `docs/SMOKE_TEST_OUTREACH.md`
 
 ## Later
 
 - Router agent (gated on 4+ specialists existing and observed routing friction)
 - Shared memory patterns between agents (agents leaving notes for each other via `memories` table)
-- Full orchestrator for multi-step cross-agent workflows
+- **Real worker queue (Arq + Redis)** for orchestrator resume — needed before chains can reliably survive server restarts. Phase B uses FastAPI BackgroundTasks; lost-on-restart resumes are recovered via a manual "Resume" button.
+- **Document ingestion pipeline** (SharePoint → parse → chunk → embed → `knowledge_base`) — required before brand research workflow.
+- **Brand research workflow (pattern #3, `prompt_chain_artifact`)** — heavy RAG, claim-level traceability, ends in a file artifact. Needs ingestion pipeline first plus a follow-up migration (likely `output_artifact_url` and possibly a `claims` table).
+- **Multi-gate workflows** — workflows with multiple checkpoints in one chain. Schema supports it; trace UI doesn't visualize it well yet.
+- **Parallelism in chains** — running tool calls concurrently. Will require relaxing the strict `sequence` ordering convention.
 - Cloud deployment (Railway / Render)
 
 ## Blocked

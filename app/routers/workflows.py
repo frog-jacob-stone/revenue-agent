@@ -33,8 +33,9 @@ async def create_workflow(body: WorkflowCreate, pool: asyncpg.Pool = Depends(_db
                 """
                 INSERT INTO workflows
                     (kind, status, trigger_source, trigger_payload,
-                     subject_type, subject_id, subject_ref, initiated_by, metadata)
-                VALUES ($1, 'running', $2, $3, $4, $5, $6, $7, $8)
+                     subject_type, subject_id, subject_ref, initiated_by, metadata,
+                     pattern)
+                VALUES ($1, 'running', $2, $3, $4, $5, $6, $7, $8, $9)
                 RETURNING *
                 """,
                 body.kind,
@@ -45,6 +46,7 @@ async def create_workflow(body: WorkflowCreate, pool: asyncpg.Pool = Depends(_db
                 body.subject_ref,
                 body.initiated_by,
                 body.metadata or {},
+                body.pattern.value if body.pattern else None,
             )
             await audit.write_audit_event(
                 conn,

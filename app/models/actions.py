@@ -57,6 +57,14 @@ class ActionReject(ORMBase):
     rejection_reason: str
 
 
+class StepKind(str, Enum):
+    tool_call = "tool_call"
+    llm_step = "llm_step"
+    critique = "critique"
+    checkpoint = "checkpoint"
+    execution = "execution"
+
+
 class ActionResponse(ORMBase):
     id: UUID
     workflow_id: UUID
@@ -76,3 +84,9 @@ class ActionResponse(ORMBase):
     executed_at: datetime | None = None
     error: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    step_kind: StepKind | None = None
+    parent_action_id: UUID | None = None
+    retry_of_action_id: UUID | None = None
+    attempt_number: int = 1
+    max_attempts: int | None = None
+    critique_result: dict[str, Any] | None = None

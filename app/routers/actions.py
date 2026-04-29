@@ -25,7 +25,13 @@ async def list_actions(
     agent_slug: str | None = None,
     pool: asyncpg.Pool = Depends(_db),
 ):
-    conditions: list[str] = []
+    # Inbox shows only steps that require human approval — checkpoints and
+    # external-write executions. tool_call/llm_step/critique rows auto-progress
+    # and are visible only via the workflow trace endpoint. Null step_kind is
+    # treated as 'execution' for backwards compatibility with pre-0005 rows.
+    conditions: list[str] = [
+        "(a.step_kind IS NULL OR a.step_kind IN ('checkpoint', 'execution'))"
+    ]
     params: list = []
 
     if status != "all":
@@ -36,7 +42,7 @@ async def list_actions(
         params.append(agent_slug)
         conditions.append(f"ag.slug = ${len(params)}")
 
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    where = "WHERE " + " AND ".join(conditions)
     rows = await pool.fetch(
         f"""
         SELECT a.* FROM actions a
