@@ -14,7 +14,16 @@ async def approve_action(
     action_id: UUID,
     approved_by: str = "system",
     executed_payload: dict | None = None,
-) -> dict:
+) -> tuple[dict, bool]:
+    """Approve an action. Returns (action_row, needs_orchestrator_resume).
+
+    If the workflow has a `pattern` set, the action is left in 'approved' status
+    and the caller is expected to dispatch `orchestrator.resume(workflow_id)` —
+    the orchestrator owns execution for chained workflows.
+
+    Otherwise the legacy path runs inline: mark executing, dispatch to
+    `execution.execute()`, mark completed.
+    """
     async with pool.acquire() as conn:
         async with conn.transaction():
             action = await conn.fetchrow(
@@ -31,13 +40,22 @@ async def approve_action(
 
             action_dict = dict(action)
 
+            workflow_pattern = await conn.fetchval(
+                "SELECT pattern FROM workflows WHERE id = $1",
+                action_dict["workflow_id"],
+            )
+
             await conn.execute(
                 """
                 UPDATE actions
-                SET status = 'approved', approved_by = $1, approved_at = now()
-                WHERE id = $2
+                SET status = 'approved',
+                    approved_by = $1,
+                    approved_at = now(),
+                    executed_payload = $2
+                WHERE id = $3
                 """,
                 approved_by,
+                executed_payload,
                 action_id,
             )
             await audit.write_audit_event(
@@ -49,6 +67,13 @@ async def approve_action(
                 actor=approved_by,
                 payload={"approved_by": approved_by},
             )
+
+            if workflow_pattern:
+                # Orchestrated workflow — return now; caller schedules resume.
+                approved = await conn.fetchrow(
+                    "SELECT * FROM actions WHERE id = $1", action_id
+                )
+                return dict(approved), True
 
             await conn.execute(
                 "UPDATE actions SET status = 'executing' WHERE id = $1",
@@ -98,7 +123,7 @@ async def approve_action(
                 payload={"result": result},
             )
 
-            return dict(updated)
+            return dict(updated), False
 
 
 async def reject_action(pool: asyncpg.Pool, action_id: UUID, reason: str) -> dict:
@@ -135,5 +160,28 @@ async def reject_action(pool: asyncpg.Pool, action_id: UUID, reason: str) -> dic
                 actor="system",
                 payload={"rejection_reason": reason},
             )
+
+            # Orchestrated workflows: a rejected checkpoint cancels the chain.
+            workflow_pattern = await conn.fetchval(
+                "SELECT pattern FROM workflows WHERE id = $1",
+                action["workflow_id"],
+            )
+            if workflow_pattern:
+                await conn.execute(
+                    """
+                    UPDATE workflows
+                    SET status = 'cancelled', completed_at = now(), error = $1
+                    WHERE id = $2
+                    """,
+                    f"checkpoint rejected: {reason}",
+                    action["workflow_id"],
+                )
+                await audit.write_audit_event(
+                    conn,
+                    "workflow.cancelled",
+                    workflow_id=action["workflow_id"],
+                    actor="system",
+                    payload={"rejection_reason": reason, "action_id": str(action_id)},
+                )
 
             return dict(updated)

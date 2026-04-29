@@ -2,10 +2,11 @@ from typing import Optional
 from uuid import UUID
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.db import get_pool
 from app.models.actions import ActionApprove, ActionReject, ActionResponse
+from app.orchestrator import orchestrator
 from app.services import approval
 
 router = APIRouter(prefix="/actions", tags=["actions"])
@@ -66,12 +67,19 @@ async def get_action(action_id: UUID, pool: asyncpg.Pool = Depends(_db)):
 @router.post("/{action_id}/approve", response_model=ActionResponse)
 async def approve_action(
     action_id: UUID,
+    background_tasks: BackgroundTasks,
     body: Optional[ActionApprove] = None,
     pool: asyncpg.Pool = Depends(_db),
 ):
     approved_by = body.approved_by if body else "system"
     executed_payload = body.executed_payload if body else None
-    updated = await approval.approve_action(pool, action_id, approved_by, executed_payload)
+    updated, needs_resume = await approval.approve_action(
+        pool, action_id, approved_by, executed_payload
+    )
+    if needs_resume:
+        # Orchestrated workflow: drive forward off-request so the response
+        # returns immediately even if the next steps include slow LLM calls.
+        background_tasks.add_task(orchestrator.resume, updated["workflow_id"])
     return ActionResponse.model_validate(updated)
 
 
