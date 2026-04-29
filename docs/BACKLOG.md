@@ -4,21 +4,21 @@ What's next, what's deferred, what's blocked, and what's still being decided. Up
 
 ## Now
 
-Agentic Workflow Patterns build (six phases). Phases A and B landed:
+Agentic Workflow Patterns build (six phases). Phases A, B, and C landed:
 
 - **Phase A** — Migration `0005_agentic_patterns.sql`, inbox filter on `step_kind`, Pydantic models updated.
-- **Phase B** — `app/orchestrator/` module with `PromptChainOrchestrator`, five step kinds, chain registry, BackgroundTasks-based resume hook, rejection→cancel for orchestrated workflows. Tests in `tests/test_orchestrator.py` cover happy path, checkpoint pause+resume, critique pass/fail/exhaust, execution after approval, rejection, and inbox filtering.
+- **Phase B** — `app/orchestrator/` module with `PromptChainOrchestrator`, five step kinds, chain registry, BackgroundTasks-based resume hook, rejection→cancel for orchestrated workflows.
+- **Phase C** — `GET /workflows/{id}/trace` endpoint plus reusable `<WorkflowTrace workflowId={id} />` component in the inbox detail view. Renders all chain steps in `sequence` order with status icons, step_kind labels, retry attempt counters, and inline-collapsible critique results. Superseded retry sources are muted with strikethrough. Inbox detail now fetches real action data when the URL id is a UUID; the legacy mock path remains as a fallback.
 
-Remaining phases: C (Trace API + minimal UI) → D (Outreach happy path; also migrates Revenue Recognition off the re-trigger hack) → E (Critique loops) → F (Tree UI + smoke doc).
+Remaining phases: D (Outreach happy path; also migrates Revenue Recognition off the re-trigger hack) → E (Critique loops) → F (Tree UI + smoke doc).
 
 ## Next
 
 Planned next, in rough order:
 
-1. Phase C — Trace API (`GET /workflows/{id}/trace`) + minimal flat-list trace panel in inbox detail
-2. Phase D — Outreach chain happy path (steps 1–5, 10, 11) with stubs; reroute Revenue Recognition through the orchestrator
-3. Phase E — Voice + accuracy critique loops with `voice-critic` and `accuracy-critic` agents
-4. Phase F — Tree-rendering trace UI; `docs/SMOKE_TEST_OUTREACH.md`
+1. Phase D — Outreach chain happy path (steps 1–5, 10, 11) with stubs; reroute Revenue Recognition through the orchestrator
+2. Phase E — Voice + accuracy critique loops with `voice-critic` and `accuracy-critic` agents
+3. Phase F — Tree-rendering trace UI (sibling retries grouped under their root); `docs/SMOKE_TEST_OUTREACH.md`
 
 ## Later
 

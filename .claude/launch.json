@@ -6,7 +6,8 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3000,
-      "cwd": "ui"
+      "cwd": "ui",
+      "autoPort": true
     }
   ]
 }

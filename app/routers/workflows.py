@@ -5,7 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.db import get_pool
 from app.models.actions import ActionCreate, ActionResponse
-from app.models.workflows import WorkflowCreate, WorkflowResponse
+from app.models.workflows import (
+    TraceAction,
+    WorkflowCreate,
+    WorkflowResponse,
+    WorkflowTraceResponse,
+)
 from app.services import audit
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
@@ -93,6 +98,57 @@ async def get_workflow(workflow_id: UUID, pool: asyncpg.Pool = Depends(_db)):
             workflow_id,
         )
     return _row_to_workflow(row, actions)
+
+
+@router.get("/{workflow_id}/trace", response_model=WorkflowTraceResponse)
+async def get_workflow_trace(workflow_id: UUID, pool: asyncpg.Pool = Depends(_db)):
+    """Return every action for the workflow in `sequence` order.
+
+    Used by the trace UI to render the full chain — including auto-progressed
+    tool_call/llm_step/critique rows that the inbox filter hides. Relationships
+    (`parent_action_id`, `retry_of_action_id`) are preserved so the client can
+    reconstruct the chain hierarchy.
+    """
+    async with pool.acquire() as conn:
+        wf = await conn.fetchrow(
+            "SELECT id, kind, pattern, status, current_step FROM workflows WHERE id = $1",
+            workflow_id,
+        )
+        if not wf:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        rows = await conn.fetch(
+            """
+            SELECT id, sequence, step_kind, action_type, summary, status,
+                   parent_action_id, retry_of_action_id, attempt_number,
+                   max_attempts, critique_result, created_at, executed_at
+            FROM actions
+            WHERE workflow_id = $1
+            ORDER BY sequence
+            """,
+            workflow_id,
+        )
+
+    actions = [
+        TraceAction.model_validate(
+            {
+                **dict(r),
+                "duration_ms": (
+                    int((r["executed_at"] - r["created_at"]).total_seconds() * 1000)
+                    if r["executed_at"] is not None
+                    else None
+                ),
+            }
+        )
+        for r in rows
+    ]
+    return WorkflowTraceResponse(
+        workflow_id=wf["id"],
+        kind=wf["kind"],
+        pattern=wf["pattern"],
+        status=wf["status"],
+        current_step=wf["current_step"],
+        actions=actions,
+    )
 
 
 @router.post("/{workflow_id}/actions", response_model=ActionResponse, status_code=201)

@@ -55,3 +55,30 @@ class WorkflowResponse(ORMBase):
     pattern: WorkflowPattern | None = None
     current_step: int | None = None
     actions: list[Any] = Field(default_factory=list)
+
+
+class TraceAction(ORMBase):
+    """Lean view of an action for the chain trace UI."""
+    id: UUID
+    sequence: int
+    step_kind: str | None = None
+    action_type: str
+    summary: str
+    status: str
+    parent_action_id: UUID | None = None
+    retry_of_action_id: UUID | None = None
+    attempt_number: int = 1
+    max_attempts: int | None = None
+    critique_result: dict[str, Any] | None = None
+    duration_ms: int | None = None
+    created_at: datetime
+    executed_at: datetime | None = None
+
+
+class WorkflowTraceResponse(ORMBase):
+    workflow_id: UUID
+    kind: str
+    pattern: WorkflowPattern | None = None
+    status: WorkflowStatus
+    current_step: int | None = None
+    actions: list[TraceAction]

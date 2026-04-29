@@ -1,4 +1,4 @@
-import type { Action, AgentRecord, TriggerResult, WorkflowRecord } from './types';
+import type { Action, AgentRecord, TriggerResult, WorkflowRecord, WorkflowTrace } from './types';
 
 export interface SummaryStats {
   accountsResearched: number;
@@ -38,6 +38,14 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function getActions(status: string): Promise<Action[]> {
   return apiFetch<Action[]>(`/actions?status=${encodeURIComponent(status)}`);
+}
+
+export function getAction(id: string): Promise<Action> {
+  return apiFetch<Action>(`/actions/${id}`);
+}
+
+export function getWorkflowTrace(workflowId: string): Promise<WorkflowTrace> {
+  return apiFetch<WorkflowTrace>(`/workflows/${workflowId}/trace`);
 }
 
 export function approveAction(

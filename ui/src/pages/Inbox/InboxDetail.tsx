@@ -1,9 +1,14 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, XCircle, Edit2 } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
+import { ArrowLeft, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 import { APPROVAL_ITEMS } from '../../mocks';
 import AgentBadge from '../../components/shared/AgentBadge';
 import ActionTypeChip from '../../components/shared/ActionTypeChip';
 import StubBadge from '../../components/shared/StubBadge';
+import WorkflowTrace from '../../components/WorkflowTrace';
+import { approveAction, getAction, rejectAction } from '../../api';
+import type { Action } from '../../types';
 
 function fmt(iso: string) {
   return new Date(iso).toLocaleString('en-US', {
@@ -12,8 +17,163 @@ function fmt(iso: string) {
   });
 }
 
-export default function InboxDetail() {
-  const { itemId } = useParams<{ itemId: string }>();
+function isUuid(s: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+}
+
+function RealActionDetail({ action }: { action: Action }) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [rejectReason, setRejectReason] = useState('');
+  const [showReject, setShowReject] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const refetch = () => {
+    queryClient.invalidateQueries({ queryKey: ['action', action.id] });
+    queryClient.invalidateQueries({ queryKey: ['workflow-trace', action.workflow_id] });
+    queryClient.invalidateQueries({ queryKey: ['actions', 'proposed'] });
+  };
+
+  const handleApprove = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await approveAction(action.id, 'system', action.proposed_payload);
+      refetch();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleReject = async () => {
+    if (!rejectReason.trim()) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await rejectAction(action.id, rejectReason.trim());
+      refetch();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const isPending = action.status === 'proposed';
+
+  return (
+    <div className="p-6 max-w-3xl mx-auto space-y-6">
+      <button
+        className="flex items-center gap-2 text-sm text-slate-400 hover:text-slate-200 transition-colors"
+        onClick={() => navigate('/inbox')}
+      >
+        <ArrowLeft className="w-4 h-4" />
+        Back to Inbox
+      </button>
+
+      {/* Header */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <ActionTypeChip type={action.action_type} />
+          <span className="text-xs text-slate-500">
+            sequence #{action.sequence}
+          </span>
+          <span
+            className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${
+              action.status === 'proposed'
+                ? 'bg-amber-400/15 text-amber-400 border border-amber-400/30'
+                : action.status === 'completed'
+                ? 'bg-emerald-400/15 text-emerald-400 border border-emerald-400/30'
+                : action.status === 'failed' || action.status === 'rejected'
+                ? 'bg-red-400/15 text-red-400 border border-red-400/30'
+                : 'bg-slate-700 text-slate-300 border border-slate-600'
+            }`}
+          >
+            {action.status}
+          </span>
+        </div>
+        <h1 className="text-lg font-semibold text-slate-100">{action.summary}</h1>
+        {action.reasoning && (
+          <p className="text-sm text-slate-400 leading-relaxed border-l-2 border-slate-700 pl-3">
+            {action.reasoning}
+          </p>
+        )}
+        <p className="text-xs text-slate-600">{fmt(action.created_at)}</p>
+      </div>
+
+      {/* Workflow trace — Phase C: flat list above the payload. */}
+      <WorkflowTrace workflowId={action.workflow_id} />
+
+      {/* Payload */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+        <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">
+          Action Payload
+        </h2>
+        <pre className="text-xs text-emerald-400 bg-slate-950 rounded-lg p-4 overflow-x-auto leading-relaxed font-mono">
+          {JSON.stringify(action.proposed_payload, null, 2)}
+        </pre>
+      </div>
+
+      {/* Actions */}
+      {isPending && (
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+          <div className="flex items-center gap-3">
+            <button
+              disabled={busy}
+              onClick={handleApprove}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/25 disabled:opacity-40 transition-colors"
+            >
+              {busy ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="w-4 h-4" />
+              )}
+              Approve
+            </button>
+            <button
+              disabled={busy}
+              onClick={() => setShowReject((s) => !s)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-500/15 text-red-400 border border-red-500/20 hover:bg-red-500/25 disabled:opacity-40 transition-colors"
+            >
+              <XCircle className="w-4 h-4" />
+              Reject
+            </button>
+          </div>
+
+          {showReject && (
+            <div className="border-t border-slate-800 pt-4">
+              <label className="block text-xs font-medium text-slate-400 mb-2">
+                Reason for rejection
+              </label>
+              <textarea
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-300 placeholder-slate-600 resize-none focus:outline-none focus:border-slate-600"
+                rows={3}
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Explain why this action should not proceed…"
+              />
+              <button
+                disabled={busy || !rejectReason.trim()}
+                onClick={handleReject}
+                className="mt-2 flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700 disabled:opacity-40 transition-colors"
+              >
+                {busy && <Loader2 className="w-4 h-4 animate-spin" />}
+                Confirm rejection
+              </button>
+            </div>
+          )}
+
+          {err && <p className="text-xs text-red-400">{err}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MockActionDetail({ itemId }: { itemId: string }) {
   const navigate = useNavigate();
   const item = APPROVAL_ITEMS.find((i) => i.id === itemId);
 
@@ -21,7 +181,10 @@ export default function InboxDetail() {
     return (
       <div className="p-6">
         <p className="text-slate-400">Item not found.</p>
-        <button className="mt-4 text-cyan-400 text-sm hover:underline" onClick={() => navigate('/inbox')}>
+        <button
+          className="mt-4 text-cyan-400 text-sm hover:underline"
+          onClick={() => navigate('/inbox')}
+        >
           ← Back to Inbox
         </button>
       </div>
@@ -38,7 +201,6 @@ export default function InboxDetail() {
         Back to Inbox
       </button>
 
-      {/* Header */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
           <AgentBadge agentId={item.agentId} size="md" />
@@ -49,25 +211,20 @@ export default function InboxDetail() {
         <p className="text-xs text-slate-600">{fmt(item.timestamp)}</p>
       </div>
 
-      {/* Payload */}
+      {/* Trace placeholder — mock items don't have a real workflow id. */}
+      <WorkflowTrace workflowId={null} />
+
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-        <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Action Payload</h2>
+        <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">
+          Action Payload
+        </h2>
         <pre className="text-xs text-emerald-400 bg-slate-950 rounded-lg p-4 overflow-x-auto leading-relaxed font-mono">
           {JSON.stringify(item.payload, null, 2)}
         </pre>
       </div>
 
-      {/* Actions */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
         <div className="flex items-center gap-3">
-          <button
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/25 transition-colors"
-            onClick={() => console.log('edit & approve', item.id)}
-          >
-            <Edit2 className="w-4 h-4" />
-            Edit & Approve
-            <StubBadge />
-          </button>
           <button
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/25 transition-colors"
             onClick={() => console.log('approve', item.id)}
@@ -76,25 +233,46 @@ export default function InboxDetail() {
             Approve
             <StubBadge />
           </button>
-        </div>
-
-        <div className="border-t border-slate-800 pt-4">
-          <label className="block text-xs font-medium text-slate-400 mb-2">Reject with reason</label>
-          <textarea
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-300 placeholder-slate-600 resize-none focus:outline-none focus:border-slate-600"
-            rows={3}
-            placeholder="Explain why this action should not proceed…"
-          />
           <button
-            className="mt-2 flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-500/15 text-red-400 border border-red-500/20 hover:bg-red-500/25 transition-colors"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-500/15 text-red-400 border border-red-500/20 hover:bg-red-500/25 transition-colors"
             onClick={() => console.log('reject', item.id)}
           >
             <XCircle className="w-4 h-4" />
-            Submit Rejection
+            Reject
             <StubBadge />
           </button>
         </div>
       </div>
     </div>
   );
+}
+
+export default function InboxDetail() {
+  const { itemId } = useParams<{ itemId: string }>();
+  const useReal = itemId ? isUuid(itemId) : false;
+
+  // Fetch the real action when the URL id is a UUID. Mock fallback otherwise.
+  const { data: action, isLoading, isError } = useQuery({
+    queryKey: ['action', itemId],
+    queryFn: () => getAction(itemId as string),
+    enabled: useReal,
+    retry: false,
+  });
+
+  if (useReal) {
+    if (isLoading) {
+      return (
+        <div className="p-6 flex items-center text-slate-500">
+          <Loader2 className="w-4 h-4 animate-spin mr-2" />
+          Loading action…
+        </div>
+      );
+    }
+    if (isError || !action) {
+      return <MockActionDetail itemId={itemId as string} />;
+    }
+    return <RealActionDetail action={action} />;
+  }
+
+  return <MockActionDetail itemId={itemId as string} />;
 }

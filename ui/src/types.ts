@@ -68,3 +68,43 @@ export interface WorkflowRecord {
   completed_at: string | null;
   error: string | null;
 }
+
+export type StepKind = 'tool_call' | 'llm_step' | 'critique' | 'checkpoint' | 'execution';
+
+export type WorkflowPattern =
+  | 'supervised_automation'
+  | 'prompt_chain_action'
+  | 'prompt_chain_artifact';
+
+export interface CritiqueResult {
+  passed: boolean;
+  score?: number;
+  feedback?: string;
+  issues?: string[];
+}
+
+export interface TraceAction {
+  id: string;
+  sequence: number;
+  step_kind: StepKind | null;
+  action_type: string;
+  summary: string;
+  status: ActionStatus;
+  parent_action_id: string | null;
+  retry_of_action_id: string | null;
+  attempt_number: number;
+  max_attempts: number | null;
+  critique_result: CritiqueResult | null;
+  duration_ms: number | null;
+  created_at: string;
+  executed_at: string | null;
+}
+
+export interface WorkflowTrace {
+  workflow_id: string;
+  kind: string;
+  pattern: WorkflowPattern | null;
+  status: string;
+  current_step: number | null;
+  actions: TraceAction[];
+}
