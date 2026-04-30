@@ -6,12 +6,12 @@ classes and exposes a slug → class lookup. Never add metadata here — put it
 on the class.
 """
 from app.agents.base import BaseAgent
-from app.agents.planned import (
+from app.agents.outreach import (
     AccuracyCriticAgent,
     OutreachAgent,
     VoiceCriticAgent,
 )
-from app.agents.revenue_recognition import RevenueRecognitionAgent
+from app.agents.revenue import RevenueRecognitionAgent
 
 AGENTS: tuple[type[BaseAgent], ...] = (
     OutreachAgent,

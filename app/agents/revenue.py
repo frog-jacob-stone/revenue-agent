@@ -1,7 +1,6 @@
 import logging
 from datetime import date
-from typing import Any, ClassVar
-from uuid import UUID
+from typing import ClassVar
 
 from app.agents.base import ConversationalAgent
 
@@ -50,37 +49,3 @@ When you trigger a revenue recognition run, always confirm it will appear in the
 
 Answer accurately based only on data returned by get_revenue_data."""
 
-    # ── Workflow execution ───────────────────────────────────────────────────
-
-    async def run(self, workflow_id: UUID, context: dict[str, Any]) -> list[dict[str, Any]]:
-        # Revenue recognition runs as an orchestrated chain (see
-        # app/orchestrator/chains/rev_rec.py). The legacy `run()` -> propose-an-
-        # action flow is no longer used; callers should use trigger() instead.
-        raise NotImplementedError(
-            "RevenueRecognitionAgent.run() is no longer used. "
-            "Use RevenueRecognitionAgent.trigger() — it routes through the "
-            "rev_rec_monthly chain in app/orchestrator/chains/rev_rec.py."
-        )
-
-    @classmethod
-    async def trigger(
-        cls,
-        context: dict[str, Any],
-        initiated_by: str = "system",
-    ) -> dict[str, Any]:
-        """Kick off the rev_rec_monthly chain through the orchestrator.
-
-        Returns a dict containing `workflow_id` (str) so callers (chat tools,
-        cron, the `/agents/{slug}/trigger` endpoint) can correlate the run.
-        """
-        from app.orchestrator import orchestrator
-        from app.orchestrator.chains.rev_rec import REV_REC_KIND
-
-        workflow_id = await orchestrator.create_workflow(
-            REV_REC_KIND,
-            context=context,
-            initiated_by=initiated_by,
-            trigger_source="manual",
-        )
-        await orchestrator.resume(workflow_id)
-        return {"workflow_id": str(workflow_id)}

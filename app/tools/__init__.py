@@ -1,8 +1,7 @@
 from typing import Any
 
-from app.tools.agent_tools import TRIGGER_REVENUE_RECOGNITION
 from app.tools.base import ToolContext, ToolDefinition
-from app.tools.revenue_tools import GET_REVENUE_DATA
+from app.tools.revenue_tools import GET_REVENUE_DATA, TRIGGER_REVENUE_RECOGNITION
 
 _ALL_TOOLS: list[ToolDefinition] = [
     GET_REVENUE_DATA,

@@ -18,6 +18,15 @@ class BaseAgent(ABC):
     allowed_tools: ClassVar[tuple[str, ...]] = ()
     default_config: ClassVar[dict[str, Any]] = {}
 
+
+class ConversationalAgent(BaseAgent, ABC):
+    """Agents that support conversational chat.
+
+    Subclasses implement `get_system_prompt()`. Tool discovery and dispatch are
+    handled by the base class using the shared tool registry (`app.tools`) and
+    the agent's `allowed_tools` list.
+    """
+
     def __init__(
         self,
         agent_id: UUID,
@@ -26,41 +35,9 @@ class BaseAgent(ABC):
     ) -> None:
         self.agent_id = agent_id
         self.config = config
-        # Instance-level override shadows the class tuple. Default to the class
-        # list so test agents constructed without a DB row still get their
-        # declared permissions.
         self.allowed_tools: list[str] = (
             list(allowed_tools) if allowed_tools is not None else list(type(self).allowed_tools)
         )
-
-    @abstractmethod
-    async def run(self, workflow_id: UUID, context: dict[str, Any]) -> list[dict[str, Any]]:
-        """Run the agent and return a list of proposed action payloads."""
-        ...
-
-    @classmethod
-    async def trigger(
-        cls,
-        context: dict[str, Any],
-        initiated_by: str = "system",
-    ) -> dict[str, Any]:
-        """Kick off this agent's workflow via the shared runner.
-
-        Typed entrypoint for cross-agent triggers — callers use
-        `RevenueRecognitionAgent.trigger(ctx)` instead of a slug string.
-        """
-        from app.services.agent_runner import run_agent
-
-        return await run_agent(cls.slug, initiated_by=initiated_by, context=context)
-
-
-class ConversationalAgent(BaseAgent, ABC):
-    """Agents that support both workflow execution and conversational chat.
-
-    Subclasses implement `run()` and `get_system_prompt()`. Tool discovery and
-    dispatch are handled by the base class using the shared tool registry
-    (`app.tools`) and the agent's `allowed_tools` list from the registry.
-    """
 
     @abstractmethod
     def get_system_prompt(self) -> str:
@@ -87,3 +64,13 @@ class ConversationalAgent(BaseAgent, ABC):
             config=self.config,
         )
         return await tools_execute(name, tool_input, ctx)
+
+
+class _CriticAgent(BaseAgent):
+    """Internal evaluator invoked by orchestrator chains, not by humans.
+
+    Critics never appear in the inbox: their step rows are `step_kind=critique`
+    which the inbox filter already excludes.
+    """
+
+    requires_approval: ClassVar[bool] = False

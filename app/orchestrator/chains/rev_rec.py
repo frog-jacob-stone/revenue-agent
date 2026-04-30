@@ -41,7 +41,7 @@ REV_REC_AGENT_SLUG = "revenue-recognition"
 
 
 # -----------------------------------------------------------------------------
-# Helpers (ported from app/agents/revenue_recognition.py)
+# Helpers
 # -----------------------------------------------------------------------------
 
 def _last_day_of_prev_month() -> str:
