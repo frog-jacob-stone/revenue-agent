@@ -17,8 +17,7 @@ Agentic Workflow Patterns build is complete. All six phases plus the Rev Rec mig
 
 ## Next
 
-1. **UI cleanup pass** — drop UI mocks where pages can wire to real data; audit StubBadge usage; remove the mock-fallback path in `InboxDetail` now that all action ids are UUIDs.
-2. **Re-implement invoice operations + analytics** — when the use case lands. Will need fresh design; nothing in the prior implementation was load-bearing.
+1. **Re-implement invoice operations + analytics** — when the use case lands. Will need fresh design; nothing in the prior implementation was load-bearing.
 3. Wire real HubSpot / Gmail / web-search integrations to remove the stubs in the outreach chain.
 4. Document ingestion pipeline (SharePoint → parse → chunk → embed → `knowledge_base`) — required for pattern #3.
 5. Brand research workflow (pattern #3, `prompt_chain_artifact`) — needs ingestion pipeline plus a follow-up migration.
@@ -59,3 +58,4 @@ _(Recently completed work worth remembering. Trim periodically.)_
 - Audit log API + UI
 - Harvest integration tools + Revenue Recognition agent foundation
 - Invoice Operations + Invoice Analytics agents (retired during the post-directive cleanup; re-implement when the use case lands)
+- UI cleanup pass — removed mock fallbacks (`InboxDetail`, `ChatLayout`, `ChatWindow`), wired chat sidebar to real API (conversational agents only), added agent tools section to detail page, removed StubBadge from save-config button, simplified `agents` DB table to runtime-only columns

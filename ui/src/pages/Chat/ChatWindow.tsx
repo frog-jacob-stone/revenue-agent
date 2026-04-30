@@ -1,12 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { Send, Info } from 'lucide-react';
-import { AGENT_MAP } from '../../mocks';
-import type { AgentId } from '../../mocks';
 import { agentChat } from '../../api';
 import type { ChatMessage } from '../../api';
+import type { AgentRecord } from '../../types';
+
+const AGENT_COLORS: Record<string, string> = {
+  'sdr-researcher': '#6366f1',
+  'outreach-agent': '#06b6d4',
+  'content-writer': '#10b981',
+  'proposal-generator': '#f59e0b',
+  'slide-deck-agent': '#ec4899',
+  'revenue-recognition': '#8b5cf6',
+};
 
 interface Props {
-  agentId: AgentId;
+  agentId: string;
+  agent: AgentRecord | null;
 }
 
 interface DisplayMessage {
@@ -21,13 +30,16 @@ function fmt(ts: number) {
   return new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
-export default function ChatWindow({ agentId }: Props) {
+export default function ChatWindow({ agentId, agent }: Props) {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [triggeredNotice, setTriggeredNotice] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const agent = AGENT_MAP[agentId];
+
+  const color = AGENT_COLORS[agentId] ?? '#64748b';
+  const agentName = agent?.name ?? agentId;
+  const agentDescription = agent?.description ?? '';
 
   // Reset on agent switch
   useEffect(() => {
@@ -96,12 +108,12 @@ export default function ChatWindow({ agentId }: Props) {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-800 flex-shrink-0">
-        <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${agent.color}22`, border: `1px solid ${agent.color}44` }}>
-          <span className="text-xs font-bold" style={{ color: agent.color }}>{agent.name[0]}</span>
+        <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${color}22`, border: `1px solid ${color}44` }}>
+          <span className="text-xs font-bold" style={{ color }}>{agentName[0]}</span>
         </div>
         <div>
-          <p className="text-sm font-medium text-slate-200">{agent.name}</p>
-          <p className="text-xs text-slate-500 truncate max-w-xs">{agent.description}</p>
+          <p className="text-sm font-medium text-slate-200">{agentName}</p>
+          <p className="text-xs text-slate-500 truncate max-w-xs">{agentDescription}</p>
         </div>
       </div>
 
@@ -131,7 +143,7 @@ export default function ChatWindow({ agentId }: Props) {
             <div className={`max-w-[75%] ${msg.role === 'user' ? 'order-2' : 'order-1'}`}>
               {msg.role === 'assistant' && (
                 <div className="flex items-center gap-2 mb-1.5">
-                  <span className="text-xs font-medium" style={{ color: agent.color }}>{agent.name}</span>
+                  <span className="text-xs font-medium" style={{ color }}>{agentName}</span>
                   <span className="text-xs text-slate-600">{fmt(parseInt(msg.id.split('-')[1]))}</span>
                 </div>
               )}
@@ -171,7 +183,7 @@ export default function ChatWindow({ agentId }: Props) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={`Message ${agent.name}…`}
+            placeholder={`Message ${agentName}…`}
             rows={2}
             disabled={isLoading}
             className="flex-1 bg-transparent text-sm text-slate-200 placeholder-slate-600 resize-none focus:outline-none disabled:opacity-50"

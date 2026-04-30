@@ -48,9 +48,18 @@ export interface AgentRecord {
   name: string;
   description: string | null;
   requires_approval: boolean;
+  is_conversational: boolean;
   is_active: boolean;
   created_at: string | null;
   updated_at: string | null;
+}
+
+export interface AgentTool {
+  name: string;
+  description: string;
+  input_schema: {
+    properties?: Record<string, { description?: string; type?: string }>;
+  };
 }
 
 export interface TriggerResult {

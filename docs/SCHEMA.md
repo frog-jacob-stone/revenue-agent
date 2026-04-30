@@ -28,18 +28,13 @@ knowledge_base   → vector-searchable reference content (playbooks, past deals)
 
 ### `agents`
 
-Registry of agent definitions. Stored in DB (not hardcoded) so agents can be toggled, reconfigured, and listed in the UI without a deploy.
+Stores only runtime-mutable state. Static metadata (`name`, `description`, `requires_approval`, `allowed_tools`, system prompts) is owned exclusively by the Python class in `app/agents/` — the DB is never the source of truth for those.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid | PK |
-| `slug` | text | Unique identifier, e.g. `sdr_researcher` |
-| `name` | text | Display name |
-| `description` | text | |
-| `requires_approval` | boolean | Master switch for this agent |
-| `approval_scope` | text[] | Which op types need approval: `{create,update,delete}` |
-| `config` | jsonb | Model, temperature, tool whitelist |
-| `system_prompt` | text | Base prompt (may be overridden per workflow) |
+| `slug` | text | Unique identifier matching the class `slug`, e.g. `outreach-agent` |
+| `config` | jsonb | Runtime overrides (model, temperature, etc.) |
 | `is_active` | boolean | Soft disable |
 | `created_at` / `updated_at` | timestamptz | |
 
@@ -243,6 +238,7 @@ Migrations run in filename order; each is idempotent.
 3. `0003_configure_rev_rec_projects_action_type.sql` — adds `configure_rev_rec_projects` to `action_type` enum
 4. `0004_invoice_action_types.sql` — adds invoice-related values to `action_type` enum
 5. `0005_agentic_patterns.sql` — adds `step_kind`, parent/retry tracking, `critique_result` to `actions`; adds `pattern`, `current_step` to `workflows`
+6. `0006_simplify_agents.sql` — drops static metadata columns from `agents` (`name`, `description`, `requires_approval`, `approval_scope`, `system_prompt`, `allowed_tools`); these are now owned exclusively by the Python class registry
 
 ## Open Questions
 

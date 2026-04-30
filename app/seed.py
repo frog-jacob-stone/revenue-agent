@@ -63,21 +63,13 @@ async def seed_agents() -> None:
         for cls in AGENTS:
             await conn.execute(
                 """
-                insert into agents (slug, name, description, requires_approval, allowed_tools, config)
-                values ($1, $2, $3, $4, $5, $6)
+                insert into agents (slug, config)
+                values ($1, $2)
                 on conflict (slug) do update set
-                    name              = excluded.name,
-                    description       = excluded.description,
-                    requires_approval = excluded.requires_approval,
-                    allowed_tools     = excluded.allowed_tools,
-                    config            = excluded.config,
-                    updated_at        = now()
+                    config     = excluded.config,
+                    updated_at = now()
                 """,
                 cls.slug,
-                cls.name,
-                cls.description,
-                cls.requires_approval,
-                list(cls.allowed_tools),
                 dict(cls.default_config),
             )
             logger.debug("seeded agent: %s", cls.slug)

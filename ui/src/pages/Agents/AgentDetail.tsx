@@ -7,12 +7,12 @@ import {
   getAgent,
   getAgentActions,
   getAgentWorkflows,
+  getAgentTools,
   setAgentActive,
   triggerAgent,
 } from '../../api';
-import type { AgentRecord, WorkflowRecord, Action } from '../../types';
+import type { AgentRecord, AgentTool, WorkflowRecord, Action } from '../../types';
 import StatusChip from '../../components/shared/StatusChip';
-import StubBadge from '../../components/shared/StubBadge';
 import SDRResearcherConfig from './config-panels/SDRResearcher';
 import OutreachAgentConfig from './config-panels/OutreachAgent';
 import ContentWriterConfig from './config-panels/ContentWriter';
@@ -99,6 +99,7 @@ export default function AgentDetail() {
   const [agentRecord, setAgentRecord] = useState<AgentRecord | null>(null);
   const [actions, setActions] = useState<Action[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowRecord[]>([]);
+  const [tools, setTools] = useState<AgentTool[]>([]);
   const [toggling, setToggling] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [triggerError, setTriggerError] = useState<string | null>(null);
@@ -112,10 +113,12 @@ export default function AgentDetail() {
     setAgentRecord(null);
     setActions([]);
     setWorkflows([]);
+    setTools([]);
     Promise.all([
       getAgent(agentId).then(setAgentRecord),
       getAgentActions(agentId, 'all').then(setActions),
       getAgentWorkflows(agentId).then(setWorkflows),
+      getAgentTools(agentId).then(setTools).catch(() => {}),
     ]).catch(() => {});
   }, [agentId]);
 
@@ -318,17 +321,27 @@ export default function AgentDetail() {
         {ConfigPanel && (
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
             <ConfigPanel />
-            <div className="mt-5 pt-4 border-t border-slate-800">
-              <button
-                className="px-4 py-2 rounded-lg text-sm font-medium bg-cyan-500/15 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/25 transition-colors"
-                onClick={() => console.log('save config', agentId)}
-              >
-                Save configuration
-                <StubBadge />
-              </button>
-            </div>
           </div>
         )}
+
+        {/* Tools */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-800">
+            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Tools</h2>
+          </div>
+          {tools.length === 0 ? (
+            <p className="px-4 py-6 text-sm text-slate-600 text-center">No tools registered.</p>
+          ) : (
+            <div className="divide-y divide-slate-800">
+              {tools.map((tool) => (
+                <div key={tool.name} className="px-4 py-3">
+                  <p className="text-xs font-mono text-cyan-400 mb-0.5">{tool.name}</p>
+                  <p className="text-sm text-slate-400">{tool.description}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

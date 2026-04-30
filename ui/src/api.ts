@@ -1,4 +1,4 @@
-import type { Action, AgentRecord, TriggerResult, WorkflowRecord, WorkflowTrace } from './types';
+import type { Action, AgentRecord, AgentTool, TriggerResult, WorkflowRecord, WorkflowTrace } from './types';
 
 export interface SummaryStats {
   accountsResearched: number;
@@ -112,6 +112,10 @@ export function getAgentActions(slug: string, status = 'all'): Promise<Action[]>
 
 export function getAgentWorkflows(slug: string): Promise<WorkflowRecord[]> {
   return apiFetch<WorkflowRecord[]>(`/workflows?kind=${encodeURIComponent(slug)}`);
+}
+
+export function getAgentTools(slug: string): Promise<AgentTool[]> {
+  return apiFetch<AgentTool[]>(`/agents/${encodeURIComponent(slug)}/tools`);
 }
 
 export interface ChatMessage {

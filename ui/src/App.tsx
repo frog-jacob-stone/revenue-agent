@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import AppShell from './components/layout/AppShell';
 import Dashboard from './pages/Dashboard';
 import InboxList from './pages/Inbox/InboxList';
@@ -22,7 +22,7 @@ export default function App() {
           <Route path="/agents" element={<AgentList />} />
           <Route path="/agents/:agentId" element={<AgentDetail />} />
           <Route path="/audit" element={<AuditLog />} />
-          <Route path="/chat" element={<Navigate to="/chat/sdr-researcher" replace />} />
+          <Route path="/chat" element={<ChatLayout />} />
           <Route path="/chat/:agentId" element={<ChatLayout />} />
           <Route path="/knowledge" element={<KnowledgeBase />} />
           <Route path="/analytics" element={<Analytics />} />
