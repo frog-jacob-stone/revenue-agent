@@ -1,19 +1,16 @@
 """Revenue recognition chain — pattern #1 (supervised_automation).
 
-Replaces the previous "agent re-triggers itself on approval" hack in
-`app/services/execution.py`. The chain:
-
-  1. tool_call — Sync Harvest → Airtable, fetch projects, validate completeness
-                 (writes a status into result: "incomplete" or "ready")
-  2. tool_call — Compute revenue entries (skipped if validation incomplete)
-  3. checkpoint — Configure incomplete projects (skipped if validation passed)
+  1. tool_call  — Sync Harvest → Airtable, fetch projects, validate completeness
+                  (writes status: "incomplete" or "ready" into result)
+  2. checkpoint — Configure incomplete projects (skipped if validation passed)
                   on_approve = requeue a fresh validation cycle so the human
                   can keep iterating until the data is clean
-  4. execution — Write entries to Airtable (skipped if validation incomplete)
+  3. tool_call  — Compute revenue entries (skipped if validation incomplete)
+  4. execution  — Write entries to Airtable (skipped if validation incomplete)
 
 Two divergent endings live in one chain via `skip_if` predicates. The
-historic `configure_rev_rec_projects` and `write_rev_rec` action_types are
-preserved on the proposed action so existing inbox UI rendering still works.
+`configure_rev_rec_projects` and `write_rev_rec` action_types are preserved
+so existing inbox UI rendering works unchanged.
 """
 from __future__ import annotations
 
@@ -102,9 +99,6 @@ async def _sync_and_validate(ctx: StepContext) -> dict[str, Any]:
     date_recognized = context.get("date_recognized") or _last_day_of_prev_month()
     month_label = date_recognized[:7]
 
-    # Sync Harvest -> Airtable so projects/clients exist before validation.
-    await airtable_sync.run_sync(settings)
-
     # Duplicate guard: refuse to run twice for the same period.
     most_recent = await airtable.get_most_recent_revenue_entry(settings)
     if most_recent:
@@ -114,6 +108,9 @@ async def _sync_and_validate(ctx: StepContext) -> dict[str, Any]:
                 f"Revenue entries for {date_recognized} already exist "
                 f"(most recent: {last_date}). Aborting to prevent duplicates."
             )
+
+    # Sync Harvest -> Airtable so projects/clients exist before validation.
+    await airtable_sync.run_sync(settings)
 
     projects = await airtable.get_projects(settings)
     if not projects:
@@ -215,10 +212,7 @@ async def _compute_entries(ctx: StepContext) -> dict[str, Any]:
 
 
 async def _propose_configure(ctx: StepContext) -> dict[str, Any]:
-    """Surface incomplete projects for human triage in the inbox.
-
-    Matches the legacy `configure_rev_rec_projects` payload shape so existing
-    InboxList rendering keeps working unchanged."""
+    """Surface incomplete projects for human triage in the inbox."""
     val = ctx.state.latest_for_step(0)
     r = (val.result or {}) if val else {}
     return {
@@ -229,13 +223,7 @@ async def _propose_configure(ctx: StepContext) -> dict[str, Any]:
 
 
 async def _on_configure_approved(ctx: StepContext) -> dict[str, Any]:
-    """User has fixed projects in Airtable; queue a fresh validation cycle.
-
-    Replaces the old execution.py special case that called
-    `RevenueRecognitionAgent.trigger()`. The new workflow drives forward
-    asynchronously via `asyncio.create_task` so the current chain doesn't
-    block on it.
-    """
+    """User has fixed projects in Airtable; queue a fresh validation cycle."""
     from app.orchestrator import orchestrator  # avoid circular import at module load
 
     val = ctx.state.latest_for_step(0)
@@ -252,10 +240,8 @@ async def _on_configure_approved(ctx: StepContext) -> dict[str, Any]:
 
 
 async def _propose_write(ctx: StepContext) -> dict[str, Any]:
-    """Surface the computed entries for human review.
-
-    Matches the legacy `write_rev_rec` payload shape."""
-    val = ctx.state.latest_for_step(1)
+    """Surface the computed entries for human review."""
+    val = ctx.state.latest_for_step(2)
     return val.result if val and val.result else {}
 
 
@@ -263,7 +249,7 @@ async def _write_entries(ctx: StepContext) -> dict[str, Any]:
     """Write the (possibly human-edited) entries to Airtable."""
     payload = ctx.executed_payload or {}
     raw_entries = payload.get("entries", [])
-    # Strip any internal fields that begin with _ (matches legacy execution.py).
+    # Strip internal _ fields before writing.
     clean_entries = [
         {k: v for k, v in e.items() if not k.startswith("_")}
         for e in raw_entries
@@ -303,11 +289,6 @@ REV_REC_CHAIN = Chain(
     agent_slug=REV_REC_AGENT_SLUG,
     steps=(
         ToolCallStep("Sync Harvest → Airtable and validate projects", _sync_and_validate),
-        ToolCallStep(
-            "Compute revenue entries",
-            _compute_entries,
-            skip_if=_validation_failed,
-        ),
         CheckpointStep(
             "Configure incomplete projects",
             propose_handler=_propose_configure,
@@ -315,6 +296,11 @@ REV_REC_CHAIN = Chain(
             skip_if=_validation_passed,
             action_type="configure_rev_rec_projects",
             risk_level="low",
+        ),
+        ToolCallStep(
+            "Compute revenue entries",
+            _compute_entries,
+            skip_if=_validation_failed,
         ),
         ExecutionStep(
             "Write revenue recognition entries to Airtable",
