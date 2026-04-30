@@ -77,7 +77,7 @@ async def test_propose_action(client: AsyncClient, workflow: dict, test_agent_sl
         f"/workflows/{workflow['id']}/actions",
         json={
             "agent_slug": test_agent_slug,
-            "action_type": "research",
+            "action_type": "other",
             "summary": "Research Acme Corp contacts",
             "proposed_payload": {"query": "Acme Corp decision makers"},
             "reasoning": "Need to identify the right contacts before outreach",
@@ -94,7 +94,7 @@ async def test_propose_action(client: AsyncClient, workflow: dict, test_agent_sl
 async def test_propose_action_auto_sequence(client: AsyncClient, workflow: dict, test_agent_slug: str):
     payload = {
         "agent_slug": test_agent_slug,
-        "action_type": "research",
+        "action_type": "other",
         "summary": "Step N",
         "proposed_payload": {},
     }
@@ -112,7 +112,7 @@ async def test_get_workflow_includes_actions(client: AsyncClient, workflow: dict
         f"/workflows/{workflow['id']}/actions",
         json={
             "agent_slug": test_agent_slug,
-            "action_type": "research",
+            "action_type": "other",
             "summary": "Gather info",
             "proposed_payload": {},
         },

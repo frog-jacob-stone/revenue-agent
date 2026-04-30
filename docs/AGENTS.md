@@ -8,19 +8,15 @@ For the rules that govern how agents are bounded, see `ARCHITECTURE.md` (Agent S
 
 | Agent | Trigger | Approval Required? |
 |---|---|---|
-| SDR Researcher | New account in HubSpot / manual | Before outreach |
-| Outreach Agent | Manual ("Reach out" on dashboard) / SDR Researcher completes | Always — before any email sends |
+| Outreach Agent | Manual ("Reach out" on dashboard) | Always — before any email sends |
 | Voice Critic | Invoked by Outreach chain | n/a — internal critic step |
 | Accuracy Critic | Invoked by Outreach chain | n/a — internal critic step |
-| Content Writer | Manual or scheduled | Before publishing |
-| Proposal Generator | Deal stage change in HubSpot | Before sending to client |
-| Slide Deck Agent | Triggered by Proposal Generator | Before delivery |
-| Revenue Recognition | Monthly schedule | Before any log write |
-| Invoice Operations | HubSpot webhook / schedule / chat | Always — before generate, edit, send, or digest |
-| Invoice Analytics | Chat (read-only) | Never (proposes no actions) |
+| Revenue Recognition | Monthly schedule / chat | Before any log write |
 | Router (future) | Chat | No (proposes no actions, just routes) |
 
-> Each business domain is expected to have both an operations agent (write-proposing) and an analytics agent (read-only) as the roster matures. Revenue Recognition, for example, will eventually have a Revenue Analytics sibling.
+> Each business domain is expected to have both an operations agent (write-proposing) and an analytics agent (read-only) as the roster matures.
+
+> **Recently retired:** Invoice Operations + Invoice Analytics agents (and the SDR Researcher / Content Writer / Proposal Generator / Slide Deck Agent stub classes that had no working implementation). They will be re-introduced when their use cases land. See `docs/BACKLOG.md`.
 
 ## Prompts and SOUL Definitions
 

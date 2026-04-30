@@ -50,7 +50,7 @@ One row per business process instance.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid | PK |
-| `kind` | text | `sdr_outreach`, `proposal_generation`, `rev_rec_monthly`, `invoice_generation`, `invoice_edit`, `invoice_send`, `invoice_review_digest` |
+| `kind` | text | `outreach_chain`, `rev_rec_monthly` (chains are the source of truth — extend as new chains land) |
 | `status` | enum | `pending`, `running`, `awaiting_approval`, `completed`, `failed`, `cancelled` |
 | `trigger_source` | text | `hubspot_webhook`, `manual`, `schedule` |
 | `trigger_payload` | jsonb | Raw event that started it |
@@ -76,7 +76,7 @@ The atomic unit of work and the approval gate. Every step in a multi-step chain 
 | `workflow_id` | uuid | FK → `workflows.id`, cascade delete |
 | `agent_id` | uuid | FK → `agents.id` |
 | `sequence` | int | Order within the workflow (unique per workflow) |
-| `action_type` | enum | `research`, `send_email`, `create_hubspot_record`, `generate_invoice`, `edit_invoice`, `send_invoice`, `post_review_digest`, `write_rev_rec` |
+| `action_type` | enum | `send_email`, `write_rev_rec`, `configure_rev_rec_projects`, `other` (Python source of truth in `app/models/actions.py`; the postgres enum still permits historical values like `generate_invoice` and `research` — orphaned, no producers) |
 | `status` | enum | `proposed`, `approved`, `rejected`, `executing`, `completed`, `failed` |
 | `summary` | text | Human-readable: "Send intro email to Jane at Acme" |
 | `proposed_payload` | jsonb | What the agent drafted |
@@ -157,9 +157,9 @@ Curated reference content. Separate from `memories` because the lifecycle and ac
 
 ## Agent Types
 
-**Write-proposing agents** — use the full workflow → actions → approval lifecycle. Every operation creates a `workflow` row and one or more `action` rows. Examples: SDR Researcher, Outreach Agent, Invoice Operations.
+**Write-proposing agents** — use the full workflow → actions → approval lifecycle. Every operation creates a `workflow` row and one or more `action` rows. Examples: Outreach, Revenue Recognition.
 
-**Read-only agents (analytics, Q&A)** — produce no `workflow` or `action` rows. Their activity is logged to `audit_log` with event type `agent.queried`. Chat history is stored separately per agent session. Examples: Invoice Analytics, (future) Revenue Analytics.
+**Read-only agents (analytics, Q&A)** — produce no `workflow` or `action` rows. Their activity is logged to `audit_log` with event type `agent.queried`. Chat history is stored separately per agent session. (None currently in the system; Invoice Analytics was retired alongside Invoice Operations and may return.)
 
 **Router agents** — propose no actions. Their output is a handoff decision referencing which specialist agent should handle the request. Audit logged as `agent.routed`. The router never creates a workflow row — the specialist it hands off to does.
 

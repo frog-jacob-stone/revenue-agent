@@ -13,14 +13,17 @@ Agentic Workflow Patterns build is complete. All six phases plus the Rev Rec mig
 - **Rev Rec migration** — `rev_rec_monthly` chain replaces the `execution.py` re-trigger hack; introduces `skip_if` step predicates and `CheckpointStep.on_approve`.
 - **Phase E** — Voice + accuracy critique loops in the Outreach chain. New `voice-critic` and `accuracy-critic` agents (registered via `_CriticAgent` base in `app/agents/planned.py`). Voice profile lives in `memories` (`kind=preference`, `metadata.kind=voice_profile`), seeded by `seed.seed_voice_profile()`. Failed critiques rewind to the draft step; exhaustion marks workflow `failed`.
 - **Phase F** — `WorkflowTrace` upgraded to tree-grouped rendering: retry attempts indent under their root, latest attempt highlighted, originals dimmed/strikethrough. Default state is collapsed with a one-line summary. `docs/SMOKE_TEST_OUTREACH.md` documents the manual end-to-end run.
+- **Post-directive cleanup** — deleted 5 unused integrations (apollo/gmail/hubspot/microsoft365/slack), 4 planned-only stub agents (SDR/ContentWriter/ProposalGenerator/SlideDeck), and all invoice code (Invoice Operations + Invoice Analytics agents, services/invoices, services/projects, services/clients, harvest_tools, internal_tools, the chat trigger, invoice-only Harvest functions, the test file). `app/services/execution.py` collapsed to a no-op fallback. `CLAUDE.md` invoice unbreakable rule removed.
 
 ## Next
 
-1. Wire real HubSpot / Gmail / Apollo (web search) integrations to remove the stubs in the outreach chain.
-2. Document ingestion pipeline (SharePoint → parse → chunk → embed → `knowledge_base`) — required for pattern #3.
-3. Brand research workflow (pattern #3, `prompt_chain_artifact`) — needs ingestion pipeline plus a follow-up migration for output_artifact_url and possibly a `claims` table.
-4. Real worker queue (Arq + Redis) for orchestrator resume — needed before chains can survive server restarts reliably.
-5. Multi-gate workflows (multiple checkpoints in one chain) — schema supports it; the trace UI will need light polish.
+1. **UI cleanup pass** — drop UI mocks where pages can wire to real data; audit StubBadge usage; remove the mock-fallback path in `InboxDetail` now that all action ids are UUIDs.
+2. **Re-implement invoice operations + analytics** — when the use case lands. Will need fresh design; nothing in the prior implementation was load-bearing.
+3. Wire real HubSpot / Gmail / web-search integrations to remove the stubs in the outreach chain.
+4. Document ingestion pipeline (SharePoint → parse → chunk → embed → `knowledge_base`) — required for pattern #3.
+5. Brand research workflow (pattern #3, `prompt_chain_artifact`) — needs ingestion pipeline plus a follow-up migration.
+6. Real worker queue (Arq + Redis) for orchestrator resume — needed before chains can survive server restarts reliably.
+7. Multi-gate workflows (multiple checkpoints in one chain) — schema supports it; the trace UI will need light polish.
 
 ## Later
 
@@ -55,4 +58,4 @@ _(Recently completed work worth remembering. Trim periodically.)_
 - SDR Researcher agent (first end-to-end agent)
 - Audit log API + UI
 - Harvest integration tools + Revenue Recognition agent foundation
-- Invoice Operations agent (generation path disabled — see CLAUDE.md unbreakable rule)
+- Invoice Operations + Invoice Analytics agents (retired during the post-directive cleanup; re-implement when the use case lands)

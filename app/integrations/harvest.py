@@ -65,47 +65,6 @@ async def get_active_projects(cfg: Settings) -> list[dict[str, Any]]:
     return await _get_all(cfg, "/projects", "projects", {"is_active": "true"})
 
 
-async def get_time_entries_for_period(
-    cfg: Settings,
-    project_id: int,
-    from_date: str,
-    to_date: str,
-) -> list[dict[str, Any]]:
-    """Return all billable time entries for a project within a date range."""
-    return await _get_all(
-        cfg,
-        "/time_entries",
-        "time_entries",
-        {"project_id": project_id, "from": from_date, "to": to_date, "is_billed": "false"},
-    )
-
-
-async def list_invoices_for_client(cfg: Settings, client_id: int) -> list[dict[str, Any]]:
-    return await _get_all(cfg, "/invoices", "invoices", {"client_id": client_id})
-
-
-async def create_invoice_draft(cfg: Settings, payload: dict[str, Any]) -> dict[str, Any]:
-    """Create a draft invoice in Harvest. Called on approval of generate_invoice action."""
-    # v1 stub — enable when operationally ready
-    raise NotImplementedError(
-        "create_invoice_draft is not active in v1. Remove this guard when ready to enable."
-    )
-
-
-async def send_invoice(cfg: Settings, invoice_id: int) -> dict[str, Any]:
-    # v1 stub — enable when operationally ready
-    raise NotImplementedError(
-        "send_invoice is not active in v1. Remove this guard when ready to enable."
-    )
-
-
-async def delete_invoice(cfg: Settings, invoice_id: int) -> dict[str, Any]:
-    # v1 stub — enable when operationally ready
-    raise NotImplementedError(
-        "delete_invoice is not active in v1. Remove this guard when ready to enable."
-    )
-
-
 async def get_time_entries(cfg: Settings, project_id: int, to_date: str) -> float:
     """Return total hours logged for a project up to and including to_date."""
     entries = await _get_all(
@@ -120,9 +79,10 @@ async def get_time_entries(cfg: Settings, project_id: int, to_date: str) -> floa
 async def get_invoice_totals_by_project(
     cfg: Settings, to_date: str
 ) -> dict[int, dict[str, Any]]:
-    """
-    Return invoice totals keyed by Harvest project ID, for invoices issued on or
-    before to_date. Each value: { "total_amount": float, "billable_expenses": float }
+    """Return invoice totals keyed by Harvest project ID, for invoices issued on
+    or before to_date. Used by the rev rec chain to compute T&M / MSF / Hosting
+    revenue from already-invoiced amounts. Each value:
+    `{"total_amount": float, "billable_expenses": float}`.
     """
     invoices = await _get_all(cfg, "/invoices", "invoices")
     totals: dict[int, dict[str, Any]] = {}

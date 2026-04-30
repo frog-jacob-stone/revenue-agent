@@ -1,33 +1,11 @@
 from typing import Any
 
-from app.tools.agent_tools import (
-    TRIGGER_INVOICE_GENERATION,
-    TRIGGER_REVENUE_RECOGNITION,
-)
+from app.tools.agent_tools import TRIGGER_REVENUE_RECOGNITION
 from app.tools.base import ToolContext, ToolDefinition
-from app.tools.harvest_tools import (
-    GET_INVOICE_DETAILS,
-    GET_UNBILLED_TIME_ENTRIES,
-    LIST_CLIENT_PROJECTS,
-    LIST_HARVEST_CLIENTS,
-    LIST_INVOICES,
-)
-from app.tools.internal_tools import GET_PENDING_INVOICE_APPROVALS
 from app.tools.revenue_tools import GET_REVENUE_DATA
 
 _ALL_TOOLS: list[ToolDefinition] = [
-    # Harvest reads
-    LIST_HARVEST_CLIENTS,
-    LIST_CLIENT_PROJECTS,
-    LIST_INVOICES,
-    GET_INVOICE_DETAILS,
-    GET_UNBILLED_TIME_ENTRIES,
-    # Internal reads
-    GET_PENDING_INVOICE_APPROVALS,
-    # Revenue
     GET_REVENUE_DATA,
-    # Agent triggers
-    TRIGGER_INVOICE_GENERATION,
     TRIGGER_REVENUE_RECOGNITION,
 ]
 

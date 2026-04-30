@@ -10,9 +10,7 @@ Reference docs:
 
 ## Unbreakable Rules
 
-1. **Never test invoice generation against the live Harvest account.** Mocked unit tests of `run()` are fine. Do not trigger `trigger_invoice_generation`, `POST /agents/invoice-operations/trigger`, or the Invoice Operations chat invoice path during any verification.
-
-2. **No write without an approved action row.** Every create/update/delete flows through:
+1. **No write without an approved action row.** Every create/update/delete flows through:
    ```
    agent proposes → action (proposed) → human approves → system executes → completed | failed
    ```

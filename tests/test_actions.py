@@ -17,7 +17,7 @@ async def workflow_with_action(client: AsyncClient, test_agent_slug: str) -> dic
         f"/workflows/{wf['id']}/actions",
         json={
             "agent_slug": test_agent_slug,
-            "action_type": "research",
+            "action_type": "other",
             "summary": "Research target accounts",
             "proposed_payload": {"target": "enterprise"},
             "risk_level": "low",
@@ -87,7 +87,7 @@ async def test_approve_action(client: AsyncClient, workflow_with_action: dict):
     data = resp.json()
     assert data["status"] == "completed"
     assert data["approved_by"] == "system"
-    assert data["result"] == {"stub": True}
+    assert data["result"]["stub"] is True
     assert data["executed_payload"] is not None
 
 

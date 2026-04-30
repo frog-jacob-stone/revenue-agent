@@ -9,17 +9,13 @@ from app.models.common import ORMBase
 
 
 class ActionType(str, Enum):
-    research = "research"
+    # The Python source of truth. The Postgres enum (created in migration 0001 +
+    # 0003 + 0004) holds additional historical values like `generate_invoice`,
+    # `research`, etc. that no producer writes anymore. Removing those from the
+    # DB enum requires recreating the enum, so they stay orphaned.
     send_email = "send_email"
-    create_hubspot_record = "create_hubspot_record"
-    update_hubspot_record = "update_hubspot_record"
-    publish_content = "publish_content"
-    generate_document = "generate_document"
     write_rev_rec = "write_rev_rec"
     configure_rev_rec_projects = "configure_rev_rec_projects"
-    generate_invoice = "generate_invoice"
-    send_invoice = "send_invoice"
-    delete_invoice = "delete_invoice"
     other = "other"
 
 
