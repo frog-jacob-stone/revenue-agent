@@ -1,11 +1,13 @@
 from typing import Any
 
 from app.tools.base import ToolContext, ToolDefinition
+from app.tools.content_tools import ALL_CONTENT_TOOLS
 from app.tools.revenue_tools import GET_REVENUE_DATA, TRIGGER_REVENUE_RECOGNITION
 
 _ALL_TOOLS: list[ToolDefinition] = [
     GET_REVENUE_DATA,
     TRIGGER_REVENUE_RECOGNITION,
+    *ALL_CONTENT_TOOLS,
 ]
 
 TOOLS: dict[str, ToolDefinition] = {t.name: t for t in _ALL_TOOLS}

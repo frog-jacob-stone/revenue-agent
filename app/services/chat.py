@@ -16,7 +16,7 @@ def _get_agent(slug: str) -> ConversationalAgent:
         raise ValueError(f"Chat not supported for agent '{slug}'")
     agent = cls(
         agent_id=UUID(int=0),
-        config={},
+        config=dict(cls.default_config),
         allowed_tools=list(cls.allowed_tools),
     )
     return agent
@@ -32,16 +32,20 @@ async def agent_chat(agent_slug: str, messages: list[dict]) -> dict[str, Any]:
     last_tool_used: str | None = None
 
     while True:
+        model = agent.config.get("model", "gpt-4o-mini")
+
         logger.info(
-            "LLM REQUEST | model=gpt-4o | messages=%d\n%s",
+            "LLM REQUEST | agent=%s model=%s | messages=%d\n%s",
+            agent.slug,
+            model,
             len(msg_list),
             json.dumps(msg_list, default=str, indent=2),
         )
-
+        
         response = await client.chat.completions.create(
-            model="gpt-4o",
+            model=model,
             messages=msg_list,
-            tools=tools,
+            **({"tools": tools} if tools else {}),
         )
 
         usage = response.usage

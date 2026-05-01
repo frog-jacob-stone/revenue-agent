@@ -12,9 +12,53 @@ For the rules that govern how agents are bounded, see `ARCHITECTURE.md` (Agent S
 | Voice Critic | Invoked by Outreach chain | n/a — internal critic step |
 | Accuracy Critic | Invoked by Outreach chain | n/a — internal critic step |
 | Revenue Recognition | Monthly schedule / chat | Before any log write |
+| Content Orchestrator | Chat (`POST /chat/content-orchestrator`) | No for creation/editing — publish_post queues in approval inbox |
+| Personal Voice Agent | Invoked by content_creation chain | n/a — internal critique step |
 | Router (future) | Chat | No (proposes no actions, just routes) |
 
 > Each business domain is expected to have both an operations agent (write-proposing) and an analytics agent (read-only) as the roster matures.
+
+## Content Orchestrator
+
+Implemented as a `ConversationalAgent` in [`app/agents/content.py`](../app/agents/content.py). Trigger: `POST /chat/content-orchestrator`.
+
+The orchestrator is the single interface for all content work: brainstorming ideas (pure LLM chat, nothing persisted), triggering creation, editing, and publishing.
+
+**Tools (6):**
+
+| Tool | What it does |
+|---|---|
+| `create_post` | Triggers the `content_creation` chain — brief → idea → draft → voice review. Returns when `ready` or `needs_revision`. |
+| `get_posts` | Returns posts filtered by status |
+| `rewrite_post` | Rewrites post per user instruction; resets status to `draft` |
+| `reject_post` | Sets status = `rejected` |
+| `publish_post` | Triggers the `content_publish` chain — queues post in approval inbox before anything is posted |
+| `export_posts` | Returns `ready` + `published` posts as clean copy/paste text |
+
+**Internal sub-agents** (prompt holders, registered in DB for CritiqueStep FK; not accessible via chat):
+
+| Class | Role |
+|---|---|
+| `ContentStrategyAgent` | Generates one idea (title, core_angle) for a topic |
+| `LinkedInWritingAgent` | Drafts a post from an idea; enforces voice and formatting rules |
+| `PersonalVoiceAgent` | Reviews a draft against Jacob's voice profile; channel-aware for future reuse |
+
+**Status flow for `social_posts`:**
+```
+draft → needs_revision → draft → ready → published
+      └──────── rewrite resets to draft ──────────┘
+         rejected (user rejected via chat)
+```
+
+**Conversational commands the orchestrator understands:**
+- "Give me some ideas about X" → LLM responds inline; no tool call
+- "Draft a post about X" / "Draft from idea 2"
+- "Create 3 posts about X"
+- "Show me posts that need revision"
+- "Change the hook" / "Make it more direct" / any edit instruction
+- "Reject post 2"
+- "Post this" / "Publish post 2"
+- "Export posts"
 
 > **Recently retired:** Invoice Operations + Invoice Analytics agents (and the SDR Researcher / Content Writer / Proposal Generator / Slide Deck Agent stub classes that had no working implementation). They will be re-introduced when their use cases land. See `docs/BACKLOG.md`.
 

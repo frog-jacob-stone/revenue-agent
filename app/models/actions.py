@@ -16,6 +16,7 @@ class ActionType(str, Enum):
     send_email = "send_email"
     write_rev_rec = "write_rev_rec"
     configure_rev_rec_projects = "configure_rev_rec_projects"
+    post_to_linkedin = "post_to_linkedin"
     other = "other"
 
 

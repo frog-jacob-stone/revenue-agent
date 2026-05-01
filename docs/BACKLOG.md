@@ -14,17 +14,21 @@ Agentic Workflow Patterns build is complete. All six phases plus the Rev Rec mig
 - **Phase E** — Voice + accuracy critique loops in the Outreach chain. New `voice-critic` and `accuracy-critic` agents (registered via `_CriticAgent` base in `app/agents/planned.py`). Voice profile lives in `memories` (`kind=preference`, `metadata.kind=voice_profile`), seeded by `seed.seed_voice_profile()`. Failed critiques rewind to the draft step; exhaustion marks workflow `failed`.
 - **Phase F** — `WorkflowTrace` upgraded to tree-grouped rendering: retry attempts indent under their root, latest attempt highlighted, originals dimmed/strikethrough. Default state is collapsed with a one-line summary. `docs/SMOKE_TEST_OUTREACH.md` documents the manual end-to-end run.
 - **Post-directive cleanup** — deleted 5 unused integrations (apollo/gmail/hubspot/microsoft365/slack), 4 planned-only stub agents (SDR/ContentWriter/ProposalGenerator/SlideDeck), and all invoice code (Invoice Operations + Invoice Analytics agents, services/invoices, services/projects, services/clients, harvest_tools, internal_tools, the chat trigger, invoice-only Harvest functions, the test file). `app/services/execution.py` collapsed to a no-op fallback. `CLAUDE.md` invoice unbreakable rule removed.
+- **Content creation workflow** — `content_creation` chain (brief → strategy → draft → voice critique), `content_publish` chain (approval inbox gate before LinkedIn post), `ContentOrchestratorAgent` (single chat interface), migrations `0007_social_posts.sql` and `0008_content_action_type.sql`. LLM calls use OpenAI `gpt-4o-mini`; LinkedIn post stub only.
 
 ## Next
 
 1. **Re-implement invoice operations + analytics** — when the use case lands. Will need fresh design; nothing in the prior implementation was load-bearing.
-3. Wire real HubSpot / Gmail / web-search integrations to remove the stubs in the outreach chain.
+2. Wire real HubSpot / Gmail / web-search integrations to remove the stubs in the outreach chain.
 4. Document ingestion pipeline (SharePoint → parse → chunk → embed → `knowledge_base`) — required for pattern #3.
 5. Brand research workflow (pattern #3, `prompt_chain_artifact`) — needs ingestion pipeline plus a follow-up migration.
 6. Real worker queue (Arq + Redis) for orchestrator resume — needed before chains can survive server restarts reliably.
 7. Multi-gate workflows (multiple checkpoints in one chain) — schema supports it; the trace UI will need light polish.
 
 ## Later
+
+- **Migrate content agent LLM calls from OpenAI to Anthropic** — `content_tools.py` and `chains/content.py` use `gpt-4o-mini`. Migrate to `claude-sonnet-4-6` when Anthropic is the preferred default. The `_llm()` helper in `content_tools.py` and `_complete()` in `chains/content.py` are the two swap points.
+- **Move Jacob's voice profile to `memories` table** — currently hardcoded as `PersonalVoiceAgent.voice_profile` class var. Moving it to a `preference` memory (same pattern as the outreach voice profile in `seed.py`) would let it be edited at runtime without a deploy.
 
 - Router agent (gated on 4+ specialists existing and observed routing friction)
 - Shared memory patterns between agents (agents leaving notes for each other via `memories` table)
