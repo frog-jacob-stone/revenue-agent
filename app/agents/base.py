@@ -17,6 +17,7 @@ class BaseAgent(ABC):
     requires_approval: ClassVar[bool] = True
     allowed_tools: ClassVar[tuple[str, ...]] = ()
     default_config: ClassVar[dict[str, Any]] = {}
+    model: ClassVar[str] = ""
 
 
 class ConversationalAgent(BaseAgent, ABC):

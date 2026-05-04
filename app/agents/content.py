@@ -13,6 +13,7 @@ class ContentStrategyAgent(BaseAgent):
     name = "Content Strategy Agent"
     description = "Generates LinkedIn post ideas for a given topic."
     requires_approval = False
+    model = "gpt-4o-mini"
 
     system_prompt: ClassVar[str] = """\
 You are a content strategist for a senior technology executive at a B2B professional services firm.
@@ -49,6 +50,7 @@ class LinkedInWritingAgent(BaseAgent):
     name = "LinkedIn Writing Agent"
     description = "Drafts LinkedIn posts from content strategy ideas."
     requires_approval = False
+    model = "gpt-4o-mini"
 
     system_prompt: ClassVar[str] = """\
 You are a LinkedIn ghostwriter for a senior technology executive at a B2B professional services firm.
@@ -89,6 +91,7 @@ class PersonalVoiceAgent(BaseAgent):
     name = "Personal Voice Agent"
     description = "Reviews drafts against the user's personal voice profile. Channel-aware."
     requires_approval = False
+    model = "gpt-4o-mini"
 
     voice_profile: ClassVar[str] = """\
 Voice profile — Jacob Stone, VP of Revenue at Frogslayer.

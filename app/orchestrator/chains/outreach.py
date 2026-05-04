@@ -17,21 +17,18 @@ Chain:
 The execution step is the approval gate AND the send — `ExecutionStep` already
 pauses for approval before the side effect, so we don't add a redundant
 `CheckpointStep` ahead of it.
-
-External integrations are stubbed when their credentials are not configured;
-real calls are wired only where the stub would be misleading. LLM calls go
-through `app.integrations.anthropic_client.get_client()` — tests patch the
-chain's `_complete` helper directly.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any
 
+from app.agents.outreach import AccuracyCriticAgent, OutreachAgent, VoiceCriticAgent
 from app.config import settings
-from app.integrations import anthropic_client
+from app.integrations.anthropic_client import call_anthropic
 from app.models.workflows import WorkflowPattern
 from app.orchestrator.chain import Chain, register_chain
+from app.orchestrator.chains.utils import parse_json
 from app.orchestrator.state import StepContext
 from app.orchestrator.steps import (
     CritiqueStep,
@@ -52,11 +49,6 @@ STEP_DRAFT = 4
 STEP_VOICE_CRITIQUE = 5
 STEP_ACCURACY_CRITIQUE = 6
 
-# Default model for LLM steps. Read from agent config first, then fall back
-# to a sensible default. Hardcoded here (rather than per-step) so a single
-# place controls model choice for the chain.
-DEFAULT_MODEL = "claude-sonnet-4-6"
-
 
 # -----------------------------------------------------------------------------
 # Step handlers
@@ -71,13 +63,10 @@ async def _pull_hubspot_contact(ctx: StepContext) -> dict[str, Any]:
         if workflow.actions
         else None
     )
-    # The contact id is also passed as workflow trigger context; pick it up
-    # from the workflow row's trigger_payload via state.
     if not contact_id:
         contact_id = await ctx.trigger_payload_get("hubspot_contact_id")
 
     if not settings.hubspot_token or not contact_id:
-        # Stub path — used in tests and when creds are not wired locally.
         return {
             "hubspot_contact_id": contact_id or "stub-contact-001",
             "contact": {
@@ -133,14 +122,13 @@ async def _consolidate_context(ctx: StepContext) -> dict[str, Any]:
         f"CONTACT/COMPANY:\n{contact_data}\n\nWEB SIGNALS:\n{web_data}\n\nBRIEF:"
     )
 
-    text = await _complete(ctx, prompt, max_tokens=400)
+    text = await call_anthropic(prompt, model=OutreachAgent.model, max_tokens=400)
     return {"brief": text.strip()}
 
 
-async def _retrieve_knowledge_base(ctx: StepContext) -> dict[str, Any]:
-    """Knowledge base retrieval. Stubbed for Phase D — returns a Frogslayer GTM
-    blurb. Real pgvector retrieval lands when the ingestion pipeline ships
-    (see docs/BACKLOG.md)."""
+async def _retrieve_knowledge_base(_ctx: StepContext) -> dict[str, Any]:
+    """Knowledge base retrieval. Stubbed — returns a Frogslayer GTM blurb.
+    Real pgvector retrieval lands when the ingestion pipeline ships (see docs/BACKLOG.md)."""
     return {
         "gtm_blurb": (
             "Frogslayer is a software delivery partner that builds and runs custom "
@@ -192,7 +180,7 @@ async def _draft_email(ctx: StepContext) -> dict[str, Any]:
         "Output JSON: {\"subject\": \"...\", \"body\": \"...\"}"
     )
 
-    text = await _complete(ctx, prompt, max_tokens=600)
+    text = await call_anthropic(prompt, model=OutreachAgent.model, max_tokens=600)
     subject, body = _parse_email(text)
     return {
         "to": contact.get("email") or "unknown@example",
@@ -225,7 +213,7 @@ async def _voice_critique(ctx: StepContext) -> dict[str, Any]:
         '"feedback": "one or two sentences explaining why", '
         '"issues": ["specific problems if any"]}'
     )
-    raw = await _complete(ctx, prompt, max_tokens=400)
+    raw = await call_anthropic(prompt, model=VoiceCriticAgent.model, max_tokens=400)
     return _parse_critique(raw)
 
 
@@ -260,7 +248,7 @@ async def _accuracy_critique(ctx: StepContext) -> dict[str, Any]:
         '"feedback": "one or two sentences", '
         '"issues": ["specific unsupported claims if any"]}'
     )
-    raw = await _complete(ctx, prompt, max_tokens=400)
+    raw = await call_anthropic(prompt, model=AccuracyCriticAgent.model, max_tokens=400)
     return _parse_critique(raw)
 
 
@@ -273,9 +261,8 @@ async def _propose_send(ctx: StepContext) -> dict[str, Any]:
 
 
 async def _gmail_send_stub(ctx: StepContext) -> dict[str, Any]:
-    """Phase D: log + return stub success. Phase F switches to a real Gmail call
-    once end-to-end works.
-    """
+    """Placeholder — logs what would be sent. Replaced by a real Gmail call
+    once the integration is wired."""
     payload = ctx.executed_payload or {}
     logger.info(
         "[gmail-stub] would send subject=%r to=%r",
@@ -292,6 +279,20 @@ async def _gmail_send_stub(ctx: StepContext) -> dict[str, Any]:
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
+
+def _parse_critique(raw: str) -> dict[str, Any]:
+    """Extract the CritiqueStep contract fields from an LLM response."""
+    obj = parse_json(raw)
+    if obj:
+        return {
+            "passed": bool(obj.get("passed", False)),
+            "score": float(obj.get("score", 0.0)),
+            "feedback": str(obj.get("feedback", "")).strip(),
+            "issues": list(obj.get("issues") or []),
+        }
+    passed = "pass" in raw.lower() and "fail" not in raw.lower()
+    return {"passed": passed, "score": 0.5, "feedback": raw[:240], "issues": []}
+
 
 async def _load_voice_profile(ctx: StepContext) -> str:
     """Look up the voice profile preference memory written by seed.seed_voice_profile.
@@ -315,116 +316,16 @@ async def _load_voice_profile(ctx: StepContext) -> str:
     return (row["content"] if row else "") or ""
 
 
-def _parse_critique(text: str) -> dict[str, Any]:
-    """Best-effort parse of a critique JSON response."""
-    import json
-    import re
-
-    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.MULTILINE)
-    try:
-        obj = json.loads(cleaned)
-        return {
-            "passed": bool(obj.get("passed", False)),
-            "score": float(obj.get("score", 0.0)),
-            "feedback": str(obj.get("feedback", "")).strip(),
-            "issues": list(obj.get("issues") or []),
-        }
-    except (json.JSONDecodeError, AttributeError, ValueError, TypeError):
-        # Heuristic fallback: presence of "fail" anywhere → fail.
-        passed = "pass" in cleaned.lower() and "fail" not in cleaned.lower()
-        return {
-            "passed": passed,
-            "score": 0.5,
-            "feedback": cleaned[:240],
-            "issues": [],
-        }
-
-
-async def _complete(ctx: StepContext, prompt: str, *, max_tokens: int) -> str:
-    """Single Anthropic completion. Patched in tests.
-
-    When no API key is configured (dev environments without creds), returns a
-    deterministic stub keyed on the prompt's section markers so the chain can
-    still run end-to-end. Production / staging hits the real API.
-    """
-    if not settings.anthropic_api_key:
-        logger.warning(
-            "[outreach-chain] ANTHROPIC_API_KEY is empty — returning stub LLM output."
-        )
-        return _stub_llm_response(prompt)
-
-    client = anthropic_client.get_client()
-    msg = await client.messages.create(
-        model=DEFAULT_MODEL,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    # The SDK returns a Message with content blocks; pull text out.
-    parts = [b.text for b in msg.content if getattr(b, "type", None) == "text"]
-    return "".join(parts)
-
-
-def _stub_llm_response(prompt: str) -> str:
-    """Dev-mode fallback when ANTHROPIC_API_KEY is unset. Returns a plausible
-    stub keyed on the unique marker each chain prompt contains.
-
-    Critique stubs default to PASS so the chain reaches the human checkpoint
-    in dev environments — exercising the loop requires real LLM calls or
-    test-time patching.
-    """
-    import json as _json
-
-    if "Voice Critic" in prompt:
-        return _json.dumps({
-            "passed": True,
-            "score": 0.85,
-            "feedback": "On voice (stub).",
-            "issues": [],
-        })
-    if "Accuracy Critic" in prompt:
-        return _json.dumps({
-            "passed": True,
-            "score": 0.9,
-            "feedback": "Claims supported by context (stub).",
-            "issues": [],
-        })
-    if "Output JSON:" in prompt:
-        return _json.dumps({
-            "subject": "Quick thought after your Series B",
-            "body": (
-                "Saw the Series B announcement and the engineering hiring spike. "
-                "Frogslayer's product factory model has helped a few B2B SaaS teams "
-                "ship customer-facing platforms without growing the in-house team. "
-                "Open to a 15-min call Thursday or Friday?"
-            ),
-        })
-    if "3-4 sentence brief" in prompt:
-        return (
-            "Acme Corp closed a Series B 30 days ago and is scaling its backend "
-            "engineering org — 12 open roles per the public job board. The CEO "
-            "is publicly framing this as a platform-investment moment. Sarah Chen "
-            "(VP Eng) is the right person to talk to about delivery capacity."
-        )
-    return "<stub-llm-output>"
-
-
 def _parse_email(text: str) -> tuple[str, str]:
-    """Best-effort parse of the model's JSON response. Falls back to splitting
-    on the first blank line if the model returns plain text."""
-    import json
-    import re
-
-    # Strip code fences if present.
-    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.MULTILINE)
-    try:
-        obj = json.loads(cleaned)
+    """Parse the email draft JSON response. Falls back to splitting on the first
+    line if the model returns plain text instead of JSON."""
+    obj = parse_json(text)
+    if obj:
         return str(obj.get("subject", "")).strip(), str(obj.get("body", "")).strip()
-    except (json.JSONDecodeError, AttributeError):
-        # Fallback: first line as subject, rest as body.
-        lines = cleaned.splitlines()
-        if not lines:
-            return "", ""
-        return lines[0].strip(), "\n".join(lines[1:]).strip()
+    lines = text.strip().splitlines()
+    if not lines:
+        return "", ""
+    return lines[0].strip(), "\n".join(lines[1:]).strip()
 
 
 # -----------------------------------------------------------------------------
@@ -467,11 +368,7 @@ OUTREACH_CHAIN = Chain(
 
 
 def register() -> None:
-    """Idempotent: only registers if not already present.
-
-    Tests reset the registry, so calling this from app startup must not crash
-    if the chain is already there from a prior import.
-    """
+    """Idempotent: only registers if not already present."""
     from app.orchestrator.chain import has_chain
 
     if has_chain(OUTREACH_KIND):

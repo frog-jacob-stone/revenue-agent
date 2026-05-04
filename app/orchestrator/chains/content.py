@@ -12,8 +12,6 @@ content_publish (supervised_automation):
   0. execution — Post to LinkedIn (stub); pauses in approval inbox before sending
                  On approve → social_posts status = 'published'
                  On reject  → status unchanged (post stays 'ready')
-
-LLM calls use OpenAI (gpt-4o-mini).
 """
 from __future__ import annotations
 
@@ -22,6 +20,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from app.integrations.openai_client import call_openai
 from app.models.workflows import WorkflowPattern
 from app.orchestrator.chain import Chain, register_chain
 from app.orchestrator.chains.utils import parse_json
@@ -45,30 +44,6 @@ STEP_INTERPRET = 0
 STEP_DRAFT = 1
 STEP_VOICE = 2
 
-_MODEL = "gpt-4o-mini"
-
-
-# ---------------------------------------------------------------------------
-# LLM helper
-# ---------------------------------------------------------------------------
-
-
-async def _complete(system: str, user: str, *, max_tokens: int = 800) -> str:
-    """Single OpenAI chat completion (gpt-4o-mini, JSON response format)."""
-    from app.integrations.openai_client import get_client
-
-    client = get_client()
-    response = await client.chat.completions.create(
-        model=_MODEL,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        response_format={"type": "json_object"},
-        max_tokens=max_tokens,
-    )
-    return response.choices[0].message.content or "{}"
-
 
 # ---------------------------------------------------------------------------
 # content_creation step handlers
@@ -87,7 +62,7 @@ async def _interpret_brief(ctx: StepContext) -> dict[str, Any]:
     if instructions:
         user_msg += f"\nAdditional instructions: {instructions}"
 
-    raw = await _complete(ContentStrategyAgent.system_prompt, user_msg)
+    raw = await call_openai(ContentStrategyAgent.system_prompt, user_msg, model=ContentStrategyAgent.model)
     idea = parse_json(raw)
 
     if not idea.get("idea_title"):
@@ -131,7 +106,7 @@ async def _draft_post(ctx: StepContext) -> dict[str, Any]:
             f"SPECIFIC ISSUES: {issues}\n"
         )
 
-    raw = await _complete(LinkedInWritingAgent.system_prompt, user_msg, max_tokens=1000)
+    raw = await call_openai(LinkedInWritingAgent.system_prompt, user_msg, model=LinkedInWritingAgent.model, max_tokens=1000)
     draft = parse_json(raw)
 
     post_text = draft.get("post_text") or f"[Draft: {idea.get('idea_title', brief)}]"
@@ -196,9 +171,10 @@ async def _voice_review(ctx: StepContext) -> dict[str, Any]:
     post_text = draft_result.get("post_text", "")
     channel = await ctx.trigger_payload_get("channel") or "linkedin"
 
-    raw = await _complete(
+    raw = await call_openai(
         PersonalVoiceAgent.get_system_prompt(channel),
         f"Post to review:\n\n{post_text}",
+        model=PersonalVoiceAgent.model,
         max_tokens=600,
     )
     review = parse_json(raw)
