@@ -6,33 +6,32 @@ content_creation (prompt_chain_action):
   2. critique  — Voice review (PersonalVoiceAgent prompt; max_attempts=3; retries draft)
 
   On voice pass  → social_posts status = 'ready'
-  On budget exhausted → social_posts status = 'needs_revision'; workflow → failed
+  On budget exhausted → workflow → failed (status remains 'draft')
 
 content_publish (supervised_automation):
   0. execution — Post to LinkedIn (stub); pauses in approval inbox before sending
                  On approve → social_posts status = 'published'
                  On reject  → status unchanged (post stays 'ready')
 
-LLM calls use OpenAI (gpt-4o-mini). Stubs returned when OPENAI_API_KEY is not set
-so the chain runs end-to-end in dev without credentials.
+LLM calls use OpenAI (gpt-4o-mini).
 """
 from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import Any
 from uuid import UUID
 
-from app.config import settings
 from app.models.workflows import WorkflowPattern
 from app.orchestrator.chain import Chain, register_chain
+from app.orchestrator.chains.utils import parse_json
 from app.orchestrator.state import StepContext
 from app.orchestrator.steps import (
     CritiqueStep,
     ExecutionStep,
     LLMStep,
 )
+from app.services import social_posts
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +54,7 @@ _MODEL = "gpt-4o-mini"
 
 
 async def _complete(system: str, user: str, *, max_tokens: int = 800) -> str:
-    """Single OpenAI chat completion. Returns stub text when key is unset."""
-    if not settings.openai_api_key:
-        logger.warning("[content-chain] OPENAI_API_KEY unset — returning stub LLM output.")
-        return _stub_response(system)
-
+    """Single OpenAI chat completion (gpt-4o-mini, JSON response format)."""
     from app.integrations.openai_client import get_client
 
     client = get_client()
@@ -75,78 +70,6 @@ async def _complete(system: str, user: str, *, max_tokens: int = 800) -> str:
     return response.choices[0].message.content or "{}"
 
 
-def _parse_json(raw: str) -> dict[str, Any]:
-    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.MULTILINE)
-    try:
-        return json.loads(cleaned)
-    except (json.JSONDecodeError, ValueError):
-        logger.warning("[content-chain] JSON parse failed: %s", raw[:200])
-        return {}
-
-
-def _stub_response(system: str) -> str:
-    """Dev-mode stubs keyed on unique system prompt markers."""
-    if "voice profile" in system.lower():
-        return json.dumps({
-            "voice_score": 8.5,
-            "passed_voice_review": True,
-            "issues_found": [],
-            "suggested_changes": [],
-            "revised_post_text": "Most companies skip the boring stuff when adopting AI. That's why it fails.\n\nStart with one process. One team. One workflow that costs you time every week.\n\nAutomate that. Learn from it. Then move to the next.\n\nAI works when it's boring. It fails when it's a strategy.",
-        })
-    if "content strategist" in system.lower():
-        return json.dumps({
-            "idea_title": "Start with one boring process",
-            "core_angle": "AI adoption fails when companies try to do too much at once — start with one repetitive workflow",
-            "target_reader": "Operations and technology leaders at mid-market companies",
-            "main_point": "The companies that get ROI from AI pick the most boring, repetitive task first",
-            "suggested_post_type": "opinion",
-        })
-    # LinkedIn writer stub
-    return json.dumps({
-        "post_text": (
-            "Most companies skip the boring stuff when adopting AI. That's why it fails.\n\n"
-            "Start with one process. One team. One workflow that costs you time every week.\n\n"
-            "Automate that. Learn from it. Then move to the next.\n\n"
-            "AI works when it's boring. It fails when it's a strategy."
-        ),
-        "hook": "Most companies skip the boring stuff when adopting AI.",
-        "cta": "AI works when it's boring. It fails when it's a strategy.",
-        "estimated_strength_score": 7.8,
-        "notes": "Stub draft",
-    })
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-async def _trigger_payload_get(ctx: StepContext, key: str) -> Any:
-    row = await ctx.conn.fetchrow(
-        "SELECT trigger_payload FROM workflows WHERE id = $1",
-        ctx.workflow_id,
-    )
-    payload = (row["trigger_payload"] if row else None) or {}
-    return payload.get(key)
-
-
-async def _get_post(ctx: StepContext, post_id: UUID) -> dict[str, Any] | None:
-    row = await ctx.conn.fetchrow("SELECT * FROM social_posts WHERE id = $1", post_id)
-    return dict(row) if row else None
-
-
-async def _update_post(ctx: StepContext, post_id: UUID, **fields: Any) -> None:
-    if not fields:
-        return
-    set_clauses = ", ".join(f"{col} = ${i + 2}" for i, col in enumerate(fields))
-    await ctx.conn.execute(
-        f"UPDATE social_posts SET {set_clauses} WHERE id = $1",
-        post_id,
-        *fields.values(),
-    )
-
-
 # ---------------------------------------------------------------------------
 # content_creation step handlers
 # ---------------------------------------------------------------------------
@@ -156,16 +79,16 @@ async def _interpret_brief(ctx: StepContext) -> dict[str, Any]:
     """LLM step 0: turn the user's brief into a structured idea."""
     from app.agents.content import ContentStrategyAgent
 
-    brief = await _trigger_payload_get(ctx, "brief") or ""
-    channel = await _trigger_payload_get(ctx, "channel") or "linkedin"
-    instructions = await _trigger_payload_get(ctx, "instructions") or ""
+    brief = await ctx.trigger_payload_get("brief") or ""
+    channel = await ctx.trigger_payload_get("channel") or "linkedin"
+    instructions = await ctx.trigger_payload_get("instructions") or ""
 
     user_msg = f"Brief: {brief}\nChannel: {channel}"
     if instructions:
         user_msg += f"\nAdditional instructions: {instructions}"
 
     raw = await _complete(ContentStrategyAgent.system_prompt, user_msg)
-    idea = _parse_json(raw)
+    idea = parse_json(raw)
 
     if not idea.get("idea_title"):
         idea = {
@@ -187,8 +110,8 @@ async def _draft_post(ctx: StepContext) -> dict[str, Any]:
     from app.agents.content import LinkedInWritingAgent
 
     idea = (ctx.state.latest_for_step(STEP_INTERPRET).result or {}) if ctx.state.latest_for_step(STEP_INTERPRET) else {}
-    channel = await _trigger_payload_get(ctx, "channel") or "linkedin"
-    brief = await _trigger_payload_get(ctx, "brief") or ""
+    channel = await ctx.trigger_payload_get("channel") or "linkedin"
+    brief = await ctx.trigger_payload_get("brief") or ""
 
     user_msg = (
         f"Idea:\n{json.dumps(idea, indent=2)}\n\n"
@@ -209,18 +132,18 @@ async def _draft_post(ctx: StepContext) -> dict[str, Any]:
         )
 
     raw = await _complete(LinkedInWritingAgent.system_prompt, user_msg, max_tokens=1000)
-    draft = _parse_json(raw)
+    draft = parse_json(raw)
 
     post_text = draft.get("post_text") or f"[Draft: {idea.get('idea_title', brief)}]"
 
     # Get or create the social_posts row. post_id is set in trigger_payload by
     # the create_post tool before the chain runs.
-    post_id_str = await _trigger_payload_get(ctx, "post_id")
+    post_id_str = await ctx.trigger_payload_get("post_id")
     post_id = UUID(post_id_str) if post_id_str else None
 
     if post_id:
-        await _update_post(
-            ctx,
+        await social_posts.update_post_conn(
+            ctx.conn,
             post_id,
             post_text=post_text,
             idea_title=idea.get("idea_title"),
@@ -271,23 +194,22 @@ async def _voice_review(ctx: StepContext) -> dict[str, Any]:
     draft_action = ctx.state.latest_for_step(STEP_DRAFT)
     draft_result = (draft_action.result or {}) if draft_action else {}
     post_text = draft_result.get("post_text", "")
-    channel = await _trigger_payload_get(ctx, "channel") or "linkedin"
+    channel = await ctx.trigger_payload_get("channel") or "linkedin"
 
     raw = await _complete(
         PersonalVoiceAgent.get_system_prompt(channel),
         f"Post to review:\n\n{post_text}",
         max_tokens=600,
     )
-    review = _parse_json(raw)
+    review = parse_json(raw)
 
     passed = bool(review.get("passed_voice_review", False))
 
-    # On pass: update status to 'ready' with the (possibly revised) text
     if passed:
-        post_id_str = await _trigger_payload_get(ctx, "post_id")
+        post_id_str = await ctx.trigger_payload_get("post_id")
         if post_id_str:
             revised = review.get("revised_post_text") or post_text
-            await _update_post(ctx, UUID(post_id_str), post_text=revised, status="ready")
+            await social_posts.update_post_conn(ctx.conn, UUID(post_id_str), post_text=revised, status="ready")
 
     return {
         "passed": passed,
@@ -299,15 +221,6 @@ async def _voice_review(ctx: StepContext) -> dict[str, Any]:
     }
 
 
-async def _on_voice_budget_exhausted(ctx: StepContext) -> None:
-    """Called by the orchestrator when the critique loop hits max_attempts and fails.
-    Updates social_posts status to 'needs_revision' so the user can see it in chat.
-    """
-    post_id_str = await _trigger_payload_get(ctx, "post_id")
-    if post_id_str:
-        await _update_post(ctx, UUID(post_id_str), status="needs_revision")
-
-
 # ---------------------------------------------------------------------------
 # content_publish step handlers
 # ---------------------------------------------------------------------------
@@ -315,11 +228,11 @@ async def _on_voice_budget_exhausted(ctx: StepContext) -> None:
 
 async def _propose_linkedin_post(ctx: StepContext) -> dict[str, Any]:
     """Surface the post text for human review in the approval inbox."""
-    post_id_str = await _trigger_payload_get(ctx, "post_id")
+    post_id_str = await ctx.trigger_payload_get("post_id")
     if not post_id_str:
         return {"error": "No post_id in trigger_payload"}
 
-    post = await _get_post(ctx, UUID(post_id_str))
+    post = await social_posts.get_post_conn(ctx.conn, UUID(post_id_str))
     if not post:
         return {"error": f"Post {post_id_str} not found"}
 
@@ -334,7 +247,7 @@ async def _propose_linkedin_post(ctx: StepContext) -> dict[str, Any]:
 async def _linkedin_post_stub(ctx: StepContext) -> dict[str, Any]:
     """Stub executor — logs what would be posted; marks post as published on approval."""
     payload = ctx.executed_payload or {}
-    post_id_str = payload.get("post_id") or await _trigger_payload_get(ctx, "post_id")
+    post_id_str = payload.get("post_id") or await ctx.trigger_payload_get("post_id")
 
     logger.info(
         "[linkedin-stub] would post: post_id=%r text=%r",
@@ -343,7 +256,7 @@ async def _linkedin_post_stub(ctx: StepContext) -> dict[str, Any]:
     )
 
     if post_id_str:
-        await _update_post(ctx, UUID(post_id_str), status="published")
+        await social_posts.update_post_conn(ctx.conn, UUID(post_id_str), status="published")
 
     return {
         "stub": True,

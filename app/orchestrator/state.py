@@ -104,3 +104,11 @@ class StepContext:
     critique_feedback: dict[str, Any] | None = None
     # For execution steps on resume: what the human approved (may differ from draft).
     executed_payload: dict[str, Any] | None = None
+
+    async def trigger_payload_get(self, key: str) -> Any:
+        row = await self.conn.fetchrow(
+            "SELECT trigger_payload FROM workflows WHERE id = $1",
+            self.workflow_id,
+        )
+        payload = (row["trigger_payload"] if row else None) or {}
+        return payload.get(key)

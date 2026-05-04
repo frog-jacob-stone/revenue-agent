@@ -128,6 +128,27 @@ async def update_posts_status(
         return results
 
 
+async def get_post_conn(conn: asyncpg.Connection, post_id: UUID) -> dict[str, Any] | None:
+    row = await conn.fetchrow("SELECT * FROM social_posts WHERE id = $1", post_id)
+    return dict(row) if row else None
+
+
+async def update_post_conn(conn: asyncpg.Connection, post_id: UUID, **fields: Any) -> None:
+    if not fields:
+        return
+    set_clauses = ", ".join(f"{col} = ${i + 2}" for i, col in enumerate(fields))
+    await conn.execute(
+        f"UPDATE social_posts SET {set_clauses} WHERE id = $1",
+        post_id,
+        *fields.values(),
+    )
+    await audit.write_audit_event(
+        conn,
+        "content.post_updated",
+        payload={"post_id": str(post_id), "fields": list(fields.keys())},
+    )
+
+
 def _status_audit_event(status: str) -> str:
     return {
         "draft": "content.post_drafted",

@@ -74,7 +74,7 @@ async def _pull_hubspot_contact(ctx: StepContext) -> dict[str, Any]:
     # The contact id is also passed as workflow trigger context; pick it up
     # from the workflow row's trigger_payload via state.
     if not contact_id:
-        contact_id = await _trigger_payload_get(ctx, "hubspot_contact_id")
+        contact_id = await ctx.trigger_payload_get("hubspot_contact_id")
 
     if not settings.hubspot_token or not contact_id:
         # Stub path — used in tests and when creds are not wired locally.
@@ -425,16 +425,6 @@ def _parse_email(text: str) -> tuple[str, str]:
         if not lines:
             return "", ""
         return lines[0].strip(), "\n".join(lines[1:]).strip()
-
-
-async def _trigger_payload_get(ctx: StepContext, key: str) -> Any:
-    """Read a key from the workflow's trigger_payload."""
-    row = await ctx.conn.fetchrow(
-        "SELECT trigger_payload FROM workflows WHERE id = $1",
-        ctx.workflow_id,
-    )
-    payload = (row["trigger_payload"] if row else None) or {}
-    return payload.get(key)
 
 
 # -----------------------------------------------------------------------------
