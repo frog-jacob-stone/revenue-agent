@@ -16,6 +16,17 @@ Reference docs:
    ```
    Every state transition writes a row to `audit_log`.
 
+## Planning
+- Save all plans to `.agent/plans/` folder
+- Naming convention: `{sequence}.{plan-name}.md` (e.g., `1.auth-setup.md`, `2.document-ingestion.md`)
+- Plans should be detailed enough to execute without ambiguity
+- Each task in the plan must include at least one validation test to verify it works
+- Assess complexity and single-pass feasibility - can an agent realistically complete this in one go?
+- Include a complexity indicator at the top of each plan:
+  - ✅ **Simple** - Single-pass executable, low risk
+  - ⚠️ **Medium** - May need iteration, some complexity
+  - 🔴 **Complex** - Break into sub-plans before executing
+
 ## Code Conventions
 
 - Routers validate input and call services; routers contain no business logic.
@@ -25,6 +36,9 @@ Reference docs:
 - Async everywhere. Pydantic v2 (`model_config`, not `class Config`).
 - Schema changes go through migrations in `supabase/migrations/` — never edit the DB by hand.
 - Tests use `TEST_DATABASE_URL` (port 54323), never the prod port (54322).
+
+## Progress
+Check PROGRESS.md for current module status. Update it as you complete tasks.
 
 ## Keep These Docs in Sync
 
