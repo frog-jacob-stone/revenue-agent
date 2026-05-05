@@ -23,7 +23,7 @@ const NAV_ITEMS: NavItem[] = [
 function useCount(status: string, poll: boolean) {
   return useQuery<Action[], Error, number>({
     queryKey: ['actions', status],
-    queryFn: () => getActions(status),
+    queryFn: () => getActions({ status }),
     select: (data) => data.length,
     refetchInterval: poll ? 10_000 : false,
   });

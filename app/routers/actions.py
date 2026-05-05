@@ -24,15 +24,17 @@ def _row_to_action(row: asyncpg.Record) -> ActionResponse:
 async def list_actions(
     status: str = "proposed",
     agent_slug: str | None = None,
+    action_type: str | None = None,
     pool: asyncpg.Pool = Depends(_db),
 ):
-    # Inbox shows only steps that require human approval — checkpoints and
-    # external-write executions. tool_call/llm_step/critique rows auto-progress
-    # and are visible only via the workflow trace endpoint. Null step_kind is
-    # treated as 'execution' for backwards compatibility with pre-0005 rows.
-    conditions: list[str] = [
-        "(a.step_kind IS NULL OR a.step_kind IN ('checkpoint', 'execution'))"
-    ]
+    # For the pending queue only, filter to steps that require human approval.
+    # History views (completed, rejected, all, etc.) show every action regardless
+    # of step_kind so internal steps (llm_step, critique, tool_call) are visible.
+    conditions: list[str] = []
+    if status == "proposed":
+        conditions.append(
+            "(a.step_kind IS NULL OR a.step_kind IN ('checkpoint', 'execution'))"
+        )
     params: list = []
 
     if status != "all":
@@ -42,6 +44,10 @@ async def list_actions(
     if agent_slug:
         params.append(agent_slug)
         conditions.append(f"ag.slug = ${len(params)}")
+
+    if action_type:
+        params.append(action_type)
+        conditions.append(f"a.action_type::text = ${len(params)}")
 
     where = "WHERE " + " AND ".join(conditions)
     rows = await pool.fetch(

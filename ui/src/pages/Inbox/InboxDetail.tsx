@@ -1,9 +1,10 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { ArrowLeft, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, XCircle, Loader2, Pencil } from 'lucide-react';
 import ActionTypeChip from '../../components/shared/ActionTypeChip';
 import WorkflowTrace from '../../components/WorkflowTrace';
+import EditBodyModal from '../../components/EditBodyModal';
 import { approveAction, getAction, rejectAction } from '../../api';
 import type { Action } from '../../types';
 
@@ -21,18 +22,21 @@ function ActionDetail({ action }: { action: Action }) {
   const [showReject, setShowReject] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [editedPayload, setEditedPayload] = useState<Record<string, unknown>>(action.proposed_payload);
+  const [showEdit, setShowEdit] = useState(false);
+  const isModified = JSON.stringify(editedPayload) !== JSON.stringify(action.proposed_payload);
 
   const refetch = () => {
     queryClient.invalidateQueries({ queryKey: ['action', action.id] });
     queryClient.invalidateQueries({ queryKey: ['workflow-trace', action.workflow_id] });
-    queryClient.invalidateQueries({ queryKey: ['actions', 'proposed'] });
+    queryClient.invalidateQueries({ queryKey: ['actions'] });
   };
 
   const handleApprove = async () => {
     setBusy(true);
     setErr(null);
     try {
-      await approveAction(action.id, 'system', action.proposed_payload);
+      await approveAction(action.id, 'system', editedPayload);
       refetch();
     } catch (e) {
       setErr((e as Error).message);
@@ -101,13 +105,36 @@ function ActionDetail({ action }: { action: Action }) {
 
       {/* Payload */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-        <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">
-          Action Payload
-        </h2>
+        <div className="flex items-center gap-2 mb-3">
+          <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
+            Action Payload
+          </h2>
+          {isModified && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-amber-400/15 text-amber-400 border border-amber-400/30">
+              Modified
+            </span>
+          )}
+          <button
+            onClick={() => setShowEdit(true)}
+            className="ml-auto text-slate-500 hover:text-slate-300 transition-colors"
+            title="Edit payload"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
+        </div>
         <pre className="text-xs text-emerald-400 bg-slate-950 rounded-lg p-4 overflow-x-auto leading-relaxed font-mono">
-          {JSON.stringify(action.proposed_payload, null, 2)}
+          {JSON.stringify(editedPayload, null, 2)}
         </pre>
       </div>
+
+      {showEdit && (
+        <EditBodyModal
+          title="Edit payload"
+          initialValue={editedPayload}
+          onSave={(v) => setEditedPayload(v as Record<string, unknown>)}
+          onClose={() => setShowEdit(false)}
+        />
+      )}
 
       {/* Actions */}
       {isPending && (

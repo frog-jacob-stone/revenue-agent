@@ -18,7 +18,7 @@ Track your progress through the masterclass. Update this file as you complete mo
 - [x] Filtering — agent/action type/status dropdowns wired to backend query params
 - [x] Pending badge — nav item with live count
 - [x] Empty state
-- [ ] Edit & Approve — inline editing of proposed payload before approval
+- [x] Edit & Approve — inline editing of proposed payload before approval
 - [ ] Realtime — Supabase Realtime subscription (new items without page refresh)
 
 ### Module 2: Agent Dashboard — `[x]`

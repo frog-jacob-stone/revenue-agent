@@ -2,9 +2,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, XCircle, Filter, Loader2 } from 'lucide-react';
-import { getActions, approveAction, rejectAction } from '../../api';
+import { getActions, approveAction, rejectAction, listAgents } from '../../api';
 import type { Action, ActionType } from '../../types';
-import StubBadge from '../../components/shared/StubBadge';
 import EmptyState from '../../components/shared/EmptyState';
 
 const ACTION_LABELS: Record<ActionType, string> = {
@@ -130,7 +129,7 @@ function ActionRow({ action, isLast }: { action: Action; isLast: boolean }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refetch = () => queryClient.invalidateQueries({ queryKey: ['actions', 'proposed'] });
+  const refetch = () => queryClient.invalidateQueries({ queryKey: ['actions'] });
 
   const handleApprove = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -257,11 +256,29 @@ function ActionRow({ action, isLast }: { action: Action; isLast: boolean }) {
 }
 
 export default function InboxList() {
+  const [agentFilter, setAgentFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('proposed');
+
+  const { data: agents = [] } = useQuery({
+    queryKey: ['agents'],
+    queryFn: listAgents,
+    staleTime: 60_000,
+  });
+
   const { data: actions = [], isLoading, isError } = useQuery({
-    queryKey: ['actions', 'proposed'],
-    queryFn: () => getActions('proposed'),
+    queryKey: ['actions', statusFilter, agentFilter, typeFilter],
+    queryFn: () => getActions({
+      status: statusFilter || 'proposed',
+      agent_slug: agentFilter || undefined,
+      action_type: typeFilter || undefined,
+    }),
     refetchInterval: 15_000,
   });
+
+  const statusLabel = statusFilter === 'proposed' ? 'awaiting review'
+    : statusFilter === 'all' ? 'total'
+    : statusFilter;
 
   return (
     <div className="p-6 space-y-4 max-w-7xl mx-auto">
@@ -269,7 +286,7 @@ export default function InboxList() {
         <div>
           <h1 className="text-xl font-semibold text-slate-100">Approval Inbox</h1>
           <p className="text-sm text-slate-400 mt-0.5">
-            {isLoading ? 'Loading…' : `${actions.length} item${actions.length === 1 ? '' : 's'} awaiting review`}
+            {isLoading ? 'Loading…' : `${actions.length} item${actions.length === 1 ? '' : 's'} ${statusLabel}`}
           </p>
         </div>
       </div>
@@ -279,22 +296,42 @@ export default function InboxList() {
         <Filter className="w-4 h-4 text-slate-500" />
         <span className="text-xs text-slate-500 font-medium uppercase tracking-wide">Filters</span>
         <div className="flex items-center gap-2 ml-2">
-          <select className="bg-slate-800 border border-slate-700 text-slate-300 text-xs rounded px-2 py-1">
-            <option>All agents</option>
+          <select
+            className="bg-slate-800 border border-slate-700 text-slate-300 text-xs rounded px-2 py-1"
+            value={agentFilter}
+            onChange={(e) => setAgentFilter(e.target.value)}
+          >
+            <option value="">All agents</option>
+            {agents.map((a) => (
+              <option key={a.slug} value={a.slug}>{a.name}</option>
+            ))}
           </select>
-          <StubBadge />
         </div>
         <div className="flex items-center gap-2">
-          <select className="bg-slate-800 border border-slate-700 text-slate-300 text-xs rounded px-2 py-1">
-            <option>All types</option>
+          <select
+            className="bg-slate-800 border border-slate-700 text-slate-300 text-xs rounded px-2 py-1"
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+          >
+            <option value="">All types</option>
+            {Object.entries(ACTION_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
           </select>
-          <StubBadge />
         </div>
         <div className="flex items-center gap-2">
-          <select className="bg-slate-800 border border-slate-700 text-slate-300 text-xs rounded px-2 py-1">
-            <option>Pending</option>
+          <select
+            className="bg-slate-800 border border-slate-700 text-slate-300 text-xs rounded px-2 py-1"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
+            <option value="proposed">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+            <option value="completed">Completed</option>
+            <option value="failed">Failed</option>
+            <option value="all">All</option>
           </select>
-          <StubBadge />
         </div>
       </div>
 

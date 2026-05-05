@@ -36,8 +36,19 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export function getActions(status: string): Promise<Action[]> {
-  return apiFetch<Action[]>(`/actions?status=${encodeURIComponent(status)}`);
+export interface ActionFilters {
+  status?: string;
+  agent_slug?: string;
+  action_type?: string;
+}
+
+export function getActions(filters: ActionFilters = {}): Promise<Action[]> {
+  const params = new URLSearchParams();
+  if (filters.status) params.set('status', filters.status);
+  if (filters.agent_slug) params.set('agent_slug', filters.agent_slug);
+  if (filters.action_type) params.set('action_type', filters.action_type);
+  const qs = params.toString();
+  return apiFetch<Action[]>(`/actions${qs ? `?${qs}` : ''}`);
 }
 
 export function getAction(id: string): Promise<Action> {

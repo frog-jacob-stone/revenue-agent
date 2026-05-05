@@ -26,7 +26,7 @@ const NAV = [
 export default function Sidebar({ collapsed, onToggle }: Props) {
   const { data: proposed } = useQuery({
     queryKey: ['actions', 'proposed'],
-    queryFn: () => getActions('proposed'),
+    queryFn: () => getActions({ status: 'proposed' }),
     refetchInterval: 15_000,
   });
   const pendingCount = proposed?.length ?? 0;

@@ -11,7 +11,7 @@ interface Props {
 export default function ActionList({ status, isPending }: Props) {
   const { data, isLoading, isError, error } = useQuery<Action[]>({
     queryKey: ['actions', status],
-    queryFn: () => getActions(status),
+    queryFn: () => getActions({ status }),
     refetchInterval: isPending ? 10_000 : false,
   });
 
