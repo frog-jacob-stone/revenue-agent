@@ -5,8 +5,6 @@ AI-powered revenue operations for Frogslayer. Agents replace an entire revenue t
 Reference docs:
 - `docs/ARCHITECTURE.md` — system architecture and agent pattern
 - `docs/SCHEMA.md` — database (mirror of `supabase/migrations/`)
-- `docs/AGENTS.md` — agent roster and prompts
-- `docs/BACKLOG.md` — what's next, deferred, blocked, open questions
 
 ## Unbreakable Rules
 
@@ -27,8 +25,13 @@ Reference docs:
   - ⚠️ **Medium** - May need iteration, some complexity
   - 🔴 **Complex** - Break into sub-plans before executing
 
-## Code Conventions
+## Development Flow
+1. **Plan** - Create a detailed plan and save it to `.agent/plans/`
+2. **Build** - Execute the plan to implement the feature
+3. **Validate** - Test and verify the implementation works correctly. Use browser testing where applicable via an appropriate MCP
+4. **Iterate** - Fix any issues found during validation
 
+## Code Conventions
 - Routers validate input and call services; routers contain no business logic.
 - Services hold business logic; services never call routers.
 - Agents propose actions only; agents never call HubSpot/Gmail/Harvest directly.
@@ -47,6 +50,5 @@ After a change, update whatever just went stale — this is not optional:
 | If you... | Update... |
 |---|---|
 | Wrote a migration | `docs/SCHEMA.md` |
-| Changed agent boundaries, layering, or integration flow | `docs/ARCHITECTURE.md` |
-| Added or retired an agent | `docs/AGENTS.md` |
-| Finished, started, deferred, or blocked work | `docs/BACKLOG.md` |
+| Changed agent boundaries, layering, integration flow, or any archectural patterns | `docs/ARCHITECTURE.md` |
+| Changed Product level requirements | `PRD.md` |
