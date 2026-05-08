@@ -6,13 +6,13 @@ built the AsyncPostgresSaver checkpointer.
 """
 from __future__ import annotations
 
-from app.orchestrator_v2.graphs import (
+from app.orchestrator.graphs import (
     content_creation,
     content_publish,
     outreach,
     rev_rec,
 )
-from app.orchestrator_v2.runner import V2Runner
+from app.orchestrator.runner import V2Runner
 
 
 def register_all(runner: V2Runner) -> None:

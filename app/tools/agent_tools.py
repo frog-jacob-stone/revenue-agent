@@ -19,7 +19,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from app.db import get_pool
-from app.orchestrator_v2.agent_invoke import NodeContext, invoke_agent
+from app.orchestrator.agent_invoke import NodeContext, invoke_agent
 from app.services import agent_messages
 from app.tools.base import ToolContext, ToolDefinition
 

@@ -16,8 +16,8 @@ from typing import Any
 from uuid import UUID
 
 from app.db import get_pool
-from app.orchestrator_v2 import events
-from app.orchestrator_v2.runner import runner
+from app.orchestrator import events
+from app.orchestrator.runner import runner
 from app.services import audit
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ async def spawn_workflow(
             conn,
             events.SUBWORKFLOW_SPAWNED,
             workflow_id=parent_workflow_id,
-            actor=f"orchestrator_v2:{kind}",
+            actor=f"orchestrator:{kind}",
             payload={
                 "child_kind": kind,
                 "parent_workflow_id": str(parent_workflow_id),

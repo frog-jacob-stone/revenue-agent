@@ -9,7 +9,7 @@ originated from chat.
 
 Service-layer audit policy: these functions do NOT call `write_audit_event`.
 The table is the audit. If we later want per-turn audit visibility for the
-graph trace, add an `AGENT_MESSAGE_SENT` event in `app.orchestrator_v2.events`
+graph trace, add an `AGENT_MESSAGE_SENT` event in `app.orchestrator.events`
 and a one-line write here.
 """
 from __future__ import annotations

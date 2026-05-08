@@ -3,14 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, XCircle, Filter, Loader2 } from 'lucide-react';
 import {
-  getInboxItems,
-  approveAction,
-  rejectAction,
+  getApprovals,
   approveApproval,
   rejectApproval,
   listAgents,
 } from '../../api';
-import { isApproval } from '../../types';
 import type { InboxItem } from '../../types';
 import EmptyState from '../../components/shared/EmptyState';
 
@@ -156,18 +153,13 @@ function ActionRow({ action, isLast }: { action: InboxItem; isLast: boolean }) {
   const [error, setError] = useState<string | null>(null);
 
   const refetch = () => queryClient.invalidateQueries({ queryKey: ['inbox'] });
-  const v2 = isApproval(action);
 
   const handleApprove = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setLoading(true);
     setError(null);
     try {
-      if (v2) {
-        await approveApproval(action.id, 'system', action.proposed_payload);
-      } else {
-        await approveAction(action.id, 'system', action.proposed_payload);
-      }
+      await approveApproval(action.id, 'system', action.proposed_payload);
       await refetch();
     } catch (err) {
       setError((err as Error).message);
@@ -187,11 +179,7 @@ function ActionRow({ action, isLast }: { action: InboxItem; isLast: boolean }) {
     setLoading(true);
     setError(null);
     try {
-      if (v2) {
-        await rejectApproval(action.id, rejectReason.trim());
-      } else {
-        await rejectAction(action.id, rejectReason.trim());
-      }
+      await rejectApproval(action.id, rejectReason.trim());
       await refetch();
     } catch (err) {
       setError((err as Error).message);
@@ -203,7 +191,7 @@ function ActionRow({ action, isLast }: { action: InboxItem; isLast: boolean }) {
     <div className={`border-slate-800 ${!isLast ? 'border-b' : ''}`}>
       <div
         className="px-5 py-4 cursor-pointer hover:bg-slate-800/50 transition-colors"
-        onClick={() => navigate(`/inbox/${action.id}${v2 ? '?source=v2' : ''}`)}
+        onClick={() => navigate(`/inbox/${action.id}`)}
       >
         {/* Top row: risk dot + type tag + timestamp */}
         <div className="flex items-center gap-3 mb-2">
@@ -293,7 +281,7 @@ function ActionRow({ action, isLast }: { action: InboxItem; isLast: boolean }) {
 export default function InboxList() {
   const [agentFilter, setAgentFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('proposed');
+  const [statusFilter, setStatusFilter] = useState('pending');
 
   const { data: agents = [] } = useQuery({
     queryKey: ['agents'],
@@ -303,15 +291,15 @@ export default function InboxList() {
 
   const { data: actions = [], isLoading, isError } = useQuery({
     queryKey: ['inbox', statusFilter, agentFilter, typeFilter],
-    queryFn: () => getInboxItems({
-      status: statusFilter || 'proposed',
+    queryFn: () => getApprovals({
+      status: statusFilter || 'pending',
       agent_slug: agentFilter || undefined,
       action_type: typeFilter || undefined,
     }),
     refetchInterval: 15_000,
   });
 
-  const statusLabel = statusFilter === 'proposed' ? 'awaiting review'
+  const statusLabel = statusFilter === 'pending' ? 'awaiting review'
     : statusFilter === 'all' ? 'total'
     : statusFilter;
 
@@ -360,10 +348,10 @@ export default function InboxList() {
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
           >
-            <option value="proposed">Pending</option>
+            <option value="pending">Pending</option>
             <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>
-            <option value="completed">Completed</option>
+            <option value="executed">Executed</option>
             <option value="failed">Failed</option>
             <option value="all">All</option>
           </select>

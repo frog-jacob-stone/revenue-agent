@@ -14,8 +14,8 @@ import pytest
 from httpx import AsyncClient
 
 from app.db import get_pool
-from app.orchestrator_v2 import runner
-from app.orchestrator_v2.graphs.content_publish import (
+from app.orchestrator import runner
+from app.orchestrator.graphs.content_publish import (
     ACTION_TYPE,
     CONTENT_AGENT_SLUG,
     CONTENT_PUBLISH_KIND,

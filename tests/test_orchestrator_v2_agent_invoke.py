@@ -1,4 +1,4 @@
-"""Tests for orchestrator_v2.agent_invoke.
+"""Tests for orchestrator.agent_invoke.
 
 Stubs `call_anthropic` to avoid real network. Verifies AGENT_INVOKED /
 AGENT_COMPLETED audit events bookend the call, and that AGENT_FAILED is
@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 
 from app.db import get_pool
-from app.orchestrator_v2 import NodeContext, agent_invoke, events
+from app.orchestrator import NodeContext, agent_invoke, events
 
 
 async def _seed_workflow_row(kind: str = "_agent_invoke_test"):
@@ -20,8 +20,8 @@ async def _seed_workflow_row(kind: str = "_agent_invoke_test"):
     pool = await get_pool()
     return await pool.fetchval(
         """
-        INSERT INTO workflows (kind, status, current_step, trigger_source, trigger_payload, initiated_by)
-        VALUES ($1, 'running', 0, 'manual', '{}'::jsonb, 'tester')
+        INSERT INTO workflows (kind, status, trigger_source, trigger_payload, initiated_by)
+        VALUES ($1, 'running', 'manual', '{}'::jsonb, 'tester')
         RETURNING id
         """,
         kind,
@@ -44,7 +44,7 @@ async def test_invoke_agent_emits_invoked_and_completed(test_agent_slug):
         return f"[stub from {model}]"
 
     # Patch the imported reference inside the agent_invoke module.
-    with patch("app.orchestrator_v2.agent_invoke.call_anthropic", side_effect=fake_call):
+    with patch("app.orchestrator.agent_invoke.call_anthropic", side_effect=fake_call):
         # Use any agent class registered in app.agents.registry. Pull a slug
         # dynamically so the test doesn't depend on a specific slug name.
         from app.agents.registry import AGENTS
@@ -69,7 +69,7 @@ async def test_invoke_agent_emits_failed_on_exception(test_agent_slug):
     from app.agents.registry import AGENTS
     agent_cls = next(c for c in AGENTS if getattr(c, "model", ""))
 
-    with patch("app.orchestrator_v2.agent_invoke.call_anthropic", side_effect=boom):
+    with patch("app.orchestrator.agent_invoke.call_anthropic", side_effect=boom):
         ctx = NodeContext(workflow_id=wf_id)
         with pytest.raises(RuntimeError, match="network ded"):
             await agent_invoke.invoke_agent(agent_cls.slug, {"prompt": "x"}, ctx)

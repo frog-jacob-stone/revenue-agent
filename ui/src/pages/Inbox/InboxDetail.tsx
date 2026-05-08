@@ -1,4 +1,4 @@
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { ArrowLeft, CheckCircle2, XCircle, Loader2, Pencil } from 'lucide-react';
@@ -6,14 +6,10 @@ import ActionTypeChip from '../../components/shared/ActionTypeChip';
 import WorkflowTrace from '../../components/WorkflowTrace';
 import EditBodyModal from '../../components/EditBodyModal';
 import {
-  approveAction,
-  getAction,
-  rejectAction,
   approveApproval,
   getApproval,
   rejectApproval,
 } from '../../api';
-import { isApproval } from '../../types';
 import type { InboxItem } from '../../types';
 
 function fmt(iso: string) {
@@ -33,7 +29,6 @@ function ActionDetail({ action }: { action: InboxItem }) {
   const [editedPayload, setEditedPayload] = useState<Record<string, unknown>>(action.proposed_payload);
   const [showEdit, setShowEdit] = useState(false);
   const isModified = JSON.stringify(editedPayload) !== JSON.stringify(action.proposed_payload);
-  const v2 = isApproval(action);
 
   const refetch = () => {
     queryClient.invalidateQueries({ queryKey: ['inbox-item', action.id] });
@@ -46,11 +41,7 @@ function ActionDetail({ action }: { action: InboxItem }) {
     setBusy(true);
     setErr(null);
     try {
-      if (v2) {
-        await approveApproval(action.id, 'system', editedPayload);
-      } else {
-        await approveAction(action.id, 'system', editedPayload);
-      }
+      await approveApproval(action.id, 'system', editedPayload);
       refetch();
     } catch (e) {
       setErr((e as Error).message);
@@ -64,11 +55,7 @@ function ActionDetail({ action }: { action: InboxItem }) {
     setBusy(true);
     setErr(null);
     try {
-      if (v2) {
-        await rejectApproval(action.id, rejectReason.trim());
-      } else {
-        await rejectAction(action.id, rejectReason.trim());
-      }
+      await rejectApproval(action.id, rejectReason.trim());
       refetch();
     } catch (e) {
       setErr((e as Error).message);
@@ -77,8 +64,7 @@ function ActionDetail({ action }: { action: InboxItem }) {
     }
   };
 
-  // v1 status "proposed" and v2 status "pending" both mean "awaiting human review".
-  const isPending = action.status === 'proposed' || action.status === 'pending';
+  const isPending = action.status === 'pending';
 
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-6">
@@ -95,13 +81,13 @@ function ActionDetail({ action }: { action: InboxItem }) {
         <div className="flex items-center gap-3 flex-wrap">
           <ActionTypeChip type={action.action_type} />
           <span className="text-xs text-slate-500">
-            {v2 ? `node ${action.node_name}` : `sequence #${action.sequence}`}
+            node {action.node_name}
           </span>
           <span
             className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${
               isPending
                 ? 'bg-amber-400/15 text-amber-400 border border-amber-400/30'
-                : action.status === 'completed' || action.status === 'executed'
+                : action.status === 'executed'
                 ? 'bg-emerald-400/15 text-emerald-400 border border-emerald-400/30'
                 : action.status === 'failed' || action.status === 'rejected'
                 ? 'bg-red-400/15 text-red-400 border border-red-400/30'
@@ -214,13 +200,10 @@ function ActionDetail({ action }: { action: InboxItem }) {
 export default function InboxDetail() {
   const { itemId } = useParams<{ itemId: string }>();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const isV2 = searchParams.get('source') === 'v2';
 
   const { data: action, isLoading, isError } = useQuery<InboxItem>({
-    queryKey: ['inbox-item', itemId, isV2 ? 'v2' : 'v1'],
-    queryFn: () =>
-      isV2 ? getApproval(itemId as string) : getAction(itemId as string),
+    queryKey: ['inbox-item', itemId],
+    queryFn: () => getApproval(itemId as string),
     enabled: !!itemId,
     retry: false,
   });

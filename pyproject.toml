@@ -38,6 +38,7 @@ asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 env = [
     "ENV=test",
+    "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres_test",
 ]
 
 [tool.ruff.lint]

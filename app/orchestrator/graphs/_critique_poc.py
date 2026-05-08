@@ -19,7 +19,7 @@ from typing import NotRequired, TypedDict
 
 from langgraph.graph import END, StateGraph
 
-from app.orchestrator_v2.runner import GraphSpec
+from app.orchestrator.runner import GraphSpec
 
 
 CRITIQUE_POC_KIND = "_critique_poc"

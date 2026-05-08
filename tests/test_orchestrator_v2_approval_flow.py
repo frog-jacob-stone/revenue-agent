@@ -10,7 +10,7 @@ from httpx import AsyncClient
 from langgraph.graph import END, StateGraph
 
 from app.db import get_pool
-from app.orchestrator_v2 import GraphSpec, runner
+from app.orchestrator import GraphSpec, runner
 
 
 class FlowState(TypedDict, total=False):

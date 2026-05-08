@@ -58,8 +58,8 @@ async def _create_post(
     **_: Any,
 ) -> dict[str, Any]:
     from app.db import get_pool
-    from app.orchestrator_v2.graphs.content_creation import CONTENT_CREATION_KIND
-    from app.orchestrator_v2.runner import runner as v2_runner
+    from app.orchestrator.graphs.content_creation import CONTENT_CREATION_KIND
+    from app.orchestrator.runner import runner as v2_runner
     from app.services import social_posts as svc
 
     pool = await get_pool()
@@ -320,8 +320,8 @@ async def _publish_post(
     **_: Any,
 ) -> dict[str, Any]:
     from app.db import get_pool
-    from app.orchestrator_v2 import runner
-    from app.orchestrator_v2.graphs.content_publish import CONTENT_PUBLISH_KIND
+    from app.orchestrator import runner
+    from app.orchestrator.graphs.content_publish import CONTENT_PUBLISH_KIND
     from app.services import social_posts as svc
 
     pool = await get_pool()

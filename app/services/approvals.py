@@ -5,7 +5,7 @@ replaces the role of `actions WHERE status='proposed'` in v1. Phase 0 of the
 multi-agent rearchitecture (.agent/plans/3.langgraph-multi-agent-rearchitecture.md).
 
 Every state-changing function writes an audit event using the canonical
-constants in app/orchestrator_v2/events.py.
+constants in app/orchestrator/events.py.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from uuid import UUID
 
 import asyncpg
 
-from app.orchestrator_v2 import events
+from app.orchestrator import events
 from app.services import audit
 
 
@@ -57,7 +57,7 @@ async def create_pending_conn(
         conn,
         events.APPROVAL_REQUESTED,
         workflow_id=workflow_id,
-        actor=f"orchestrator_v2:{node_name}",
+        actor=f"orchestrator:{node_name}",
         payload={
             "approval_id": str(row["id"]),
             "node_name": node_name,
@@ -222,7 +222,7 @@ async def mark_executed(
                 conn,
                 events.APPROVAL_EXECUTED,
                 workflow_id=row["workflow_id"],
-                actor="orchestrator_v2",
+                actor="orchestrator",
                 payload={"approval_id": str(approval_id)},
             )
     return dict(row)
@@ -253,7 +253,7 @@ async def mark_failed(
                 conn,
                 events.APPROVAL_FAILED,
                 workflow_id=row["workflow_id"],
-                actor="orchestrator_v2",
+                actor="orchestrator",
                 payload={"approval_id": str(approval_id), "error": error},
             )
     return dict(row)

@@ -1,14 +1,11 @@
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID
 
 from pydantic import Field
 
 from app.models.common import ORMBase
-
-if TYPE_CHECKING:
-    from app.models.actions import ActionResponse
 
 
 class WorkflowStatus(str, Enum):
@@ -20,12 +17,6 @@ class WorkflowStatus(str, Enum):
     cancelled = "cancelled"
 
 
-class WorkflowPattern(str, Enum):
-    supervised_automation = "supervised_automation"
-    prompt_chain_action = "prompt_chain_action"
-    prompt_chain_artifact = "prompt_chain_artifact"
-
-
 class WorkflowCreate(ORMBase):
     kind: str
     trigger_source: str
@@ -35,7 +26,6 @@ class WorkflowCreate(ORMBase):
     subject_ref: dict[str, Any] | None = None
     initiated_by: str = "system"
     metadata: dict[str, Any] | None = None
-    pattern: WorkflowPattern | None = None
 
 
 class WorkflowResponse(ORMBase):
@@ -52,37 +42,11 @@ class WorkflowResponse(ORMBase):
     completed_at: datetime | None = None
     error: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
-    pattern: WorkflowPattern | None = None
-    current_step: int | None = None
-    actions: list[Any] = Field(default_factory=list)
-
-
-class TraceAction(ORMBase):
-    """Lean view of an action for the chain trace UI."""
-    id: UUID
-    sequence: int
-    step_kind: str | None = None
-    action_type: str
-    summary: str
-    status: str
-    parent_action_id: UUID | None = None
-    retry_of_action_id: UUID | None = None
-    attempt_number: int = 1
-    max_attempts: int | None = None
-    critique_result: dict[str, Any] | None = None
-    duration_ms: int | None = None
-    created_at: datetime
-    executed_at: datetime | None = None
 
 
 class TraceEvent(ORMBase):
-    """Audit-log event for v2 (LangGraph) workflow tracing.
-
-    Returned in `WorkflowTraceResponse.events` when the workflow's kind is
-    handled by the v2 runner. v1 workflows leave `events` empty and populate
-    `actions` instead.
-    """
-    id: UUID
+    """Audit-log event for workflow tracing."""
+    id: int
     event_type: str
     occurred_at: datetime
     actor: str | None = None
@@ -92,8 +56,5 @@ class TraceEvent(ORMBase):
 class WorkflowTraceResponse(ORMBase):
     workflow_id: UUID
     kind: str
-    pattern: WorkflowPattern | None = None
     status: WorkflowStatus
-    current_step: int | None = None
-    actions: list[TraceAction] = Field(default_factory=list)
     events: list[TraceEvent] = Field(default_factory=list)

@@ -129,12 +129,12 @@ Tests create real rows in the local DB. No cleanup is performed between runs (ea
 |---|---|---|
 | `POST` | `/workflows` | Create a workflow (triggers `workflow.started` audit event) |
 | `GET` | `/workflows` | List workflows (filter by `status`, `kind`) |
-| `GET` | `/workflows/{id}` | Workflow detail with its actions array |
-| `POST` | `/workflows/{id}/actions` | Propose an action (auto-assigns sequence) |
-| `GET` | `/actions` | Approval inbox — defaults to `status=proposed` |
-| `GET` | `/actions/{id}` | Action detail |
-| `POST` | `/actions/{id}/approve` | Approve → execute → complete (writes full audit trail) |
-| `POST` | `/actions/{id}/reject` | Reject with reason |
+| `GET` | `/workflows/{id}` | Workflow detail |
+| `GET` | `/workflows/{id}/trace` | Audit-log event timeline for the workflow |
+| `GET` | `/approvals` | Approval inbox — defaults to `status=pending` |
+| `GET` | `/approvals/{id}` | Approval detail |
+| `POST` | `/approvals/{id}/approve` | Approve → resume the graph → execute (writes full audit trail) |
+| `POST` | `/approvals/{id}/reject` | Reject with reason |
 
 ---
 
@@ -149,10 +149,13 @@ app/
   routers/             # FastAPI routers (thin — business logic in services/)
   services/
     audit.py           # write_audit_event() — called on every state transition
-    approval.py        # approve_action(), reject_action()
-    execution.py       # execute() stub — returns {"stub": true}
+    approvals.py       # approve_approval(), reject_approval() (v2 surface)
+    agent_messages.py  # turn-by-turn record of agent-to-agent exchanges
+  orchestrator/        # LangGraph runner + production graphs
+    runner.py
+    graphs/            # one StateGraph per workflow kind
   agents/
-    base.py            # BaseAgent ABC — implementations next sprint
+    base.py            # BaseAgent ABC
   integrations/        # HubSpot, Apollo, Anthropic stubs
 docs/
   SCHEMA.md            # Source of truth for the DB schema
@@ -165,5 +168,5 @@ supabase/
 tests/
   conftest.py          # Pool + client + test_agent_id fixtures
   test_workflows.py
-  test_actions.py
+  test_orchestrator_v2_*.py  # runner, approval flow, agent_invoke, spawn
 ```

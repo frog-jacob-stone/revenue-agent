@@ -10,7 +10,6 @@ import ChatLayout from './pages/Chat/ChatLayout';
 import KnowledgeBase from './pages/KnowledgeBase';
 import Analytics from './pages/Analytics';
 import Settings from './pages/Settings';
-import ChainsList from './pages/Chains/ChainsList';
 
 export default function App() {
   return (
@@ -22,7 +21,6 @@ export default function App() {
           <Route path="/inbox/:itemId" element={<InboxDetail />} />
           <Route path="/agents" element={<AgentList />} />
           <Route path="/agents/:agentId" element={<AgentDetail />} />
-          <Route path="/chains" element={<ChainsList />} />
           <Route path="/audit" element={<AuditLog />} />
           <Route path="/chat" element={<ChatLayout />} />
           <Route path="/chat/:agentId" element={<ChatLayout />} />

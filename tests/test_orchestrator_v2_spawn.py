@@ -1,4 +1,4 @@
-"""Tests for orchestrator_v2.spawn.
+"""Tests for orchestrator.spawn.
 
 Verifies a sub-workflow gets a parent_workflow_id linkage and SUBWORKFLOW_SPAWNED
 fires on the parent's audit trail.
@@ -12,7 +12,7 @@ import pytest
 from langgraph.graph import END, StateGraph
 
 from app.db import get_pool
-from app.orchestrator_v2 import GraphSpec, events, runner, spawn_workflow
+from app.orchestrator import GraphSpec, events, runner, spawn_workflow
 
 
 class TrivialState(TypedDict, total=False):
@@ -39,8 +39,8 @@ async def _seed_parent_workflow():
     pool = await get_pool()
     return await pool.fetchval(
         """
-        INSERT INTO workflows (kind, status, current_step, trigger_source, trigger_payload, initiated_by)
-        VALUES ('_parent', 'running', 0, 'manual', '{}'::jsonb, 'tester')
+        INSERT INTO workflows (kind, status, trigger_source, trigger_payload, initiated_by)
+        VALUES ('_parent', 'running', 'manual', '{}'::jsonb, 'tester')
         RETURNING id
         """,
     )

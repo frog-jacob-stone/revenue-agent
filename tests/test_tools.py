@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.agents.registry import AGENTS_BY_SLUG
-from app.agents.revenue_recognition import RevenueRecognitionAgent
+from app.agents.revenue import RevenueRecognitionAgent
 from app.tools import TOOLS, ToolContext, execute_tool, get_tool_schemas
 
 

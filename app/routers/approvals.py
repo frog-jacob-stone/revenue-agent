@@ -13,7 +13,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.db import get_pool
 from app.models.approvals import ApprovalApprove, ApprovalReject, ApprovalResponse
-from app.orchestrator_v2 import runner as v2_runner_singleton
+from app.orchestrator import runner as v2_runner_singleton
 from app.services import approvals as approvals_service
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])

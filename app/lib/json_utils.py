@@ -1,4 +1,4 @@
-"""Shared utilities for chain step handlers."""
+"""Shared JSON utilities."""
 from __future__ import annotations
 
 import json
@@ -14,5 +14,5 @@ def parse_json(raw: str) -> dict[str, Any]:
     try:
         return json.loads(cleaned)
     except (json.JSONDecodeError, ValueError):
-        logger.warning("[chain] JSON parse failed: %s", raw[:200])
+        logger.warning("[json_utils] JSON parse failed: %s", raw[:200])
         return {}

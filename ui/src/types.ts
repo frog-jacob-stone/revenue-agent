@@ -1,44 +1,4 @@
-export type ActionStatus =
-  | 'proposed'
-  | 'approved'
-  | 'rejected'
-  | 'executing'
-  | 'completed'
-  | 'failed';
-
-export type ActionType =
-  | 'research'
-  | 'send_email'
-  | 'create_hubspot_record'
-  | 'update_hubspot_record'
-  | 'publish_content'
-  | 'generate_document'
-  | 'write_rev_rec'
-  | 'configure_rev_rec_projects'
-  | 'other';
-
 export type RiskLevel = 'low' | 'medium' | 'high';
-
-export interface Action {
-  id: string;
-  workflow_id: string;
-  agent_id: string;
-  sequence: number;
-  action_type: ActionType;
-  status: ActionStatus;
-  summary: string;
-  proposed_payload: Record<string, unknown>;
-  executed_payload: Record<string, unknown> | null;
-  result: Record<string, unknown> | null;
-  reasoning: string | null;
-  risk_level: RiskLevel | null;
-  approved_by: string | null;
-  approved_at: string | null;
-  rejection_reason: string | null;
-  executed_at: string | null;
-  error: string | null;
-  created_at: string;
-}
 
 export type NavTab = 'pending' | 'approved' | 'rejected' | 'all';
 
@@ -78,37 +38,6 @@ export interface WorkflowRecord {
   error: string | null;
 }
 
-export type StepKind = 'task' | 'llm_step' | 'critique' | 'checkpoint' | 'execution';
-
-export type WorkflowPattern =
-  | 'supervised_automation'
-  | 'prompt_chain_action'
-  | 'prompt_chain_artifact';
-
-export interface CritiqueResult {
-  passed: boolean;
-  score?: number;
-  feedback?: string;
-  issues?: string[];
-}
-
-export interface TraceAction {
-  id: string;
-  sequence: number;
-  step_kind: StepKind | null;
-  action_type: string;
-  summary: string;
-  status: ActionStatus;
-  parent_action_id: string | null;
-  retry_of_action_id: string | null;
-  attempt_number: number;
-  max_attempts: number | null;
-  critique_result: CritiqueResult | null;
-  duration_ms: number | null;
-  created_at: string;
-  executed_at: string | null;
-}
-
 export interface TraceEvent {
   id: string;
   event_type: string;
@@ -120,19 +49,9 @@ export interface TraceEvent {
 export interface WorkflowTrace {
   workflow_id: string;
   kind: string;
-  pattern: WorkflowPattern | null;
   status: string;
-  current_step: number | null;
-  actions: TraceAction[];
   events: TraceEvent[];
 }
-
-// ── v2 (LangGraph) approvals ────────────────────────────────────────────────
-//
-// Phase 1 of the LangGraph migration introduces a parallel inbox surface at
-// /approvals. `content_publish` writes to /approvals; the other v1 chains
-// still write to /actions. `InboxItem` is the union that lets the inbox UI
-// dual-source from both surfaces until v1 is retired in Phase 5.
 
 export type ApprovalStatus =
   | 'pending'
@@ -163,8 +82,4 @@ export interface Approval {
   created_at: string;
 }
 
-export type InboxItem = Action | Approval;
-
-export function isApproval(item: InboxItem): item is Approval {
-  return 'node_name' in item;
-}
+export type InboxItem = Approval;

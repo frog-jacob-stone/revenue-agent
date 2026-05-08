@@ -68,10 +68,11 @@ class ConversationalAgent(BaseAgent, ABC):
 
 
 class _CriticAgent(BaseAgent):
-    """Internal evaluator invoked by orchestrator chains, not by humans.
+    """Internal evaluator invoked by orchestrator graphs, not by humans.
 
-    Critics never appear in the inbox: their step rows are `step_kind=critique`
-    which the inbox filter already excludes.
+    Critics never appear in the inbox: they run as internal nodes in critique
+    loops (e.g. `voice_critique`, `accuracy_critique`) and never write to
+    `approvals`.
     """
 
     requires_approval: ClassVar[bool] = False

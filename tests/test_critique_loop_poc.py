@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
-from app.orchestrator_v2.graphs._critique_poc import build_graph
+from app.orchestrator.graphs._critique_poc import build_graph
 
 
 def _compile():

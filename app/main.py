@@ -6,16 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.db import close_pool, get_pool
-from app.orchestrator.chains import register_all as register_chains
-from app.orchestrator_v2.graphs import register_all as register_v2_graphs
-from app.orchestrator_v2.runner import runner as v2_runner
+from app.orchestrator.graphs import register_all as register_v2_graphs
+from app.orchestrator.runner import runner as v2_runner
 from app.routers import (
-    actions,
     agents,
     analytics,
     approvals,
     audit_log,
-    chains,
     chat,
     memories,
     workflows,
@@ -30,7 +27,6 @@ async def lifespan(app: FastAPI):
     await get_pool()
     await seed_agents()
     await seed_voice_profile()
-    register_chains()
     await v2_runner.init()
     register_v2_graphs(v2_runner)
     yield
@@ -52,13 +48,11 @@ app.add_middleware(
 )
 
 app.include_router(workflows.router)
-app.include_router(actions.router)
 app.include_router(analytics.router)
 app.include_router(agents.router)
 app.include_router(audit_log.router)
 app.include_router(memories.router)
 app.include_router(chat.router)
-app.include_router(chains.router)
 app.include_router(approvals.router)
 
 

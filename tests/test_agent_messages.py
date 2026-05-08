@@ -16,8 +16,8 @@ async def _seed_workflow_row(kind: str = "_agent_messages_test"):
     return await pool.fetchval(
         """
         INSERT INTO workflows
-            (kind, status, current_step, trigger_source, trigger_payload, initiated_by)
-        VALUES ($1, 'running', 0, 'manual', '{}'::jsonb, 'tester')
+            (kind, status, trigger_source, trigger_payload, initiated_by)
+        VALUES ($1, 'running', 'manual', '{}'::jsonb, 'tester')
         RETURNING id
         """,
         kind,

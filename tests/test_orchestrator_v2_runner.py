@@ -1,4 +1,4 @@
-"""Tests for app.orchestrator_v2.runner.
+"""Tests for app.orchestrator.runner.
 
 Each test registers a tiny graph against the shared singleton runner, drives
 it, then unregisters so the registry is fresh for the next test.
@@ -12,7 +12,7 @@ import pytest
 from langgraph.graph import END, StateGraph
 
 from app.db import get_pool
-from app.orchestrator_v2 import GraphSpec, events, runner
+from app.orchestrator import GraphSpec, events, runner
 
 
 class TinyState(TypedDict, total=False):

@@ -27,7 +27,7 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.config import settings
 from app.db import get_pool
-from app.orchestrator_v2 import events
+from app.orchestrator import events
 from app.services import approvals as approvals_service
 from app.services import audit
 
@@ -224,7 +224,7 @@ class V2Runner:
                 conn,
                 events.WORKFLOW_RESUMED,
                 workflow_id=wf_id,
-                actor="orchestrator_v2",
+                actor="orchestrator",
                 payload={"approval_id": str(latest["id"])},
             )
 
@@ -280,7 +280,7 @@ class V2Runner:
                             conn,
                             events.NODE_EXITED,
                             workflow_id=workflow_id,
-                            actor=f"orchestrator_v2:{node_name}",
+                            actor=f"orchestrator:{node_name}",
                             payload={"node": node_name},
                         )
         except Exception as exc:
@@ -290,7 +290,7 @@ class V2Runner:
                     conn,
                     events.NODE_FAILED,
                     workflow_id=workflow_id,
-                    actor="orchestrator_v2",
+                    actor="orchestrator",
                     payload={"error": str(exc)},
                 )
             await self._mark_workflow_failed(pool, workflow_id, error=str(exc))
@@ -343,7 +343,7 @@ class V2Runner:
                     conn,
                     events.WORKFLOW_PAUSED,
                     workflow_id=workflow_id,
-                    actor=f"orchestrator_v2:{kind}",
+                    actor=f"orchestrator:{kind}",
                     payload={"interrupt_before": node_name},
                 )
                 await conn.execute(
@@ -371,11 +371,11 @@ class V2Runner:
                 workflow_id = await conn.fetchval(
                     """
                     INSERT INTO workflows
-                        (kind, status, current_step,
+                        (kind, status,
                          trigger_source, trigger_payload,
                          subject_type, subject_id, subject_ref,
                          initiated_by, parent_workflow_id)
-                    VALUES ($1, 'running', 0, $2, $3, $4, $5, $6, $7, $8)
+                    VALUES ($1, 'running', $2, $3, $4, $5, $6, $7, $8)
                     RETURNING id
                     """,
                     kind,
@@ -414,7 +414,7 @@ class V2Runner:
                     conn,
                     events.WORKFLOW_COMPLETED,
                     workflow_id=workflow_id,
-                    actor="orchestrator_v2",
+                    actor="orchestrator",
                 )
 
     async def _mark_workflow_failed(
@@ -434,7 +434,7 @@ class V2Runner:
                     conn,
                     events.WORKFLOW_FAILED,
                     workflow_id=workflow_id,
-                    actor="orchestrator_v2",
+                    actor="orchestrator",
                     payload={"error": error},
                 )
 

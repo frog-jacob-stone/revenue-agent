@@ -1,4 +1,4 @@
-"""Canonical audit event names emitted by orchestrator_v2.
+"""Canonical audit event names emitted by orchestrator.
 
 Every audit event written from a v2 node, runner, approval flow, or
 sub-workflow spawn MUST use one of these constants. Adding a new event

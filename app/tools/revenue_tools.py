@@ -45,8 +45,8 @@ async def _trigger_revenue_recognition(
     date_recognized: str | None = None,
     **_: Any,
 ) -> dict[str, Any]:
-    from app.orchestrator_v2.graphs.rev_rec import REV_REC_KIND
-    from app.orchestrator_v2.runner import runner
+    from app.orchestrator.graphs.rev_rec import REV_REC_KIND
+    from app.orchestrator.runner import runner
 
     resolved_date = date_recognized or date.today().isoformat()
     workflow_id = await runner.start(

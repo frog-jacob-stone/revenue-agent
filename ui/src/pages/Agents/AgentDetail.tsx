@@ -5,18 +5,14 @@ import type { AgentId } from '../../mocks';
 import {
   listAgents,
   getAgent,
-  getAgentActions,
+  getAgentApprovals,
   getAgentWorkflows,
   getAgentTools,
   setAgentActive,
   triggerAgent,
-  getChains,
-  getChainDiagram,
-  type ChainSummary,
 } from '../../api';
-import type { AgentRecord, AgentTool, WorkflowRecord, Action } from '../../types';
+import type { AgentRecord, AgentTool, WorkflowRecord, Approval } from '../../types';
 import StatusChip from '../../components/shared/StatusChip';
-import MermaidDiagram from '../../components/MermaidDiagram';
 import SDRResearcherConfig from './config-panels/SDRResearcher';
 import OutreachAgentConfig from './config-panels/OutreachAgent';
 import ContentWriterConfig from './config-panels/ContentWriter';
@@ -101,11 +97,9 @@ export default function AgentDetail() {
 
   const [sidebarAgents, setSidebarAgents] = useState<AgentRecord[]>([]);
   const [agentRecord, setAgentRecord] = useState<AgentRecord | null>(null);
-  const [actions, setActions] = useState<Action[]>([]);
+  const [actions, setActions] = useState<Approval[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowRecord[]>([]);
   const [tools, setTools] = useState<AgentTool[]>([]);
-  const [chains, setChains] = useState<ChainSummary[]>([]);
-  const [chainDiagrams, setChainDiagrams] = useState<Record<string, string>>({});
   const [toggling, setToggling] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [triggerError, setTriggerError] = useState<string | null>(null);
@@ -120,30 +114,19 @@ export default function AgentDetail() {
     setActions([]);
     setWorkflows([]);
     setTools([]);
-    setChains([]);
-    setChainDiagrams({});
     Promise.all([
       getAgent(agentId).then(setAgentRecord),
-      getAgentActions(agentId, 'all').then(setActions),
+      getAgentApprovals(agentId, 'all').then(setActions),
       getAgentWorkflows(agentId).then(setWorkflows),
       getAgentTools(agentId).then(setTools).catch(() => {}),
-      getChains(agentId)
-        .then(async (rows) => {
-          setChains(rows);
-          const sources = await Promise.all(
-            rows.map((r) => getChainDiagram(r.kind).then((src) => [r.kind, src] as const)),
-          );
-          setChainDiagrams(Object.fromEntries(sources));
-        })
-        .catch(() => {}),
     ]).catch(() => {});
   }, [agentId]);
 
-  const pendingActions = actions.filter((a) => a.status === 'proposed');
-  const historyActions = actions.filter((a) => a.status !== 'proposed').slice(0, 8);
+  const pendingActions = actions.filter((a) => a.status === 'pending');
+  const historyActions = actions.filter((a) => a.status !== 'pending').slice(0, 8);
   const actionedToday = actions.filter(
     (a) =>
-      (a.status === 'completed' || a.status === 'failed') &&
+      (a.status === 'executed' || a.status === 'failed') &&
       isToday(a.executed_at ?? a.created_at),
   ).length;
   const lastRun = workflows[0]?.started_at ?? null;
@@ -333,36 +316,6 @@ export default function AgentDetail() {
             </table>
           )}
         </div>
-
-        {/* Chains */}
-        {chains.length > 0 && (
-          <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-800">
-              <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
-                Chains
-              </h2>
-            </div>
-            <div className="divide-y divide-slate-800">
-              {chains.map((c) => (
-                <div key={c.kind} className="px-4 py-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <p className="text-sm font-mono text-slate-200">{c.kind}</p>
-                    <span className="text-xs text-slate-500 font-mono">
-                      {c.pattern} · {c.step_count} step{c.step_count === 1 ? '' : 's'}
-                    </span>
-                  </div>
-                  {chainDiagrams[c.kind] ? (
-                    <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 overflow-x-auto">
-                      <MermaidDiagram source={chainDiagrams[c.kind]} />
-                    </div>
-                  ) : (
-                    <p className="text-xs text-slate-600">Loading diagram…</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* Config panel */}
         {ConfigPanel && (

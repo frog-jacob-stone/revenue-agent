@@ -19,7 +19,7 @@ from app.agents.base import BaseAgent, ConversationalAgent
 from app.agents.registry import AGENTS
 from app.db import get_pool
 from app.integrations.anthropic_client import call_anthropic
-from app.orchestrator_v2 import events
+from app.orchestrator import events
 from app.services import audit
 
 logger = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ async def invoke_agent(
             events.AGENT_INVOKED,
             workflow_id=workflow_id,
             agent_id=agent_id,
-            actor=f"orchestrator_v2:{slug}",
+            actor=f"orchestrator:{slug}",
             payload={"slug": slug, "max_tokens": max_tokens},
         )
 
@@ -115,7 +115,7 @@ async def invoke_agent(
                 events.AGENT_FAILED,
                 workflow_id=workflow_id,
                 agent_id=agent_id,
-                actor=f"orchestrator_v2:{slug}",
+                actor=f"orchestrator:{slug}",
                 payload={"error": str(exc)},
             )
         raise
@@ -126,7 +126,7 @@ async def invoke_agent(
             events.AGENT_COMPLETED,
             workflow_id=workflow_id,
             agent_id=agent_id,
-            actor=f"orchestrator_v2:{slug}",
+            actor=f"orchestrator:{slug}",
             payload={"slug": slug, "chars": len(text)},
         )
     return {"text": text}

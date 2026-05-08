@@ -24,8 +24,8 @@ from uuid import UUID
 from langgraph.graph import END, StateGraph
 
 from app.db import get_pool
-from app.orchestrator_v2.runner import GraphSpec
-from app.orchestrator_v2.state import BaseGraphState
+from app.orchestrator.runner import GraphSpec
+from app.orchestrator.state import BaseGraphState
 from app.services import social_posts
 
 logger = logging.getLogger(__name__)

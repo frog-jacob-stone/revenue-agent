@@ -1,35 +1,26 @@
-"""Orchestrator for multi-step prompt chains.
+"""orchestrator — LangGraph-based orchestration runtime.
 
-See docs/SCHEMA.md "Agentic Patterns" for the conceptual model.
+Lives next to the legacy orchestrator (`app/orchestrator/`) during the
+multi-agent rearchitecture. Master plan:
+.agent/plans/3.langgraph-multi-agent-rearchitecture.md
+
+Public surface:
+  runner: V2Runner             — the singleton; exposes start/resume/register
+  events                       — canonical audit event constants
+  invoke_agent, NodeContext    — agent invocation primitive
+  spawn_workflow               — sub-workflow primitive
 """
-from app.orchestrator.base import BaseOrchestrator
-from app.orchestrator.chain import Chain, get_chain, has_chain, register_chain
-from app.orchestrator.prompt_chain import PromptChainOrchestrator, orchestrator
-from app.orchestrator.state import ActionRow, StepContext, WorkflowState
-from app.orchestrator.steps import (
-    CheckpointStep,
-    CritiqueStep,
-    ExecutionStep,
-    LLMStep,
-    Step,
-    TaskStep,
-)
+from app.orchestrator import events
+from app.orchestrator.agent_invoke import NodeContext, invoke_agent
+from app.orchestrator.runner import GraphSpec, V2Runner, runner
+from app.orchestrator.spawn import spawn_workflow
 
 __all__ = [
-    "BaseOrchestrator",
-    "Chain",
-    "ActionRow",
-    "CheckpointStep",
-    "CritiqueStep",
-    "ExecutionStep",
-    "LLMStep",
-    "PromptChainOrchestrator",
-    "Step",
-    "StepContext",
-    "TaskStep",
-    "WorkflowState",
-    "get_chain",
-    "has_chain",
-    "orchestrator",
-    "register_chain",
+    "GraphSpec",
+    "NodeContext",
+    "V2Runner",
+    "events",
+    "invoke_agent",
+    "runner",
+    "spawn_workflow",
 ]
