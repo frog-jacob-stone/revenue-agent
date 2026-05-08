@@ -75,10 +75,25 @@ class TraceAction(ORMBase):
     executed_at: datetime | None = None
 
 
+class TraceEvent(ORMBase):
+    """Audit-log event for v2 (LangGraph) workflow tracing.
+
+    Returned in `WorkflowTraceResponse.events` when the workflow's kind is
+    handled by the v2 runner. v1 workflows leave `events` empty and populate
+    `actions` instead.
+    """
+    id: UUID
+    event_type: str
+    occurred_at: datetime
+    actor: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
 class WorkflowTraceResponse(ORMBase):
     workflow_id: UUID
     kind: str
     pattern: WorkflowPattern | None = None
     status: WorkflowStatus
     current_step: int | None = None
-    actions: list[TraceAction]
+    actions: list[TraceAction] = Field(default_factory=list)
+    events: list[TraceEvent] = Field(default_factory=list)

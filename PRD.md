@@ -38,7 +38,7 @@ Technical professionals (revenue ops, sales leaders, founders) who want to build
 
 ### Out of Scope
 - ❌ Multi-user / role-based access control (v1 is single-user)
-- ❌ LLM frameworks (LangChain, LangGraph, CrewAI) — raw SDK only
+- ❌ LangChain, CrewAI, and similar agent frameworks — raw SDKs only for LLM calls
 - ❌ Document ingestion pipeline (SharePoint → pgvector)
 - ❌ Brand research workflow (deferred — needs ingestion first)
 - ❌ Real-time worker queue (Arq + Redis) — FastAPI BackgroundTasks for now
@@ -52,16 +52,17 @@ Technical professionals (revenue ops, sales leaders, founders) who want to build
 | Frontend | React + TypeScript + Vite + Tailwind |
 | Backend | FastAPI + Python 3.12 |
 | Database | Supabase (Postgres + pgvector + Realtime) |
-| LLM | OpenAI |
+| Orchestration | LangGraph (graphs, conditional edges, checkpointer); migration in progress per `.agent/plans/3.langgraph-multi-agent-rearchitecture.md` |
+| LLM | Anthropic + OpenAI (raw SDKs; no LangChain) |
 | Integration bus | n8n (triggers + third-party I/O only; no business logic) |
 | Integrations | Harvest, Airtable, Forecast, HubSpot, Gmail |
 | Secrets | Doppler |
 
 ## Constraints
 
-- **No write without an approved action row** — every CUD operation flows through `proposed → approved → executing → completed`
+- **No write without an approved action row** — every CUD operation flows through `proposed → approved → executing → completed` (v1) or `pending → approved → executed` on the `approvals` table (v2)
 - Agents never call HubSpot / Gmail / Harvest directly — only services execute after approval
-- No LLM frameworks — raw OpenAI SDK with Pydantic v2 structured outputs
+- LangGraph is the orchestration layer (graphs, state, checkpointer, interrupts). LLM calls inside nodes use raw `anthropic` / `openai` SDKs — no LangChain runtime.
 - Async everywhere; every state-changing service function calls `write_audit_event()`
 - Schema changes go through `supabase/migrations/` — never edit the DB by hand
 - Routers validate and call services; services hold business logic; agents only propose

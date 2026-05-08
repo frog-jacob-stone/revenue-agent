@@ -22,7 +22,7 @@ from app.orchestrator import (
     ExecutionStep,
     LLMStep,
     StepContext,
-    ToolCallStep,
+    TaskStep,
     orchestrator,
     register_chain,
 )
@@ -69,7 +69,7 @@ async def test_three_step_auto_chain_completes(test_agent_slug: str) -> None:
         pattern=WorkflowPattern.prompt_chain_action,
         agent_slug=test_agent_slug,
         steps=(
-            ToolCallStep("Step 1: tool", _const_handler({"step": 1})),
+            TaskStep("Step 1: tool", _const_handler({"step": 1})),
             LLMStep("Step 2: llm", _const_handler({"step": 2})),
             LLMStep("Step 3: llm", _const_handler({"step": 3})),
         ),
@@ -78,7 +78,7 @@ async def test_three_step_auto_chain_completes(test_agent_slug: str) -> None:
     workflow_id = await orchestrator.start("test_auto_chain")
 
     actions = await _fetch_actions(workflow_id)
-    assert [a["step_kind"] for a in actions] == ["tool_call", "llm_step", "llm_step"]
+    assert [a["step_kind"] for a in actions] == ["task", "llm_step", "llm_step"]
     assert all(a["status"] == "completed" for a in actions)
     assert [a["result"] for a in actions] == [
         {"step": 1}, {"step": 2}, {"step": 3},
@@ -330,13 +330,13 @@ async def test_checkpoint_rejection_cancels_orchestrated_workflow(
 
 
 async def test_inbox_excludes_internal_steps(client: AsyncClient, test_agent_slug: str) -> None:
-    """tool_call/llm_step/critique rows must not appear in GET /actions."""
+    """task/llm_step/critique rows must not appear in GET /actions."""
     register_chain(Chain(
         kind="test_inbox_filter",
         pattern=WorkflowPattern.prompt_chain_action,
         agent_slug=test_agent_slug,
         steps=(
-            ToolCallStep("Internal tool", _const_handler({"x": 1})),
+            TaskStep("Internal tool", _const_handler({"x": 1})),
             LLMStep("Internal llm", _const_handler({"x": 2})),
             CheckpointStep("Approve"),
         ),

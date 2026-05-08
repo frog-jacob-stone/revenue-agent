@@ -2,23 +2,32 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, XCircle, Filter, Loader2 } from 'lucide-react';
-import { getActions, approveAction, rejectAction, listAgents } from '../../api';
-import type { Action, ActionType } from '../../types';
+import {
+  getInboxItems,
+  approveAction,
+  rejectAction,
+  approveApproval,
+  rejectApproval,
+  listAgents,
+} from '../../api';
+import { isApproval } from '../../types';
+import type { InboxItem } from '../../types';
 import EmptyState from '../../components/shared/EmptyState';
 
-const ACTION_LABELS: Record<ActionType, string> = {
+const ACTION_LABELS: Record<string, string> = {
   research: 'research',
   send_email: 'send email',
   create_hubspot_record: 'hubspot create',
   update_hubspot_record: 'hubspot update',
   publish_content: 'publish',
+  post_to_linkedin: 'linkedin post',
   generate_document: 'gen doc',
   write_rev_rec: 'rev rec',
   configure_rev_rec_projects: 'rev rec setup',
   other: 'other',
 };
 
-function ActionTypeTag({ type }: { type: ActionType }) {
+function ActionTypeTag({ type }: { type: string }) {
   return (
     <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold uppercase tracking-wide bg-slate-700 text-slate-300 border border-slate-600">
       {ACTION_LABELS[type] ?? type}
@@ -42,8 +51,25 @@ const RISK_DOT: Record<string, string> = {
 };
 
 /** Action-type-specific payload summary rendered below the main summary line. */
-function PayloadContext({ action }: { action: Action }) {
+function PayloadContext({ action }: { action: InboxItem }) {
   const p = action.proposed_payload;
+
+  if (action.action_type === 'post_to_linkedin') {
+    const ideaTitle = p.idea_title as string | undefined;
+    const postText = p.post_text as string | undefined;
+    return (
+      <div className="mt-2 space-y-1">
+        {ideaTitle && (
+          <p className="text-xs text-slate-400 font-medium">{ideaTitle}</p>
+        )}
+        {postText && (
+          <p className="text-xs text-slate-500 line-clamp-3 border-l-2 border-slate-700 pl-2 whitespace-pre-wrap">
+            {postText}
+          </p>
+        )}
+      </div>
+    );
+  }
 
   if (action.action_type === 'configure_rev_rec_projects') {
     const projects = (p.incomplete_projects as Array<{
@@ -121,7 +147,7 @@ function PayloadContext({ action }: { action: Action }) {
   return null;
 }
 
-function ActionRow({ action, isLast }: { action: Action; isLast: boolean }) {
+function ActionRow({ action, isLast }: { action: InboxItem; isLast: boolean }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showReject, setShowReject] = useState(false);
@@ -129,14 +155,19 @@ function ActionRow({ action, isLast }: { action: Action; isLast: boolean }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refetch = () => queryClient.invalidateQueries({ queryKey: ['actions'] });
+  const refetch = () => queryClient.invalidateQueries({ queryKey: ['inbox'] });
+  const v2 = isApproval(action);
 
   const handleApprove = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setLoading(true);
     setError(null);
     try {
-      await approveAction(action.id, 'system', action.proposed_payload);
+      if (v2) {
+        await approveApproval(action.id, 'system', action.proposed_payload);
+      } else {
+        await approveAction(action.id, 'system', action.proposed_payload);
+      }
       await refetch();
     } catch (err) {
       setError((err as Error).message);
@@ -156,7 +187,11 @@ function ActionRow({ action, isLast }: { action: Action; isLast: boolean }) {
     setLoading(true);
     setError(null);
     try {
-      await rejectAction(action.id, rejectReason.trim());
+      if (v2) {
+        await rejectApproval(action.id, rejectReason.trim());
+      } else {
+        await rejectAction(action.id, rejectReason.trim());
+      }
       await refetch();
     } catch (err) {
       setError((err as Error).message);
@@ -168,7 +203,7 @@ function ActionRow({ action, isLast }: { action: Action; isLast: boolean }) {
     <div className={`border-slate-800 ${!isLast ? 'border-b' : ''}`}>
       <div
         className="px-5 py-4 cursor-pointer hover:bg-slate-800/50 transition-colors"
-        onClick={() => navigate(`/inbox/${action.id}`)}
+        onClick={() => navigate(`/inbox/${action.id}${v2 ? '?source=v2' : ''}`)}
       >
         {/* Top row: risk dot + type tag + timestamp */}
         <div className="flex items-center gap-3 mb-2">
@@ -267,8 +302,8 @@ export default function InboxList() {
   });
 
   const { data: actions = [], isLoading, isError } = useQuery({
-    queryKey: ['actions', statusFilter, agentFilter, typeFilter],
-    queryFn: () => getActions({
+    queryKey: ['inbox', statusFilter, agentFilter, typeFilter],
+    queryFn: () => getInboxItems({
       status: statusFilter || 'proposed',
       agent_slug: agentFilter || undefined,
       action_type: typeFilter || undefined,

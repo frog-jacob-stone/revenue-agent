@@ -29,7 +29,7 @@ async def list_actions(
 ):
     # For the pending queue only, filter to steps that require human approval.
     # History views (completed, rejected, all, etc.) show every action regardless
-    # of step_kind so internal steps (llm_step, critique, tool_call) are visible.
+    # of step_kind so internal steps (llm_step, critique, task) are visible.
     conditions: list[str] = []
     if status == "proposed":
         conditions.append(

@@ -1,8 +1,8 @@
 """Step kinds for orchestrated chains.
 
 A Step is a node in a chain. Each step kind has different semantics:
-  - tool_call, llm_step, critique : auto-progress; orchestrator runs them inline
-  - checkpoint, execution         : pause for human approval; resume runs execute()
+  - task, llm_step, critique : auto-progress; orchestrator runs them inline
+  - checkpoint, execution    : pause for human approval; resume runs execute()
 
 Concrete behavior is supplied by handler callables passed in at construction so
 chains can be defined declaratively without subclassing.
@@ -21,7 +21,7 @@ from app.models.actions import StepKind
 from app.orchestrator.state import StepContext
 
 # A handler returns the dict written to actions.result (and proposed_payload).
-# For checkpoint/execution, propose_handler returns proposed_payload (what the
+# For checkpoint/execution, propose_payload returns proposed_payload (what the
 # human reviews); execute_handler is called after approval and returns the
 # operation result (what actually happened).
 PropHandler = Callable[[StepContext], Awaitable[dict[str, Any]]]
@@ -43,6 +43,8 @@ class Step(ABC):
         action_type: str = "other",
         risk_level: str | None = None,
         skip_if: SkipPredicate | None = None,
+        skip_if_label: str | None = None,
+        on_approve_label: str | None = None,
     ) -> None:
         self.summary = summary
         # If None, the orchestrator falls back to the chain's default agent.
@@ -54,6 +56,10 @@ class Step(ABC):
         # When set and returns True for the current StepContext, the orchestrator
         # skips this step (no action row written) and advances current_step.
         self.skip_if = skip_if
+        # Human-readable labels for the diagram visualizer. The predicate and
+        # callback themselves are opaque Python; these document the intent.
+        self.skip_if_label = skip_if_label
+        self.on_approve_label = on_approve_label
 
     @abstractmethod
     async def propose(self, ctx: StepContext) -> dict[str, Any]:
@@ -65,10 +71,13 @@ class Step(ABC):
         return {}
 
 
-class ToolCallStep(Step):
-    """Auto-progressing step that calls an integration or read-only tool."""
+class TaskStep(Step):
+    """Auto-progressing step that runs deterministic code: integration calls,
+    data fetching, validation, computation. No LLM, no tool selection — just
+    code-driven work. Distinct from `LLMStep` (which calls an LLM) and from
+    the chat-agent tools in `app/tools/` (which use the LLM tool-use protocol)."""
 
-    step_kind: ClassVar[StepKind] = StepKind.tool_call
+    step_kind: ClassVar[StepKind] = StepKind.task
 
     def __init__(self, summary: str, handler: PropHandler, **kwargs: Any) -> None:
         super().__init__(summary, **kwargs)
@@ -133,7 +142,7 @@ class CheckpointStep(Step):
     def __init__(
         self,
         summary: str,
-        propose_handler: PropHandler | None = None,
+        propose_payload: PropHandler | None = None,
         *,
         on_approve: ExecHandler | None = None,
         **kwargs: Any,
@@ -141,12 +150,12 @@ class CheckpointStep(Step):
         super().__init__(summary, **kwargs)
         # Optional: pre-populate proposed_payload (e.g. with the draft to review).
         # If None, payload is built from the prior step's result.
-        self._propose_handler = propose_handler
+        self._propose_payload = propose_payload
         self._on_approve = on_approve
 
     async def propose(self, ctx: StepContext) -> dict[str, Any]:
-        if self._propose_handler is not None:
-            return await self._propose_handler(ctx)
+        if self._propose_payload is not None:
+            return await self._propose_payload(ctx)
         # Default: surface the most recent prior step's result for review.
         prior = ctx.state.latest_for_step(ctx.step_index - 1) if ctx.step_index > 0 else None
         return prior.result if prior and prior.result else {}
@@ -166,16 +175,16 @@ class ExecutionStep(Step):
         self,
         summary: str,
         executor: ExecHandler,
-        propose_handler: PropHandler | None = None,
+        propose_payload: PropHandler | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(summary, **kwargs)
         self._executor = executor
-        self._propose_handler = propose_handler
+        self._propose_payload = propose_payload
 
     async def propose(self, ctx: StepContext) -> dict[str, Any]:
-        if self._propose_handler is not None:
-            return await self._propose_handler(ctx)
+        if self._propose_payload is not None:
+            return await self._propose_payload(ctx)
         prior = ctx.state.latest_for_step(ctx.step_index - 1) if ctx.step_index > 0 else None
         return prior.result if prior and prior.result else {}
 

@@ -12,7 +12,7 @@ from app.orchestrator.steps import (
     ExecutionStep,
     LLMStep,
     Step,
-    ToolCallStep,
+    TaskStep,
 )
 
 __all__ = [
@@ -26,7 +26,7 @@ __all__ = [
     "PromptChainOrchestrator",
     "Step",
     "StepContext",
-    "ToolCallStep",
+    "TaskStep",
     "WorkflowState",
     "get_chain",
     "has_chain",

@@ -38,19 +38,18 @@ async def outreach_agent_id(_test_pool: asyncpg.Pool) -> uuid.UUID:
     accuracy-critic); orchestrator step writes fail with a 500 if any are
     missing or inactive.
     """
-    for slug, name in (
-        (outreach_chain.OUTREACH_AGENT_SLUG, "Outreach Agent"),
-        (outreach_chain.VOICE_CRITIC_SLUG, "Voice Critic"),
-        (outreach_chain.ACCURACY_CRITIC_SLUG, "Accuracy Critic"),
+    for slug in (
+        outreach_chain.OUTREACH_AGENT_SLUG,
+        outreach_chain.VOICE_CRITIC_SLUG,
+        outreach_chain.ACCURACY_CRITIC_SLUG,
     ):
         await _test_pool.execute(
             """
-            INSERT INTO agents (slug, name, requires_approval, approval_scope, config, is_active)
-            VALUES ($1, $2, true, '{create,update,delete}'::text[], '{}'::jsonb, true)
+            INSERT INTO agents (slug, config, is_active)
+            VALUES ($1, '{}'::jsonb, true)
             ON CONFLICT (slug) DO UPDATE SET is_active = true
             """,
             slug,
-            name,
         )
     return await _test_pool.fetchval(
         "SELECT id FROM agents WHERE slug = $1",
@@ -80,7 +79,7 @@ def stub_complete():
             **responses,
         }
 
-        async def fake(ctx, prompt: str, *, max_tokens: int) -> str:
+        async def fake(prompt: str, *, model: str, max_tokens: int) -> str:
             calls.append((prompt, max_tokens))
             # Match in caller-provided order first, then defaults; the user's
             # responses dict is iterated last so it can override defaults.
@@ -89,7 +88,7 @@ def stub_complete():
                     return response
             return "<fallback>"
 
-        return patch.object(outreach_chain, "_complete", side_effect=fake), calls
+        return patch.object(outreach_chain, "call_anthropic", side_effect=fake), calls
 
     return make
 
@@ -140,7 +139,7 @@ async def test_outreach_chain_pauses_at_execution(
 
     actions = await _fetch_actions(workflow_id)
     assert [a["step_kind"] for a in actions] == [
-        "tool_call", "tool_call", "llm_step", "tool_call", "llm_step",
+        "task", "task", "llm_step", "task", "llm_step",
         "critique", "critique", "execution",
     ]
     # Execution step is the approval gate; everything before is done.
@@ -196,7 +195,7 @@ async def test_outreach_approval_runs_gmail_stub_and_completes(
     # 5 auto + 2 critiques (passed) + 1 execution (approved → side effect) = 8 rows.
     assert len(actions) == 8
     assert [a["step_kind"] for a in actions] == [
-        "tool_call", "tool_call", "llm_step", "tool_call", "llm_step",
+        "task", "task", "llm_step", "task", "llm_step",
         "critique", "critique", "execution",
     ]
     assert actions[-1]["status"] == "completed"
@@ -249,7 +248,7 @@ async def test_outreach_inbox_only_shows_execution(
     outreach_agent_id: uuid.UUID,
     stub_complete,
 ) -> None:
-    """Inbox hides tool_call/llm_step/critique rows; only the execution gate appears."""
+    """Inbox hides task/llm_step/critique rows; only the execution gate appears."""
     patcher, _ = stub_complete({
         "Output JSON:": json.dumps({"subject": "S", "body": "B"}),
         "3-4 sentence brief": "ok",
@@ -288,7 +287,7 @@ def stateful_complete():
         cursors: dict[str, int] = {k: 0 for k in scripts}
         calls: list[str] = []
 
-        async def fake(ctx, prompt: str, *, max_tokens: int) -> str:
+        async def fake(prompt: str, *, model: str, max_tokens: int) -> str:
             for marker, responses in scripts.items():
                 if marker in prompt:
                     idx = min(cursors[marker], len(responses) - 1)
@@ -298,7 +297,7 @@ def stateful_complete():
             calls.append("<unmatched>")
             return "<fallback>"
 
-        return patch.object(outreach_chain, "_complete", side_effect=fake), calls, cursors
+        return patch.object(outreach_chain, "call_anthropic", side_effect=fake), calls, cursors
 
     return make
 
@@ -337,7 +336,7 @@ async def test_voice_critique_failure_then_pass_writes_retries(
     # draft v3 + voice pass + accuracy pass + execution. = 4 + 3 + 3 + 1 = 11 rows.
     step_kinds = [a["step_kind"] for a in actions]
     assert step_kinds == [
-        "tool_call", "tool_call", "llm_step", "tool_call",
+        "task", "task", "llm_step", "task",
         "llm_step", "critique",          # draft v1, voice fail
         "llm_step", "critique",          # draft v2, voice fail
         "llm_step", "critique",          # draft v3, voice pass
@@ -480,7 +479,7 @@ async def test_voice_profile_memory_drives_critique(
 
     captured: list[str] = []
 
-    async def fake(ctx, prompt: str, *, max_tokens: int) -> str:
+    async def fake(prompt: str, *, model: str, max_tokens: int) -> str:
         captured.append(prompt)
         if "Voice Critic" in prompt:
             return _critique_response(True)
@@ -490,7 +489,7 @@ async def test_voice_profile_memory_drives_critique(
             return json.dumps({"subject": "S", "body": "B"})
         return "brief"
 
-    with patch.object(outreach_chain, "_complete", side_effect=fake):
+    with patch.object(outreach_chain, "call_anthropic", side_effect=fake):
         resp = await client.post(
             "/workflows/outreach", json={"hubspot_contact_id": "hs-voiceprof"},
         )

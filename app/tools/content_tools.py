@@ -58,31 +58,30 @@ async def _create_post(
     **_: Any,
 ) -> dict[str, Any]:
     from app.db import get_pool
-    from app.orchestrator import orchestrator
-    from app.orchestrator.chains.content import CONTENT_CREATION_KIND
+    from app.orchestrator_v2.graphs.content_creation import CONTENT_CREATION_KIND
+    from app.orchestrator_v2.runner import runner as v2_runner
     from app.services import social_posts as svc
 
     pool = await get_pool()
 
-    # Pre-create the social_posts row so post_id is available throughout the chain.
+    # Pre-create the social_posts row so post_id is available throughout the graph.
     post = await svc.save_post(pool, topic=brief)
     post_id = post["id"]
 
-    trigger_payload: dict[str, Any] = {
+    initial_state: dict[str, Any] = {
         "brief": brief,
         "channel": channel,
         "post_id": str(post_id),
     }
     if instructions:
-        trigger_payload["instructions"] = instructions
+        initial_state["instructions"] = instructions
 
-    workflow_id = await orchestrator.create_workflow(
-        kind=CONTENT_CREATION_KIND,
-        context=trigger_payload,
+    workflow_id = await v2_runner.start(
+        CONTENT_CREATION_KIND,
+        initial_state=initial_state,
         subject_type="social_post",
         subject_id=str(post_id),
     )
-    await orchestrator.resume(workflow_id)
 
     # Return current post state so the orchestrator agent can report back.
     refreshed = await svc.get_post(pool, post_id)
@@ -321,8 +320,8 @@ async def _publish_post(
     **_: Any,
 ) -> dict[str, Any]:
     from app.db import get_pool
-    from app.orchestrator import orchestrator
-    from app.orchestrator.chains.content import CONTENT_PUBLISH_KIND
+    from app.orchestrator_v2 import runner
+    from app.orchestrator_v2.graphs.content_publish import CONTENT_PUBLISH_KIND
     from app.services import social_posts as svc
 
     pool = await get_pool()
@@ -332,13 +331,12 @@ async def _publish_post(
     if not post.get("post_text"):
         return {"error": f"Post {post_id} has no text to publish"}
 
-    workflow_id = await orchestrator.create_workflow(
-        kind=CONTENT_PUBLISH_KIND,
-        context={"post_id": post_id},
+    workflow_id = await runner.start(
+        CONTENT_PUBLISH_KIND,
+        initial_state={"post_id": post_id},
         subject_type="social_post",
         subject_id=post_id,
     )
-    await orchestrator.resume(workflow_id)
 
     return {
         "post_id": post_id,

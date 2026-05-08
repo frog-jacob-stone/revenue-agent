@@ -37,7 +37,7 @@ from app.orchestrator.steps import (
     ExecutionStep,
     LLMStep,
     Step,
-    ToolCallStep,
+    TaskStep,
 )
 from app.services import audit
 

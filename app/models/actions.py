@@ -55,7 +55,7 @@ class ActionReject(ORMBase):
 
 
 class StepKind(str, Enum):
-    tool_call = "tool_call"
+    task = "task"
     llm_step = "llm_step"
     critique = "critique"
     checkpoint = "checkpoint"

@@ -1,11 +1,11 @@
 """Revenue recognition chain — pattern #1 (supervised_automation).
 
-  1. tool_call  — Sync Harvest → Airtable, fetch projects, validate completeness
+  1. task       — Sync Harvest → Airtable, fetch projects, validate completeness
                   (writes status: "incomplete" or "ready" into result)
   2. checkpoint — Configure incomplete projects (skipped if validation passed)
                   on_approve = requeue a fresh validation cycle so the human
                   can keep iterating until the data is clean
-  3. tool_call  — Compute revenue entries (skipped if validation incomplete)
+  3. task       — Compute revenue entries (skipped if validation incomplete)
   4. execution  — Write entries to Airtable (skipped if validation incomplete)
 
 Two divergent endings live in one chain via `skip_if` predicates. The
@@ -22,14 +22,15 @@ from typing import Any
 from app.config import settings
 from app.integrations import airtable, forecast, harvest
 from app.models.workflows import WorkflowPattern
-from app.orchestrator.chain import Chain, register_chain
+from app.orchestrator.chain import Chain
 from app.orchestrator.state import StepContext
 from app.orchestrator.steps import (
     CheckpointStep,
     ExecutionStep,
-    ToolCallStep,
+    TaskStep,
 )
 from app.services import airtable_sync
+from app.services.revenue import calc_revenue
 
 logger = logging.getLogger(__name__)
 
@@ -47,41 +48,6 @@ def _last_day_of_prev_month() -> str:
 
 def _round2(value: float) -> float:
     return round(value, 2)
-
-
-def _round4(value: float) -> float:
-    return round(value, 4)
-
-
-def _calc_revenue(project: dict[str, Any], invoice_data: dict[str, Any]) -> tuple[float, float | None, str]:
-    billing_type = project.get("Billing Type", "Unknown")
-    hours_logged: float = project.get("_hours_logged", 0.0)
-    forecast_hours: float = project.get("_forecast_hours", 0.0)
-    contracted_fees: float = float(project.get("Contracted Fees") or 0)
-    total_projected = hours_logged + forecast_hours
-    notes = ""
-    percent_complete: float | None = None
-
-    match billing_type:
-        case "Fixed Fee":
-            if total_projected > 0:
-                percent_complete = _round4(hours_logged / total_projected)
-            else:
-                percent_complete = 0.0
-            revenue = _round2(contracted_fees * (percent_complete or 0))
-            billable_expenses = invoice_data.get("billable_expenses", 0.0)
-            if billable_expenses:
-                revenue = _round2(revenue + billable_expenses)
-                notes = f"Includes ${billable_expenses:,.2f} in billable expenses"
-        case "T&M" | "MSF" | "Hosting":
-            revenue = _round2(invoice_data.get("total_amount", 0.0))
-        case "Retainer":
-            revenue = 0.0
-            notes = "Retainers are not calculated — must do manually"
-        case _:
-            raise ValueError(f"Unexpected billing type: {billing_type!r}")
-
-    return revenue, percent_complete, notes
 
 
 # -----------------------------------------------------------------------------
@@ -178,7 +144,7 @@ async def _compute_entries(ctx: StepContext) -> dict[str, Any]:
         project["_forecast_hours"] = float(scheduled_hours_map.get(int(harvest_id or 0), 0))
         invoice_data = invoice_totals_map.get(int(harvest_id or 0), {})
 
-        revenue, percent_complete, notes = _calc_revenue(project, invoice_data)
+        revenue, percent_complete, notes = calc_revenue(project, invoice_data)
         total_projected = hours_logged + project["_forecast_hours"]
         blended_rate = _round2(revenue / hours_logged) if hours_logged > 0 else None
 
@@ -288,25 +254,29 @@ REV_REC_CHAIN = Chain(
     pattern=WorkflowPattern.supervised_automation,
     agent_slug=REV_REC_AGENT_SLUG,
     steps=(
-        ToolCallStep("Sync Harvest → Airtable and validate projects", _sync_and_validate),
+        TaskStep("Sync Harvest → Airtable and validate projects", _sync_and_validate),
         CheckpointStep(
             "Configure incomplete projects",
-            propose_handler=_propose_configure,
+            propose_payload=_propose_configure,
             on_approve=_on_configure_approved,
             skip_if=_validation_passed,
+            skip_if_label="validation passed",
+            on_approve_label="requeue validation",
             action_type="configure_rev_rec_projects",
             risk_level="low",
         ),
-        ToolCallStep(
+        TaskStep(
             "Compute revenue entries",
             _compute_entries,
             skip_if=_validation_failed,
+            skip_if_label="validation failed",
         ),
         ExecutionStep(
             "Write revenue recognition entries to Airtable",
             executor=_write_entries,
-            propose_handler=_propose_write,
+            propose_payload=_propose_write,
             skip_if=_validation_failed,
+            skip_if_label="validation failed",
             action_type="write_rev_rec",
             risk_level="low",
         ),
@@ -315,8 +285,8 @@ REV_REC_CHAIN = Chain(
 
 
 def register() -> None:
-    from app.orchestrator.chain import has_chain
-
-    if has_chain(REV_REC_KIND):
-        return
-    register_chain(REV_REC_CHAIN)
+    # REV_REC_CHAIN intentionally not registered.
+    # Phase 2 of the LangGraph migration moved rev_rec_monthly to the v2 runner;
+    # see app/orchestrator_v2/graphs/rev_rec.py. The chain object stays defined
+    # so other imports keep working until Phase 5 cleanup.
+    pass

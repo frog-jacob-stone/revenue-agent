@@ -57,8 +57,9 @@ One row per business process instance.
 | `started_at` / `completed_at` | timestamptz | |
 | `error` | text | Populated on failure |
 | `metadata` | jsonb | |
-| `pattern` | text | One of `supervised_automation`, `prompt_chain_action`, `prompt_chain_artifact`. See "Agentic Patterns" below. |
-| `current_step` | int | Sequence number of the active step. Set by the orchestrator on each step transition; helps resume after a checkpoint approval. |
+| `pattern` | text | One of `supervised_automation`, `prompt_chain_action`, `prompt_chain_artifact`. See "Agentic Patterns" below. v1 only — v2 LangGraph workflows leave it null. Dropped in Phase 5 of the rearchitecture. |
+| `current_step` | int | Sequence number of the active step. Set by the v1 orchestrator on each step transition. v2 LangGraph workflows leave it 0 (graph state replaces it). Dropped in Phase 5. |
+| `parent_workflow_id` | uuid | FK → `workflows.id`, on delete set null. Set when this workflow was spawned from another workflow's node (`spawn_workflow` primitive in v2). Used to render nested traces. Added in migration `0011`. |
 
 **Why `subject_ref` is denormalized:** When you look at a workflow three weeks later, the HubSpot record may have changed. Keep the snapshot of what the agent was looking at.
 
@@ -86,7 +87,7 @@ The atomic unit of work and the approval gate. Every step in a multi-step chain 
 | `executed_at` | timestamptz | |
 | `error` | text | |
 | `created_at` | timestamptz | |
-| `step_kind` | text | One of `tool_call`, `llm_step`, `critique`, `checkpoint`, `execution`. Null on pre-0005 rows (treated as `execution`). See "Agentic Patterns". |
+| `step_kind` | text | One of `task`, `llm_step`, `critique`, `checkpoint`, `execution`. Null on pre-0005 rows (treated as `execution`). See "Agentic Patterns". |
 | `parent_action_id` | uuid | FK → `actions.id`. Critique points to the draft it critiqued; revision points to the critique that triggered it. |
 | `retry_of_action_id` | uuid | FK → `actions.id`. Points to the failed prior attempt this row retries. Retries are siblings, not children. |
 | `attempt_number` | int | 1 for the first attempt; incremented per retry within a loop. |
@@ -95,7 +96,35 @@ The atomic unit of work and the approval gate. Every step in a multi-step chain 
 
 **Two payload columns by design:** `proposed_payload` preserves the agent's draft; `executed_payload` captures what actually went out the door. If a human edits the email before approving, both are preserved for the audit trail.
 
-**Inbox filter:** `GET /actions?status=proposed` returns only rows with `step_kind IN ('checkpoint', 'execution') OR step_kind IS NULL`. Internal `tool_call`, `llm_step`, and `critique` rows auto-progress and never appear in the inbox; they are visible only via the workflow trace endpoint.
+**Inbox filter:** `GET /actions?status=proposed` returns only rows with `step_kind IN ('checkpoint', 'execution') OR step_kind IS NULL`. Internal `task`, `llm_step`, and `critique` rows auto-progress and never appear in the inbox; they are visible only via the workflow trace endpoint.
+
+**Migration note:** the `actions` table is v1-only. v2 (LangGraph) workflows write to `approvals` (lifecycle queue) and `audit_log` (per-node trail) instead. Both flows coexist during Phases 1–4; `actions` is dropped in Phase 5 of `.agent/plans/3.langgraph-multi-agent-rearchitecture.md`.
+
+### `approvals`
+
+Lifecycle-only queue for human-in-the-loop pauses in v2 (LangGraph) workflows. Replaces the role of `actions WHERE status='proposed' AND step_kind IN ('checkpoint','execution')`. Added in migration `0010`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | PK |
+| `workflow_id` | uuid | FK → `workflows.id`, cascade delete |
+| `node_name` | text | Which graph node requested approval |
+| `agent_slug` | text | The agent acting (display + future ACL) |
+| `action_type` | text | Free text — same vocabulary as `actions.action_type` for now |
+| `status` | text | One of `pending`, `approved`, `rejected`, `executed`, `failed` (CHECK constraint enforces) |
+| `risk_level` | text | `low`, `medium`, `high` |
+| `summary` | text | Human-readable description |
+| `reasoning` | text | Agent's explanation |
+| `proposed_payload` | jsonb | What the node proposed |
+| `executed_payload` | jsonb | What actually ran (may differ if human edited) |
+| `assigned_to` | text | Reserved for multi-user routing; ignored in v1 of v2 |
+| `approved_by` / `approved_at` | — | Set on approval |
+| `rejected_by` / `rejection_reason` | — | Set on rejection |
+| `executed_at` | timestamptz | Set when the gated node completes |
+| `error` | text | Set if the gated node fails after approval |
+| `created_at` | timestamptz | |
+
+**Lifecycle:** `pending → approved → executed | failed`, or `pending → rejected`. Audit events emitted at every transition (see "Event Types" below).
 
 ### `memories`
 
@@ -179,6 +208,25 @@ Draft and approval queue for the Content Orchestrator. Separate from `workflows`
 
 The `rewrite_post` tool accepts posts in any status and resets to `draft`. User can publish directly after rewriting without a forced re-review.
 
+### `agent_messages`
+
+Turn-by-turn record of every agent-to-agent exchange. Powers the `ask_agent` tool and the multi-agent demo graph. Migration `0013`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigserial | PK; monotonic insert order |
+| `thread_id` | uuid | Correlates messages within one delegation; sender generates a fresh UUID for the first turn |
+| `workflow_id` | uuid \| null | FK to `workflows.id` (CASCADE); set when the call originated from a graph node, NULL when from chat |
+| `from_agent_slug` | text | Sender's slug |
+| `to_agent_slug` | text | Recipient's slug (may equal sender for supervisor self-talk) |
+| `content` | text | The message body |
+| `metadata` | jsonb | Free-form annotations |
+| `created_at` | timestamptz | |
+
+Indexes: `(thread_id, created_at)`, partial `(workflow_id) where workflow_id is not null`, `(to_agent_slug)`.
+
+The table is the audit; service-layer functions in `app/services/agent_messages.py` do **not** write `audit_log` rows for individual messages (volume would dominate the audit log). The runner's `node.exited` events provide enough granularity. Add `AGENT_MESSAGE_SENT` to `app/orchestrator_v2/events.py` if per-turn audit visibility is needed later.
+
 ## Agent Types
 
 **Write-proposing agents** — use the full workflow → actions → approval lifecycle. Every operation creates a `workflow` row and one or more `action` rows. Examples: Outreach, Revenue Recognition.
@@ -203,7 +251,7 @@ Every step in a chain is an `actions` row. The `step_kind` column declares what 
 
 | step_kind | Approval required? | Behavior |
 |---|---|---|
-| `tool_call` | No | Auto-progresses. Audit trail only. Used for HubSpot lookups, web search, knowledge_base retrieval. |
+| `task` | No | Auto-progresses. Audit trail only. Deterministic code-driven work — integration calls, data fetching, validation, computation. (Not the same as the chat-agent tools in `app/tools/`.) |
 | `llm_step` | No | Auto-progresses. Audit trail only. Used for context consolidation, drafting, revision. |
 | `critique` | No | Auto-progresses. Emits `critique_result`. On fail with budget remaining, triggers a retry of the prior step. |
 | `checkpoint` | **Yes** | Pauses the workflow for human review. Appears in the approval inbox. |
@@ -228,6 +276,8 @@ When a critique fails and budget is exhausted, the workflow is marked `failed` w
 
 Keep this list stable; it becomes grep-able forensics.
 
+**v1 (legacy) events** — emitted by `app/orchestrator/`, `app/services/*` against the `actions` table:
+
 - `workflow.started`, `workflow.completed`, `workflow.failed`, `workflow.cancelled`
 - `action.proposed`, `action.approved`, `action.rejected`, `action.executed`, `action.failed`
 - `memory.written`, `memory.expired`
@@ -235,6 +285,16 @@ Keep this list stable; it becomes grep-able forensics.
 - `agent.queried` (read-only agents answering questions)
 - `agent.routed` (router handing off to a specialist)
 - `content.post_created`, `content.post_drafted`, `content.post_approved`, `content.post_rejected`, `content.post_updated`
+
+**v2 (LangGraph) events** — emitted by `app/orchestrator_v2/` against the `approvals` table. Constants live in `app/orchestrator_v2/events.py` — call sites must import and use them, never string literals:
+
+- `workflow.started`, `workflow.completed`, `workflow.failed`, `workflow.paused`, `workflow.resumed`
+- `node.entered`, `node.exited`, `node.failed`
+- `approval.requested`, `approval.granted`, `approval.rejected`, `approval.executed`, `approval.failed`
+- `agent.invoked`, `agent.completed`, `agent.failed`
+- `subworkflow.spawned`, `subworkflow.completed`
+
+`workflow.started/completed/failed` overlap between v1 and v2 — the `actor` field disambiguates (`orchestrator_v2:*` vs v1).
 
 ## API Surface (Maps to FastAPI)
 
@@ -271,6 +331,10 @@ Migrations run in filename order; each is idempotent.
 6. `0006_simplify_agents.sql` — drops static metadata columns from `agents` (`name`, `description`, `requires_approval`, `approval_scope`, `system_prompt`, `allowed_tools`); these are now owned exclusively by the Python class registry
 7. `0007_social_posts.sql` — adds `social_posts` table for the Content Orchestrator draft and approval queue
 8. `0008_content_action_type.sql` — adds `post_to_linkedin` to `action_type` enum for the `content_publish` chain
+9. `0009_rename_tool_call_to_task.sql` — renames `actions.step_kind` value `tool_call` → `task`; updates the CHECK constraint to match the Python `StepKind` enum
+10. `0010_create_approvals_table.sql` — creates the `approvals` table for the v2 (LangGraph) orchestrator's human-in-the-loop queue. Coexists with `actions` until Phase 5 of the rearchitecture
+11. `0011_workflows_parent_id.sql` — adds `workflows.parent_workflow_id` for sub-workflow linkage (used by `app/orchestrator_v2/spawn.py`)
+12. `0012_langgraph_checkpoint_tables.sql` — **marker migration only** (no DDL). Phase 1 of the LangGraph migration (`.agent/plans/3.langgraph-multi-agent-rearchitecture.md`) introduces tables owned by `langgraph-checkpoint-postgres`: `checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`. They're created idempotently by `AsyncPostgresSaver.setup()` at app startup (called from `runner.init()`). Schema is internal to LangGraph — do not modify. If LangGraph schema needs custom changes that `setup()` doesn't cover, add a new migration that runs after this one
 
 ## Open Questions
 

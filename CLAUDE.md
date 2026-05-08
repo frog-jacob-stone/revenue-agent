@@ -38,7 +38,21 @@ Reference docs:
 - Every state-changing service function calls `write_audit_event()`.
 - Async everywhere. Pydantic v2 (`model_config`, not `class Config`).
 - Schema changes go through migrations in `supabase/migrations/` — never edit the DB by hand.
-- Tests use `TEST_DATABASE_URL` (port 54323), never the prod port (54322).
+- Tests use a separate test DB (default: `postgres_test` on port 54322); the conftest drops/creates it each session. Do not point `TEST_DATABASE_URL` at the live `postgres` DB.
+
+### v2 (LangGraph) orchestrator — in-flight migration
+The codebase is migrating from `app/orchestrator/` to `app/orchestrator_v2/` per `.agent/plans/3.langgraph-multi-agent-rearchitecture.md`. While both coexist:
+- v2 graphs live in `app/orchestrator_v2/graphs/{kind}.py`. Each file exports a `build_graph() -> GraphSpec` factory; the central registry at `app/orchestrator_v2/graphs/__init__.py::register_all` calls `runner.register(...)` for each. App startup runs `await runner.init()` then `register_all(runner)`.
+- Use the audit event constants in `app/orchestrator_v2/events.py` for any new audit calls — no string literals.
+- Agent invocation from a node: `await invoke_agent(slug, input, ctx)`. Never instantiate agent classes inside nodes.
+- Sub-workflows: `await spawn_workflow(kind, input, parent_workflow_id=ctx.workflow_id)`.
+- Graph state TypedDicts must declare `_propose: NotRequired[dict]` (or extend `BaseGraphState` from `app/orchestrator_v2/state.py`) for any node that requests human approval — LangGraph drops undeclared keys.
+- Checkpointer is `AsyncPostgresSaver` against `settings.database_url` via its own psycopg pool (separate from the app's asyncpg pool). LangGraph's checkpoint tables are created idempotently by `setup()` at startup; migration 0012 is a marker only.
+- Loop edges are a supported v2 idiom (see `app/orchestrator_v2/graphs/{rev_rec,outreach,content_creation}.py` and `_critique_poc.py`). Graph authors own loop-termination logic — the framework imposes no infinite-loop guard.
+- LangGraph treats node names and state-key names as a single namespace; pick distinct names (e.g., the outreach graph uses `compose_email` as the node and `draft_email` as the state field).
+- Phases 1–3 migrated all v1 chains to v2: `content_publish`, `rev_rec_monthly`, `outreach_chain`, `content_creation`. Inbox UI dual-sources `/actions` (v1) + `/approvals` (v2) until Phase 5 retires the v1 surface.
+- `invoke_agent` is currently Anthropic-only. The outreach graph routes its three Anthropic-backed agents through `invoke_agent`; the content_creation graph keeps direct `call_openai` for its OpenAI-backed agents until a provider-aware refactor unifies dispatch.
+- Agent-to-agent communication: `app/services/agent_messages.py` records turn-by-turn exchanges; `ask_agent` (in `app/tools/agent_tools.py`) is the canonical delegation tool. Both messages (outgoing prompt + incoming reply) are written under one `thread_id`. `ToolContext.workflow_id` links node-driven calls to their workflow. Demo graph: `app/orchestrator_v2/graphs/_multi_agent_demo.py`.
 
 ## Progress
 Check PROGRESS.md for current module status. Update it as you complete tasks.

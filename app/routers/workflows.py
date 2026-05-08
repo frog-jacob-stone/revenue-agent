@@ -1,7 +1,7 @@
 from uuid import UUID
 
 import asyncpg
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import Field
 
 from app.db import get_pool
@@ -9,12 +9,13 @@ from app.models.actions import ActionCreate, ActionResponse
 from app.models.common import ORMBase
 from app.models.workflows import (
     TraceAction,
+    TraceEvent,
     WorkflowCreate,
     WorkflowResponse,
     WorkflowTraceResponse,
 )
-from app.orchestrator import orchestrator
-from app.orchestrator.chains.outreach import OUTREACH_KIND
+from app.orchestrator_v2 import runner as v2_runner
+from app.orchestrator_v2.graphs.outreach import OUTREACH_KIND
 from app.services import audit
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
@@ -47,28 +48,24 @@ class OutreachTriggerResponse(ORMBase):
 
 
 @router.post("/outreach", response_model=OutreachTriggerResponse, status_code=202)
-async def trigger_outreach(
-    body: OutreachTrigger,
-    background_tasks: BackgroundTasks,
-):
-    """Kick off an Outreach chain for a HubSpot contact.
+async def trigger_outreach(body: OutreachTrigger):
+    """Kick off an Outreach graph for a HubSpot contact.
 
-    Returns 202 immediately with the workflow_id. The chain runs in a
-    background task — clients should poll `/workflows/{id}/trace` (or watch
-    the inbox) to see progress.
+    Drives the graph forward until it pauses at the `gmail_send` approval gate
+    (or completes, on terminal failure). Clients poll `/workflows/{id}/trace`
+    (or watch the inbox) to see progress.
     """
-    workflow_id = await orchestrator.create_workflow(
+    workflow_id = await v2_runner.start(
         OUTREACH_KIND,
-        context={
+        initial_state={
             "hubspot_contact_id": body.hubspot_contact_id,
-            **(body.notes or {}),
+            "notes": body.notes or {},
         },
         initiated_by=body.initiated_by,
         trigger_source="manual",
         subject_type="contact",
         subject_id=body.hubspot_contact_id,
     )
-    background_tasks.add_task(orchestrator.resume, workflow_id)
     return OutreachTriggerResponse(workflow_id=workflow_id, kind=OUTREACH_KIND)
 
 
@@ -144,12 +141,15 @@ async def get_workflow(workflow_id: UUID, pool: asyncpg.Pool = Depends(_db)):
 
 @router.get("/{workflow_id}/trace", response_model=WorkflowTraceResponse)
 async def get_workflow_trace(workflow_id: UUID, pool: asyncpg.Pool = Depends(_db)):
-    """Return every action for the workflow in `sequence` order.
+    """Return a trace of the workflow.
 
-    Used by the trace UI to render the full chain — including auto-progressed
-    tool_call/llm_step/critique rows that the inbox filter hides. Relationships
-    (`parent_action_id`, `retry_of_action_id`) are preserved so the client can
-    reconstruct the chain hierarchy.
+    For v1 workflows: every `actions` row in `sequence` order — including
+    auto-progressed task/llm_step/critique rows that the inbox filter hides.
+    Relationships (`parent_action_id`, `retry_of_action_id`) are preserved so
+    the client can reconstruct the chain hierarchy.
+
+    For v2 workflows (kind registered with the LangGraph runner): every
+    `audit_log` event in time order. v2 has no `actions` rows.
     """
     async with pool.acquire() as conn:
         wf = await conn.fetchrow(
@@ -158,6 +158,27 @@ async def get_workflow_trace(workflow_id: UUID, pool: asyncpg.Pool = Depends(_db
         )
         if not wf:
             raise HTTPException(status_code=404, detail="Workflow not found")
+
+        if v2_runner.is_registered(wf["kind"]):
+            event_rows = await conn.fetch(
+                """
+                SELECT id, event_type, occurred_at, actor, payload
+                FROM audit_log
+                WHERE workflow_id = $1
+                ORDER BY occurred_at, id
+                """,
+                workflow_id,
+            )
+            events = [TraceEvent.model_validate(dict(r)) for r in event_rows]
+            return WorkflowTraceResponse(
+                workflow_id=wf["id"],
+                kind=wf["kind"],
+                pattern=wf["pattern"],
+                status=wf["status"],
+                current_step=wf["current_step"],
+                events=events,
+            )
+
         rows = await conn.fetch(
             """
             SELECT id, sequence, step_kind, action_type, summary, status,

@@ -131,14 +131,14 @@ async def test_get_workflow_trace_includes_internal_steps(
     client: AsyncClient, test_agent_slug: str
 ):
     """Trace endpoint returns ALL actions — including auto-progressed
-    tool_call/llm_step rows that the inbox filter excludes."""
+    task/llm_step rows that the inbox filter excludes."""
     from app.db import get_pool
     from app.models.workflows import WorkflowPattern
     from app.orchestrator import (
         Chain,
         CheckpointStep,
         LLMStep,
-        ToolCallStep,
+        TaskStep,
         orchestrator,
         register_chain,
     )
@@ -156,7 +156,7 @@ async def test_get_workflow_trace_includes_internal_steps(
             pattern=WorkflowPattern.prompt_chain_action,
             agent_slug=test_agent_slug,
             steps=(
-                ToolCallStep("Pull data", const({"x": 1})),
+                TaskStep("Pull data", const({"x": 1})),
                 LLMStep("Summarize", const({"x": 2})),
                 CheckpointStep("Approve"),
             ),
@@ -177,7 +177,7 @@ async def test_get_workflow_trace_includes_internal_steps(
 
     actions = body["actions"]
     assert len(actions) == 3
-    assert [a["step_kind"] for a in actions] == ["tool_call", "llm_step", "checkpoint"]
+    assert [a["step_kind"] for a in actions] == ["task", "llm_step", "checkpoint"]
     assert [a["sequence"] for a in actions] == [1, 2, 3]
     assert [a["attempt_number"] for a in actions] == [1, 1, 1]
 

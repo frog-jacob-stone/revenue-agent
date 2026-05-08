@@ -45,16 +45,21 @@ async def _trigger_revenue_recognition(
     date_recognized: str | None = None,
     **_: Any,
 ) -> dict[str, Any]:
-    from app.orchestrator import orchestrator
-    from app.orchestrator.chains.rev_rec import REV_REC_KIND
+    from app.orchestrator_v2.graphs.rev_rec import REV_REC_KIND
+    from app.orchestrator_v2.runner import runner
 
-    workflow_id = await orchestrator.create_workflow(
+    resolved_date = date_recognized or date.today().isoformat()
+    workflow_id = await runner.start(
         REV_REC_KIND,
-        context={"date_recognized": date_recognized or date.today().isoformat()},
+        initial_state={
+            "date_recognized": resolved_date,
+            "context": {"date_recognized": resolved_date},
+        },
         initiated_by="chat",
         trigger_source="manual",
+        subject_type="rev_rec_period",
+        subject_id=resolved_date,
     )
-    await orchestrator.resume(workflow_id)
     return {"workflow_id": str(workflow_id)}
 
 

@@ -22,7 +22,7 @@ from uuid import UUID
 
 from app.integrations.openai_client import call_openai
 from app.models.workflows import WorkflowPattern
-from app.orchestrator.chain import Chain, register_chain
+from app.orchestrator.chain import Chain
 from app.orchestrator.chains.utils import parse_json
 from app.orchestrator.state import StepContext
 from app.orchestrator.steps import (
@@ -128,18 +128,14 @@ async def _draft_post(ctx: StepContext) -> dict[str, Any]:
     else:
         # Fallback: create row if not pre-created (shouldn't normally happen)
         topic = brief or idea.get("idea_title", "Untitled")
-        row = await ctx.conn.fetchrow(
-            """
-            INSERT INTO social_posts (topic, idea_title, core_angle, post_text, status)
-            VALUES ($1, $2, $3, $4, 'draft')
-            RETURNING id
-            """,
-            topic,
-            idea.get("idea_title"),
-            idea.get("core_angle"),
-            post_text,
+        post_id = await social_posts.create_post_conn(
+            ctx.conn,
+            topic=topic,
+            idea_title=idea.get("idea_title"),
+            core_angle=idea.get("core_angle"),
+            post_text=post_text,
+            status="draft",
         )
-        post_id = row["id"]
         # Patch trigger_payload with the newly created post_id so step 2 can find it.
         await ctx.conn.execute(
             """
@@ -270,7 +266,7 @@ CONTENT_PUBLISH_CHAIN = Chain(
         ExecutionStep(
             "Post to LinkedIn",
             _linkedin_post_stub,
-            propose_handler=_propose_linkedin_post,
+            propose_payload=_propose_linkedin_post,
             action_type="post_to_linkedin",
             risk_level="medium",
         ),
@@ -279,9 +275,8 @@ CONTENT_PUBLISH_CHAIN = Chain(
 
 
 def register() -> None:
-    from app.orchestrator.chain import has_chain
-
-    if not has_chain(CONTENT_CREATION_KIND):
-        register_chain(CONTENT_CREATION_CHAIN)
-    if not has_chain(CONTENT_PUBLISH_KIND):
-        register_chain(CONTENT_PUBLISH_CHAIN)
+    # Neither CONTENT_PUBLISH_CHAIN nor CONTENT_CREATION_CHAIN is registered.
+    # Phase 1 moved content_publish to the v2 runner; Phase 3 moved content_creation.
+    # See app/orchestrator_v2/graphs/{content_publish,content_creation}.py. The chain
+    # objects below stay defined until Phase 5 cleanup so other imports keep working.
+    pass

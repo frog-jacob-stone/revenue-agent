@@ -28,11 +28,11 @@ import {
   CornerDownRight,
 } from 'lucide-react';
 import { getWorkflowTrace } from '../api';
-import type { StepKind, TraceAction } from '../types';
+import type { StepKind, TraceAction, TraceEvent } from '../types';
 import StubBadge from './shared/StubBadge';
 
 const STEP_ICON: Record<StepKind, typeof Cog> = {
-  tool_call: Cog,
+  task: Cog,
   llm_step: Brain,
   critique: Search,
   checkpoint: User,
@@ -40,7 +40,7 @@ const STEP_ICON: Record<StepKind, typeof Cog> = {
 };
 
 const STEP_LABEL: Record<StepKind, string> = {
-  tool_call: 'tool',
+  task: 'task',
   llm_step: 'llm',
   critique: 'critique',
   checkpoint: 'review',
@@ -206,6 +206,57 @@ function AttemptRow({ action, isRetry, superseded }: AttemptRowProps) {
   );
 }
 
+// ── v2 (LangGraph) audit-event rendering ────────────────────────────────────
+
+function fmtTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('en-US', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+}
+
+const EVENT_COLOR: Record<string, string> = {
+  'workflow.started': 'text-cyan-400',
+  'workflow.completed': 'text-emerald-400',
+  'workflow.failed': 'text-red-400',
+  'workflow.paused': 'text-amber-400',
+  'workflow.resumed': 'text-cyan-400',
+  'node.entered': 'text-slate-400',
+  'node.exited': 'text-slate-300',
+  'node.failed': 'text-red-400',
+  'approval.requested': 'text-amber-400',
+  'approval.granted': 'text-emerald-400',
+  'approval.rejected': 'text-red-400',
+  'approval.executed': 'text-emerald-400',
+  'agent.invoked': 'text-cyan-400',
+  'agent.completed': 'text-emerald-400',
+  'agent.failed': 'text-red-400',
+};
+
+function EventRow({ event }: { event: TraceEvent }) {
+  const color = EVENT_COLOR[event.event_type] ?? 'text-slate-400';
+  const node = (event.payload?.node as string | undefined) ?? null;
+  return (
+    <div className="px-4 py-2 border-b border-slate-800/60 last:border-b-0">
+      <div className="flex items-start gap-3">
+        <span className="text-[11px] text-slate-600 font-mono w-20 shrink-0 pt-0.5">
+          {fmtTime(event.occurred_at)}
+        </span>
+        <span className={`text-xs font-mono shrink-0 ${color}`}>
+          {event.event_type}
+        </span>
+        {node && (
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-slate-800 text-slate-400 border border-slate-700">
+            {node}
+          </span>
+        )}
+        {event.actor && event.actor !== 'orchestrator_v2' && (
+          <span className="text-[11px] text-slate-500 truncate">{event.actor}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function GroupRow({ group }: { group: ActionGroup }) {
   // The latest attempt is the one rendered most prominently; everything before
   // it is superseded.
@@ -251,6 +302,8 @@ export default function WorkflowTrace({
     () => groups.reduce((acc, g) => acc + g.retries.length, 0),
     [groups],
   );
+  const isV2 = (data?.events?.length ?? 0) > 0;
+  const events = data?.events ?? [];
 
   if (!enabled) {
     return (
@@ -294,6 +347,12 @@ export default function WorkflowTrace({
   }
 
   const summary = (() => {
+    if (isV2) {
+      const eventWord = events.length === 1 ? 'event' : 'events';
+      const parts = [`${events.length} ${eventWord}`];
+      if (data.status) parts.push(data.status.replace('_', ' '));
+      return parts.join(' · ');
+    }
     const stepWord = groups.length === 1 ? 'step' : 'steps';
     const parts = [`${groups.length} ${stepWord}`];
     if (retryCount > 0) {
@@ -321,14 +380,26 @@ export default function WorkflowTrace({
       </button>
 
       {expanded && (
-        groups.length === 0 ? (
-          <p className="px-5 py-4 text-xs text-slate-500">No steps yet.</p>
+        isV2 ? (
+          events.length === 0 ? (
+            <p className="px-5 py-4 text-xs text-slate-500">No events yet.</p>
+          ) : (
+            <div>
+              {events.map((event) => (
+                <EventRow key={event.id} event={event} />
+              ))}
+            </div>
+          )
         ) : (
-          <div>
-            {groups.map((group) => (
-              <GroupRow key={group.root.id} group={group} />
-            ))}
-          </div>
+          groups.length === 0 ? (
+            <p className="px-5 py-4 text-xs text-slate-500">No steps yet.</p>
+          ) : (
+            <div>
+              {groups.map((group) => (
+                <GroupRow key={group.root.id} group={group} />
+              ))}
+            </div>
+          )
         )
       )}
     </div>

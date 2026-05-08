@@ -4,6 +4,45 @@ from typing import Any
 from app.config import settings
 from app.integrations.airtable import get_revenue_records
 
+
+def calc_revenue(
+    project: dict[str, Any], invoice_data: dict[str, Any]
+) -> tuple[float, float | None, str]:
+    """Compute recognized revenue for one project + month based on billing type.
+
+    Returns (revenue, percent_complete, notes). `project` must include
+    `_hours_logged` and `_forecast_hours` set by the caller.
+    """
+    billing_type = project.get("Billing Type", "Unknown")
+    hours_logged: float = project.get("_hours_logged", 0.0)
+    forecast_hours: float = project.get("_forecast_hours", 0.0)
+    contracted_fees: float = float(project.get("Contracted Fees") or 0)
+    total_projected = hours_logged + forecast_hours
+    notes = ""
+    percent_complete: float | None = None
+
+    match billing_type:
+        case "Fixed Fee":
+            if total_projected > 0:
+                percent_complete = round(hours_logged / total_projected, 4)
+            else:
+                percent_complete = 0.0
+            revenue = round(contracted_fees * (percent_complete or 0), 2)
+            billable_expenses = invoice_data.get("billable_expenses", 0.0)
+            if billable_expenses:
+                revenue = round(revenue + billable_expenses, 2)
+                notes = f"Includes ${billable_expenses:,.2f} in billable expenses"
+        case "T&M" | "MSF" | "Hosting":
+            revenue = round(invoice_data.get("total_amount", 0.0), 2)
+        case "Retainer":
+            revenue = 0.0
+            notes = "Retainers are not calculated — must do manually"
+        case _:
+            raise ValueError(f"Unexpected billing type: {billing_type!r}")
+
+    return revenue, percent_complete, notes
+
+
 _SLIM_FIELDS = {
     "Project Name": "project_name",
     "Date Recognized": "date_recognized",

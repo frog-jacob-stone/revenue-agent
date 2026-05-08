@@ -15,6 +15,9 @@ dependencies = [
     "openai>=1.0.0",
     "asyncpg>=0.30.0",
     "httpx>=0.28.0",
+    "langgraph>=0.2.50,<0.3",
+    "langgraph-checkpoint-postgres>=2.0.0,<3",
+    "psycopg[binary]>=3.2.0",
 ]
 
 [project.optional-dependencies]

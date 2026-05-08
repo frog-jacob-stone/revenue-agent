@@ -5,10 +5,10 @@ gates on human approval before sending via Gmail.
 
 Chain:
 
-  0. tool_call — HubSpot contact + company
-  1. tool_call — Web search (stub) for company signals
-  2. llm_step  — Consolidate context into a brief
-  3. tool_call — Knowledge base retrieval (Frogslayer GTM blurb)
+  0. task     — HubSpot contact + company
+  1. task     — Web search (stub) for company signals
+  2. llm_step — Consolidate context into a brief
+  3. task     — Knowledge base retrieval (Frogslayer GTM blurb)
   4. llm_step  — Draft email (re-runs with critique feedback on retry)
   5. critique  — Voice critic (max_attempts=3, retries draft)
   6. critique  — Accuracy critic (max_attempts=2, retries draft)
@@ -27,14 +27,14 @@ from app.agents.outreach import AccuracyCriticAgent, OutreachAgent, VoiceCriticA
 from app.config import settings
 from app.integrations.anthropic_client import call_anthropic
 from app.models.workflows import WorkflowPattern
-from app.orchestrator.chain import Chain, register_chain
+from app.orchestrator.chain import Chain
 from app.orchestrator.chains.utils import parse_json
 from app.orchestrator.state import StepContext
 from app.orchestrator.steps import (
     CritiqueStep,
     ExecutionStep,
     LLMStep,
-    ToolCallStep,
+    TaskStep,
 )
 
 logger = logging.getLogger(__name__)
@@ -337,10 +337,10 @@ OUTREACH_CHAIN = Chain(
     pattern=WorkflowPattern.prompt_chain_action,
     agent_slug=OUTREACH_AGENT_SLUG,
     steps=(
-        ToolCallStep("Pull HubSpot contact + company", _pull_hubspot_contact),
-        ToolCallStep("Web search company signals", _web_search_company),
+        TaskStep("Pull HubSpot contact + company", _pull_hubspot_contact),
+        TaskStep("Web search company signals", _web_search_company),
         LLMStep("Consolidate context brief", _consolidate_context),
-        ToolCallStep("Retrieve Frogslayer GTM context", _retrieve_knowledge_base),
+        TaskStep("Retrieve Frogslayer GTM context", _retrieve_knowledge_base),
         LLMStep("Draft outreach email", _draft_email),
         CritiqueStep(
             "Voice critique",
@@ -359,7 +359,7 @@ OUTREACH_CHAIN = Chain(
         ExecutionStep(
             "Approve and send outreach email",
             _gmail_send_stub,
-            propose_handler=_propose_send,
+            propose_payload=_propose_send,
             action_type="send_email",
             risk_level="medium",
         ),
@@ -368,9 +368,8 @@ OUTREACH_CHAIN = Chain(
 
 
 def register() -> None:
-    """Idempotent: only registers if not already present."""
-    from app.orchestrator.chain import has_chain
-
-    if has_chain(OUTREACH_KIND):
-        return
-    register_chain(OUTREACH_CHAIN)
+    # OUTREACH_CHAIN intentionally not registered.
+    # Phase 3 of the LangGraph migration moved outreach_chain to the v2 runner;
+    # see app/orchestrator_v2/graphs/outreach.py. The chain object stays defined
+    # so other imports keep working until Phase 5 cleanup.
+    pass

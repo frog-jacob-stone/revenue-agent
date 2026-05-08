@@ -3,9 +3,9 @@ import { useQuery } from '@tanstack/react-query';
 import {
   LayoutDashboard, Inbox, Bot, ScrollText, MessageSquare,
   BookOpen, BarChart3, Settings, ChevronLeft, ChevronRight,
-  Zap,
+  Zap, GitBranch,
 } from 'lucide-react';
-import { getActions } from '../../api';
+import { getActions, getApprovals } from '../../api';
 
 interface Props {
   collapsed: boolean;
@@ -16,6 +16,7 @@ const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, exact: true },
   { to: '/inbox', label: 'Approval Inbox', icon: Inbox, inboxBadge: true },
   { to: '/agents', label: 'Agents', icon: Bot },
+  { to: '/chains', label: 'Chains', icon: GitBranch },
   { to: '/audit', label: 'Audit Log', icon: ScrollText },
   { to: '/chat', label: 'Chat', icon: MessageSquare },
   { to: '/knowledge', label: 'Knowledge Base', icon: BookOpen },
@@ -24,12 +25,17 @@ const NAV = [
 ];
 
 export default function Sidebar({ collapsed, onToggle }: Props) {
-  const { data: proposed } = useQuery({
-    queryKey: ['actions', 'proposed'],
-    queryFn: () => getActions({ status: 'proposed' }),
+  const { data: pendingCount = 0 } = useQuery({
+    queryKey: ['inbox-pending-count'],
+    queryFn: async () => {
+      const [actions, approvals] = await Promise.all([
+        getActions({ status: 'proposed' }),
+        getApprovals({ status: 'pending' }),
+      ]);
+      return actions.length + approvals.length;
+    },
     refetchInterval: 15_000,
   });
-  const pendingCount = proposed?.length ?? 0;
 
   return (
     <aside

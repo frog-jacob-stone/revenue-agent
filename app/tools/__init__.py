@@ -1,5 +1,6 @@
 from typing import Any
 
+from app.tools.agent_tools import ASK_AGENT
 from app.tools.base import ToolContext, ToolDefinition
 from app.tools.content_tools import ALL_CONTENT_TOOLS
 from app.tools.revenue_tools import GET_REVENUE_DATA, TRIGGER_REVENUE_RECOGNITION
@@ -7,6 +8,7 @@ from app.tools.revenue_tools import GET_REVENUE_DATA, TRIGGER_REVENUE_RECOGNITIO
 _ALL_TOOLS: list[ToolDefinition] = [
     GET_REVENUE_DATA,
     TRIGGER_REVENUE_RECOGNITION,
+    ASK_AGENT,
     *ALL_CONTENT_TOOLS,
 ]
 

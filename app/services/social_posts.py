@@ -128,6 +128,37 @@ async def update_posts_status(
         return results
 
 
+async def create_post_conn(
+    conn: asyncpg.Connection,
+    *,
+    topic: str,
+    idea_title: str | None = None,
+    core_angle: str | None = None,
+    post_text: str | None = None,
+    status: str = "draft",
+) -> UUID:
+    """Insert a new social_posts row using an existing connection. Returns the new id."""
+    row = await conn.fetchrow(
+        """
+        INSERT INTO social_posts (topic, idea_title, core_angle, post_text, status)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id
+        """,
+        topic,
+        idea_title,
+        core_angle,
+        post_text,
+        status,
+    )
+    post_id: UUID = row["id"]
+    await audit.write_audit_event(
+        conn,
+        "content.post_created",
+        payload={"post_id": str(post_id), "topic": topic},
+    )
+    return post_id
+
+
 async def get_post_conn(conn: asyncpg.Connection, post_id: UUID) -> dict[str, Any] | None:
     row = await conn.fetchrow("SELECT * FROM social_posts WHERE id = $1", post_id)
     return dict(row) if row else None

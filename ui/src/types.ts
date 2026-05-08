@@ -78,7 +78,7 @@ export interface WorkflowRecord {
   error: string | null;
 }
 
-export type StepKind = 'tool_call' | 'llm_step' | 'critique' | 'checkpoint' | 'execution';
+export type StepKind = 'task' | 'llm_step' | 'critique' | 'checkpoint' | 'execution';
 
 export type WorkflowPattern =
   | 'supervised_automation'
@@ -109,6 +109,14 @@ export interface TraceAction {
   executed_at: string | null;
 }
 
+export interface TraceEvent {
+  id: string;
+  event_type: string;
+  occurred_at: string;
+  actor: string | null;
+  payload: Record<string, unknown>;
+}
+
 export interface WorkflowTrace {
   workflow_id: string;
   kind: string;
@@ -116,4 +124,47 @@ export interface WorkflowTrace {
   status: string;
   current_step: number | null;
   actions: TraceAction[];
+  events: TraceEvent[];
+}
+
+// ── v2 (LangGraph) approvals ────────────────────────────────────────────────
+//
+// Phase 1 of the LangGraph migration introduces a parallel inbox surface at
+// /approvals. `content_publish` writes to /approvals; the other v1 chains
+// still write to /actions. `InboxItem` is the union that lets the inbox UI
+// dual-source from both surfaces until v1 is retired in Phase 5.
+
+export type ApprovalStatus =
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'executed'
+  | 'failed';
+
+export interface Approval {
+  id: string;
+  workflow_id: string;
+  node_name: string;
+  agent_slug: string | null;
+  action_type: string;
+  status: ApprovalStatus;
+  risk_level: RiskLevel | null;
+  summary: string | null;
+  reasoning: string | null;
+  proposed_payload: Record<string, unknown>;
+  executed_payload: Record<string, unknown> | null;
+  assigned_to: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  rejected_by: string | null;
+  rejection_reason: string | null;
+  executed_at: string | null;
+  error: string | null;
+  created_at: string;
+}
+
+export type InboxItem = Action | Approval;
+
+export function isApproval(item: InboxItem): item is Approval {
+  return 'node_name' in item;
 }
