@@ -1,4 +1,4 @@
-"""End-to-end tests for the content_creation v2 graph.
+"""End-to-end tests for the content_creation graph.
 
 Stubs `call_openai` so the three OpenAI-backed agents (ContentStrategy,
 LinkedInWriting, PersonalVoice) can run without network. The fake
@@ -126,7 +126,7 @@ async def test_voice_loop_passes_after_one_retry():
 
 async def test_voice_budget_exhausted_terminates():
     """Voice fails 3 times (default max) → failed_terminal → workflow completes
-    but post stays at status='draft' (matches v1 behavior)."""
+    but post stays at status='draft'."""
     fake = _make_fake_call(voice_results=[False, False, False])
     with patch("app.orchestrator.graphs.content_creation.call_openai", side_effect=fake):
         wf_id = await runner.start(

@@ -59,7 +59,7 @@ async def _create_post(
 ) -> dict[str, Any]:
     from app.db import get_pool
     from app.orchestrator.graphs.content_creation import CONTENT_CREATION_KIND
-    from app.orchestrator.runner import runner as v2_runner
+    from app.orchestrator.runner import runner
     from app.services import social_posts as svc
 
     pool = await get_pool()
@@ -76,7 +76,7 @@ async def _create_post(
     if instructions:
         initial_state["instructions"] = instructions
 
-    workflow_id = await v2_runner.start(
+    workflow_id = await runner.start(
         CONTENT_CREATION_KIND,
         initial_state=initial_state,
         subject_type="social_post",

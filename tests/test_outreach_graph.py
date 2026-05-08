@@ -1,4 +1,4 @@
-"""End-to-end tests for the outreach_chain v2 graph.
+"""End-to-end tests for the outreach_chain graph.
 
 Stubs `call_anthropic` so the graph can drive its three agents
 (outreach-agent, voice-critic, accuracy-critic) without network. The

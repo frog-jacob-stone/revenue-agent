@@ -1,4 +1,4 @@
-"""rev_rec_monthly — Phase 2 of the LangGraph migration.
+"""rev_rec_monthly — monthly revenue recognition workflow.
 
 Six nodes, two interrupt gates, one conditional edge, one loop edge:
 
@@ -20,13 +20,8 @@ Six nodes, two interrupt gates, one conditional edge, one loop edge:
                                               │
                                               └──loop──→ validate_and_sync
 
-The loop replaces v1's `on_approve = create_workflow + resume` pattern, which
-split one conceptual job across N workflow_ids. v2 keeps the whole iteration
-inside a single workflow_id and audit trail.
-
-Payload shapes for `configure_rev_rec_projects` and `write_rev_rec` match v1
-exactly so the existing inbox renderer (ui/src/pages/Inbox/InboxList.tsx)
-works unchanged.
+One workflow_id covers the full configure → re-validate iteration cycle and
+audit trail.
 """
 from __future__ import annotations
 
@@ -243,7 +238,7 @@ async def compute_entries(state: RevRecState) -> RevRecState:
 
     total_recognized = _round2(sum(e["Total Recognized Revenue"] for e in entries))
     logger.info(
-        "rev_rec_monthly v2: %d projects, $%.2f total for %s",
+        "rev_rec_monthly: %d projects, $%.2f total for %s",
         len(entries), total_recognized, date_recognized,
     )
     return {
@@ -283,7 +278,7 @@ async def write_entries(state: RevRecState) -> RevRecState:
     ]
     records = await airtable.create_revenue_records(settings, clean_entries)
     logger.info(
-        "rev_rec_monthly v2: wrote %d revenue records to Airtable for %s",
+        "rev_rec_monthly: wrote %d revenue records to Airtable for %s",
         len(records), payload.get("date_recognized") or state.get("date_recognized"),
     )
     return {

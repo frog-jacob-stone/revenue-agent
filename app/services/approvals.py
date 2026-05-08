@@ -1,11 +1,8 @@
 """DB layer for the `approvals` table.
 
-`approvals` is the human-in-the-loop queue for v2 (LangGraph) workflows. It
-replaces the role of `actions WHERE status='proposed'` in v1. Phase 0 of the
-multi-agent rearchitecture (.agent/plans/3.langgraph-multi-agent-rearchitecture.md).
-
-Every state-changing function writes an audit event using the canonical
-constants in app/orchestrator/events.py.
+`approvals` is the human-in-the-loop queue for graph nodes that pause for
+review (graphs with `interrupt_before`). Every state-changing function writes
+an audit event using the canonical constants in `app/orchestrator/events.py`.
 """
 from __future__ import annotations
 

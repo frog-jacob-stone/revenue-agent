@@ -24,7 +24,7 @@ agent_messages   → turn-by-turn record of agent-to-agent exchanges
 2. **Workflows are graphs.** A single business process is one workflow whose progress lives in LangGraph's checkpoint tables. A workflow groups its approvals (one row per human gate) and audit-log events.
 3. **Audit log is append-only.** Enforced at the database role level, not in application code.
 4. **Memory and knowledge are separate.** Memory is what agents learned (emergent). Knowledge base is what we gave them (curated).
-5. **RLS on from day one.** Permissive policies for v1; scoped policies when users are added.
+5. **RLS on from day one.** Permissive policies today; scoped policies when users are added.
 
 ## Tables
 
@@ -79,7 +79,7 @@ Lifecycle-only queue for human-in-the-loop pauses in LangGraph workflows. Added 
 | `reasoning` | text | Agent's explanation |
 | `proposed_payload` | jsonb | What the node proposed |
 | `executed_payload` | jsonb | What actually ran (may differ if human edited) |
-| `assigned_to` | text | Reserved for multi-user routing; ignored in v1 of v2 |
+| `assigned_to` | text | Reserved for multi-user routing; ignored today |
 | `approved_by` / `approved_at` | — | Set on approval |
 | `rejected_by` / `rejection_reason` | — | Set on rejection |
 | `executed_at` | timestamptz | Set when the gated node completes |
@@ -227,7 +227,7 @@ Keep this list stable; it becomes grep-able forensics. Constants live in `app/or
 **Content workflows:**
 - `content.post_created`, `content.post_drafted`, `content.post_approved`, `content.post_rejected`, `content.post_updated`
 
-Historical audit_log rows from before Phase 5 may carry pre-migration vocabulary (`action.proposed/approved/rejected/executed/failed` and `actor='orchestrator_v2:*'`); these remain queryable. New code emits only the constants listed above.
+Historical audit_log rows may carry pre-migration vocabulary (`action.proposed/approved/rejected/executed/failed` and older actor strings); these remain queryable. New code emits only the constants listed above.
 
 ## API Surface (Maps to FastAPI)
 
@@ -244,7 +244,7 @@ Historical audit_log rows from before Phase 5 may carry pre-migration vocabulary
 
 ## RLS Status
 
-All tables have RLS enabled with permissive `service_role` policies for v1. When user identity is added:
+All tables have RLS enabled with permissive `service_role` policies. When user identity is added:
 
 1. Replace permissive policies with scoped ones
 2. Map `approvals.approved_by`, `workflows.initiated_by`, `audit_log.actor` to `auth.uid()`
@@ -265,12 +265,12 @@ Migrations run in filename order; each is idempotent.
 7. `0007_social_posts.sql` — adds `social_posts` table for the Content Orchestrator draft and approval queue
 8. `0008_content_action_type.sql` — adds `post_to_linkedin` to `action_type` enum for the `content_publish` chain
 9. `0009_rename_tool_call_to_task.sql` — renames `actions.step_kind` value `tool_call` → `task`; updates the CHECK constraint to match the Python `StepKind` enum
-10. `0010_create_approvals_table.sql` — creates the `approvals` table for the v2 (LangGraph) orchestrator's human-in-the-loop queue. Coexists with `actions` until Phase 5 of the rearchitecture
-11. `0011_workflows_parent_id.sql` — adds `workflows.parent_workflow_id` for sub-workflow linkage (used by `app/orchestrator_v2/spawn.py`)
+10. `0010_create_approvals_table.sql` — creates the `approvals` table for the orchestrator's human-in-the-loop queue
+11. `0011_workflows_parent_id.sql` — adds `workflows.parent_workflow_id` for sub-workflow linkage (used by `app/orchestrator/spawn.py`)
 12. `0012_langgraph_checkpoint_tables.sql` — **marker migration only** (no DDL). LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`) are created idempotently by `AsyncPostgresSaver.setup()` at app startup (called from `runner.init()`). Schema is internal to LangGraph — do not modify. If LangGraph schema needs custom changes that `setup()` doesn't cover, add a new migration that runs after this one
 13. `0013_create_agent_messages.sql` — adds the `agent_messages` table for turn-by-turn agent-to-agent exchanges (powers the `ask_agent` tool)
-14. `0014_drop_actions_table.sql` — drops the legacy `actions` table (Phase 5 of `.agent/plans/3.langgraph-multi-agent-rearchitecture.md`). The `audit_log.action_id` FK constraint is dropped via CASCADE; the column itself remains and audit_log rows are preserved
-15. `0015_drop_workflow_pattern_columns.sql` — drops `workflows.pattern` and `workflows.current_step` (the v1 prompt-chain orchestrator's progress markers, replaced by LangGraph checkpoints)
+14. `0014_drop_actions_table.sql` — drops the legacy `actions` table. The `audit_log.action_id` FK constraint is dropped via CASCADE; the column itself remains and audit_log rows are preserved
+15. `0015_drop_workflow_pattern_columns.sql` — drops `workflows.pattern` and `workflows.current_step` (legacy prompt-chain progress markers, replaced by LangGraph checkpoints)
 
 ## Open Questions
 

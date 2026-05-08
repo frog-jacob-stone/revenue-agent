@@ -1,10 +1,8 @@
 """Uniform entry point for invoking an agent from anywhere.
 
-Same surface from a graph node, a sub-agent, or the chat layer. Phase 0
-gives a minimal implementation: look up the agent class, build a single-turn
-prompt, dispatch to the right provider, wrap with audit events.
-
-Phase 4 extends this for tool-use loops and agent-to-agent messaging.
+Same surface from a graph node, a sub-agent, or the chat layer. Looks up the
+agent class, builds a single-turn prompt, dispatches to the right provider,
+and wraps the call with audit events.
 """
 from __future__ import annotations
 
@@ -27,11 +25,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class NodeContext:
-    """Lightweight context for v2 nodes.
+    """Lightweight context for graph nodes.
 
     Carries identity (workflow + parent linkage) and a DB pool for callers
-    that need to read or write rows. Kept small on purpose; richer chain
-    context (`StepContext` from v1) is not ported.
+    that need to read or write rows.
     """
 
     workflow_id: UUID
@@ -81,7 +78,7 @@ async def invoke_agent(
     system_prompt = ""
     if issubclass(agent_cls, ConversationalAgent):
         # Best-effort: instantiate without DB-loaded config since this is a
-        # single-turn invocation. Phase 4 will wire full agent loading.
+        # single-turn invocation; full agent loading not currently wired.
         try:
             instance = agent_cls(agent_id=agent_id, config={})  # type: ignore[arg-type]
             system_prompt = instance.get_system_prompt()

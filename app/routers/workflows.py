@@ -12,7 +12,7 @@ from app.models.workflows import (
     WorkflowResponse,
     WorkflowTraceResponse,
 )
-from app.orchestrator import runner as v2_runner
+from app.orchestrator import runner
 from app.orchestrator.graphs.outreach import OUTREACH_KIND
 from app.services import audit
 
@@ -47,7 +47,7 @@ async def trigger_outreach(body: OutreachTrigger):
     (or completes, on terminal failure). Clients poll `/workflows/{id}/trace`
     (or watch the inbox) to see progress.
     """
-    workflow_id = await v2_runner.start(
+    workflow_id = await runner.start(
         OUTREACH_KIND,
         initial_state={
             "hubspot_contact_id": body.hubspot_contact_id,

@@ -4,10 +4,9 @@
 single-turn answer. Both the outgoing prompt and the incoming reply are
 recorded in `agent_messages` under a shared `thread_id`.
 
-Phase 4 of the LangGraph multi-agent rearchitecture (see
-.agent/plans/8.path-b-phase-4-multi-agent.md). The tool wraps `invoke_agent`
-(single-turn Anthropic call); native Anthropic tool-use loops are out of
-scope for this phase.
+The tool wraps `invoke_agent` (single-turn Anthropic call). Native
+Anthropic tool-use loops are not implemented; receivers see only the
+current question, not prior turns.
 
 Loop safety: callers that want multi-step delegation must bound their own
 iterations. There is no framework-level guard against an unbounded

@@ -1,8 +1,8 @@
-"""V2 runner — drives LangGraph StateGraph execution and bridges with the
+"""Runner — drives LangGraph StateGraph execution and bridges with the
 `approvals` table for human-in-the-loop pauses.
 
-Phase 1 swaps `MemorySaver` → `AsyncPostgresSaver`. Graph state now persists
-across restarts. The checkpointer holds its own psycopg pool against
+Uses `AsyncPostgresSaver` as the checkpointer so graph state persists across
+restarts. The checkpointer holds its own psycopg pool against
 `settings.database_url` (separate from the app's asyncpg pool) — psycopg is
 what `langgraph-checkpoint-postgres` requires.
 
@@ -47,12 +47,12 @@ class GraphSpec:
     interrupt_before: tuple[str, ...] = ()
 
 
-class V2Runner:
+class Runner:
     """Owns the registered graphs and the shared LangGraph checkpointer.
 
     Public surface:
       register(kind, factory) — wire a graph kind to its factory
-      is_registered(kind) — used by trigger endpoints to dispatch v1 vs v2
+      is_registered(kind) — whether a graph kind has been registered
       init() — explicit checkpointer setup; safe to call multiple times
       start(kind, ...) — create a workflow row + drive the graph
       resume(workflow_id) — drive a paused graph forward after approval
@@ -99,7 +99,7 @@ class V2Runner:
             for kind in list(self._registrations):
                 self._compile(kind)
             self._initialized = True
-            logger.info("v2_runner: initialized AsyncPostgresSaver checkpointer")
+            logger.info("orchestrator: initialized AsyncPostgresSaver checkpointer")
 
     async def _ensure_init(self) -> None:
         if not self._initialized:
@@ -113,7 +113,7 @@ class V2Runner:
         self._registrations[kind] = factory
         if self._initialized:
             self._compile(kind)
-        logger.info("v2_runner: registered kind=%s", kind)
+        logger.info("orchestrator: registered kind=%s", kind)
 
     def _compile(self, kind: str) -> None:
         spec = self._registrations[kind]()
@@ -184,14 +184,14 @@ class V2Runner:
             "SELECT id, kind, status FROM workflows WHERE id = $1", wf_id
         )
         if wf is None:
-            logger.warning("v2_runner.resume: workflow %s not found", wf_id)
+            logger.warning("orchestrator.resume: workflow %s not found", wf_id)
             return
         if wf["status"] in ("completed", "failed", "cancelled"):
             return
 
         kind = wf["kind"]
         if kind not in self._registrations:
-            return  # not a v2 workflow — let v1 handle it
+            return  # unregistered kind — nothing to drive
         await self._ensure_init()
 
         # Look at the most recent approval for this workflow to decide what to do.
@@ -263,7 +263,7 @@ class V2Runner:
             try:
                 await compiled.aupdate_state(config, seeded_state)
             except Exception as exc:
-                logger.exception("v2_runner: aupdate_state failed for %s", workflow_id)
+                logger.exception("orchestrator: aupdate_state failed for %s", workflow_id)
                 await self._mark_workflow_failed(pool, workflow_id, error=str(exc))
                 return
             invoke_input: dict[str, Any] | None = None
@@ -284,7 +284,7 @@ class V2Runner:
                             payload={"node": node_name},
                         )
         except Exception as exc:
-            logger.exception("v2_runner: graph execution failed for %s", workflow_id)
+            logger.exception("orchestrator: graph execution failed for %s", workflow_id)
             async with pool.acquire() as conn:
                 await audit.write_audit_event(
                     conn,
@@ -440,4 +440,4 @@ class V2Runner:
 
 
 # Module-level singleton. Imported by the router and graph factories.
-runner = V2Runner()
+runner = Runner()

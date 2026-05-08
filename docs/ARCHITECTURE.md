@@ -82,7 +82,7 @@ The inbox UI sources from `/approvals` only. `Approval` rows discriminate by sta
 
 Three patterns, in order of planned adoption:
 
-1. **Explicit agent selection (v1).** User picks the agent in the chat UI. Simple, no magic.
+1. **Explicit agent selection.** User picks the agent in the chat UI. Simple, no magic.
 2. **Router agent.** Reads the user's message, determines intent, hands off to a specialist. Build only after 4–6 specialists exist and real routing patterns are visible. Specialists remain directly selectable — the router is a convenience front door, not a gatekeeper.
 3. **Full orchestrator.** Decomposes multi-step requests across multiple agents and coordinates execution.
 

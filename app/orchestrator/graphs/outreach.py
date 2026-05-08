@@ -1,4 +1,4 @@
-"""outreach_chain — Phase 3b of the LangGraph migration.
+"""outreach_chain — personalised outbound email with two critique loops.
 
 Ten nodes, one interrupt gate, two critique loops sharing one `compose_email` node:
 
@@ -29,7 +29,7 @@ Ten nodes, one interrupt gate, two critique loops sharing one `compose_email` no
                                                                                              ▼
                                                                                             END
 
-Key design points (mirrors v1 critique-step semantics):
+Key design points:
 
 - `voice_attempts` and `accuracy_attempts` are independent counters with
   independent `max_attempts` ceilings (defaults: 3 voice, 2 accuracy). When
@@ -37,7 +37,7 @@ Key design points (mirrors v1 critique-step semantics):
   draft — voice_attempts continues to accumulate.
 - The most recent failed critique is surfaced into the next draft prompt via
   `state.last_critique_feedback`. The `draft` node clears it after consumption
-  so each redraft sees only one critic's feedback at a time (same as v1).
+  so each redraft sees only one critic's feedback at a time.
 - LLM calls go through `invoke_agent` because all three outreach agents
   (outreach-agent, voice-critic, accuracy-critic) are in `AGENTS` and
   Anthropic-backed. `invoke_agent` emits AGENT_INVOKED/AGENT_COMPLETED audit
@@ -126,8 +126,8 @@ def _ctx_from_state(state: OutreachState) -> NodeContext:
 
 
 async def _load_voice_profile() -> str:
-    """Mirror of v1's `_load_voice_profile`: read the most recent voice profile
-    preference memory written for the voice-critic agent."""
+    """Read the most recent voice profile preference memory written for the
+    voice-critic agent."""
     pool = await get_pool()
     row = await pool.fetchrow(
         """
@@ -174,7 +174,7 @@ def _parse_critique(raw: str) -> dict[str, Any]:
 
 
 async def pull_hubspot(state: OutreachState) -> OutreachState:
-    """Fetch HubSpot contact + company. Stub for now — matches v1 behavior."""
+    """Fetch HubSpot contact + company. Stub when no HUBSPOT_TOKEN is set."""
     contact_id = state.get("hubspot_contact_id")
 
     if not settings.hubspot_token or not contact_id:
@@ -395,7 +395,7 @@ async def gmail_send(state: OutreachState) -> OutreachState:
     """Stub send. Reads the (possibly edited) `executed_payload`."""
     payload = state.get("executed_payload") or state.get("draft_email") or {}
     logger.info(
-        "[gmail-stub v2] would send subject=%r to=%r",
+        "[gmail-stub] would send subject=%r to=%r",
         payload.get("subject"),
         payload.get("to"),
     )

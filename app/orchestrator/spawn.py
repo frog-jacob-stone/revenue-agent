@@ -3,11 +3,8 @@
 Lets a node start a child workflow with a parent_workflow_id linkage. The
 child runs the same way as a top-level workflow (via the runner) — it just
 has a parent edge in `workflows` and emits SUBWORKFLOW_SPAWNED on the
-parent's audit trail.
-
-Phase 2 uses this for the "on approve, requeue" semantics in rev_rec_monthly.
-Phase 4+ uses it for supervisor → specialist patterns and dynamic agent
-spawning.
+parent's audit trail. Used for supervisor → specialist patterns and any
+case where one workflow needs to spin up a nested workflow.
 """
 from __future__ import annotations
 
@@ -57,7 +54,7 @@ async def spawn_workflow(
         parent_workflow_id=parent_workflow_id,
     )
     logger.info(
-        "v2 spawn_workflow: kind=%s parent=%s child=%s",
+        "spawn_workflow: kind=%s parent=%s child=%s",
         kind, parent_workflow_id, child_id,
     )
     return child_id

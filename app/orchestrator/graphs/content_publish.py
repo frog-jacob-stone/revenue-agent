@@ -1,4 +1,4 @@
-"""content_publish — first real workflow on the v2 LangGraph runner.
+"""content_publish — publish a drafted social post after human approval.
 
 Two nodes, one approval gate:
 
@@ -11,9 +11,6 @@ row. The graph then pauses at `post_to_linkedin`.
 After human approval, the runner resumes the graph. `post_to_linkedin` reads
 the (possibly edited) `executed_payload` from state, marks the post as
 published, and the graph terminates.
-
-Mirrors the v1 chain at `app/orchestrator/chains/content.py`. v1 is being
-unregistered in this phase; the chain file stays until Phase 5 cleanup.
 """
 from __future__ import annotations
 
@@ -91,7 +88,7 @@ async def post_to_linkedin(state: ContentPublishState) -> ContentPublishState:
     post_text = payload.get("post_text") or ""
 
     logger.info(
-        "[linkedin-stub v2] would post: post_id=%r text=%r",
+        "[linkedin-stub] would post: post_id=%r text=%r",
         post_id_str,
         post_text[:120],
     )

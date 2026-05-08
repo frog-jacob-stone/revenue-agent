@@ -149,7 +149,7 @@ app/
   routers/             # FastAPI routers (thin — business logic in services/)
   services/
     audit.py           # write_audit_event() — called on every state transition
-    approvals.py       # approve_approval(), reject_approval() (v2 surface)
+    approvals.py       # approve_approval(), reject_approval()
     agent_messages.py  # turn-by-turn record of agent-to-agent exchanges
   orchestrator/        # LangGraph runner + production graphs
     runner.py
@@ -168,5 +168,5 @@ supabase/
 tests/
   conftest.py          # Pool + client + test_agent_id fixtures
   test_workflows.py
-  test_orchestrator_v2_*.py  # runner, approval flow, agent_invoke, spawn
+  test_runner.py / test_approval_flow.py / test_agent_invoke.py / test_spawn.py
 ```

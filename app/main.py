@@ -6,8 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.db import close_pool, get_pool
-from app.orchestrator.graphs import register_all as register_v2_graphs
-from app.orchestrator.runner import runner as v2_runner
+from app.orchestrator.graphs import register_all as register_graphs
+from app.orchestrator.runner import runner
 from app.routers import (
     agents,
     analytics,
@@ -27,8 +27,8 @@ async def lifespan(app: FastAPI):
     await get_pool()
     await seed_agents()
     await seed_voice_profile()
-    await v2_runner.init()
-    register_v2_graphs(v2_runner)
+    await runner.init()
+    register_graphs(runner)
     yield
     await close_pool()
 

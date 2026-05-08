@@ -1,8 +1,8 @@
 """Critique-loop proof-of-concept graph.
 
-Standalone reference for the cycle pattern Phase 3 will use to migrate the
-outreach and content_creation chains. Not a real workflow — no LLMs, no DB
-writes beyond the runner's audit events. Three nodes:
+Minimal standalone reference for the critique cycle pattern used by the real
+critique-loop graphs (`outreach`, `content_creation`). No LLMs, no DB writes
+beyond the runner's audit events. Three nodes:
 
     draft → critique → publish
                 ↓ (fail with budget)
@@ -10,8 +10,8 @@ writes beyond the runner's audit events. Three nodes:
                 ↓ (budget exhausted)
               failed (terminal)
 
-Used by tests/test_critique_loop_poc.py and intentionally deletable in
-Phase 5 cleanup once outreach/content_creation are migrated.
+Used by `tests/test_critique_loop_poc.py` to exercise the cycle behaviour
+in isolation. Not registered in production startup.
 """
 from __future__ import annotations
 

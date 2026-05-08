@@ -1,6 +1,6 @@
 """Canonical audit event names emitted by orchestrator.
 
-Every audit event written from a v2 node, runner, approval flow, or
+Every audit event written from a node, runner, approval flow, or
 sub-workflow spawn MUST use one of these constants. Adding a new event
 type is a deliberate change — extend this module, document it in
 docs/SCHEMA.md under the audit_log section, and use the new constant.

@@ -1,8 +1,4 @@
-"""Approvals router — v2 (LangGraph) human-in-the-loop queue.
-
-Mirrors the surface of `app/routers/actions.py` so the inbox UI migration in
-Phase 1 is a near-rename. The actions router is left untouched until Phase 5.
-"""
+"""Approvals router — LangGraph human-in-the-loop queue."""
 from __future__ import annotations
 
 from typing import Optional
@@ -13,7 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.db import get_pool
 from app.models.approvals import ApprovalApprove, ApprovalReject, ApprovalResponse
-from app.orchestrator import runner as v2_runner_singleton
+from app.orchestrator import runner
 from app.services import approvals as approvals_service
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
@@ -67,7 +63,7 @@ async def approve_approval(
     except approvals_service.ApprovalStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     # Drive the graph forward off-request so this response returns immediately.
-    background_tasks.add_task(v2_runner_singleton.resume, updated["workflow_id"])
+    background_tasks.add_task(runner.resume, updated["workflow_id"])
     return _to_response(updated)
 
 

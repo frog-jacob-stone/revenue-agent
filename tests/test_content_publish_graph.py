@@ -1,4 +1,4 @@
-"""End-to-end tests for the content_publish v2 graph.
+"""End-to-end tests for the content_publish graph.
 
 Three paths:
   - happy: pause → approve → resume → social_posts.status='published'
@@ -64,7 +64,7 @@ async def test_happy_path_publishes_post(client: AsyncClient, test_agent_slug):
     assert wf["status"] == "awaiting_approval"
     assert wf["kind"] == CONTENT_PUBLISH_KIND
 
-    # Exactly one approval row, with the v1-equivalent payload shape.
+    # Exactly one approval row, with the expected payload shape.
     appr = await pool.fetchrow(
         "SELECT * FROM approvals WHERE workflow_id = $1", wf_id
     )
@@ -136,7 +136,7 @@ async def test_reject_leaves_post_at_ready(client: AsyncClient, test_agent_slug)
     post_after = await pool.fetchrow(
         "SELECT status, post_text FROM social_posts WHERE id = $1", post_id
     )
-    # Post stays at ready, text untouched — matches v1 contract.
+    # Post stays at ready, text untouched.
     assert post_after["status"] == "ready"
     assert post_after["post_text"] == "Draft for rejection."
 

@@ -1,4 +1,4 @@
-"""content_creation — Phase 3a of the LangGraph migration.
+"""content_creation — drafts a social post with a voice-review critique loop.
 
 Four nodes, no interrupt gate, one critique loop:
 
@@ -12,16 +12,13 @@ Four nodes, no interrupt gate, one critique loop:
                                     │ END    (loop)       ▼
                                     └────────┘     failed_terminal → END
 
-Mirrors the v1 chain at `app/orchestrator/chains/content.py::CONTENT_CREATION_CHAIN`.
 The voice review writes `social_posts.status = 'ready'` on pass; on terminal
-failure the row stays at status='draft' (matches v1 code; the v1 PROGRESS.md
-description of "needs_revision" was aspirational — this is a known mismatch
-to revisit when the inbox UI surfaces "needs_revision" posts properly).
+failure the row stays at `status='draft'`.
 
 LLM calls use direct `call_openai` because `ContentStrategyAgent`,
 `LinkedInWritingAgent`, and `PersonalVoiceAgent` are OpenAI-backed and
-`invoke_agent` is currently Anthropic-only. Phase 4's provider-aware
-`invoke_agent` refactor closes this gap.
+`invoke_agent` is currently Anthropic-only. A provider-aware refactor would
+unify dispatch.
 """
 from __future__ import annotations
 
@@ -125,8 +122,8 @@ async def draft_post(state: ContentCreationState) -> ContentCreationState:
     if last_review and not last_review.get("passed"):
         feedback = last_review.get("feedback", "")
         issues = last_review.get("issues", [])
-        # We don't have the prior post_text in state directly, so read it from
-        # the social_posts row — same source v1 used via the action history.
+        # We don't have the prior post_text in state directly, so read it
+        # from the social_posts row.
         post_id_str = state.get("post_id")
         prior_text = ""
         if post_id_str:
@@ -181,8 +178,7 @@ async def draft_post(state: ContentCreationState) -> ContentCreationState:
 
 async def voice_review(state: ContentCreationState) -> ContentCreationState:
     """LLM call: evaluate the latest draft against the personal voice profile.
-    Increments `voice_attempts` whether or not the review passes — matches
-    v1's per-CritiqueStep attempt counter."""
+    Increments `voice_attempts` whether or not the review passes."""
     post_id_str = state.get("post_id")
     channel = state.get("channel") or "linkedin"
 
@@ -232,8 +228,9 @@ async def voice_review(state: ContentCreationState) -> ContentCreationState:
 async def failed_terminal(state: ContentCreationState) -> ContentCreationState:
     """Terminal failure node: voice review budget exhausted.
 
-    The social_posts row is left at status='draft' (matches v1 code). Future:
-    update to 'needs_revision' when the inbox UI surfaces that status.
+    The social_posts row is left at `status='draft'`. A future enhancement
+    could move it to a `needs_revision` status once the inbox UI surfaces
+    that.
     """
     last = state.get("last_voice_review") or {}
     return {

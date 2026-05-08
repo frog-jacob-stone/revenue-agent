@@ -1,9 +1,10 @@
-"""Multi-agent demo graph — Phase 4 illustrative POC.
+"""Multi-agent demo graph — illustrative reference for supervisor/specialist
+patterns.
 
-Standalone demo (mirrors `_critique_poc.py` style). Three nodes show the
-supervisor → specialist → review pattern, and every agent-to-agent turn
-is recorded in `agent_messages` linked to the workflow_id. Not registered
-in production startup; tests and smoke scripts register it explicitly.
+Standalone demo. Three nodes show the supervisor → specialist → review
+pattern, and every agent-to-agent turn is recorded in `agent_messages` linked
+to the workflow_id. Not registered in production startup; tests and smoke
+scripts register it explicitly.
 
 Topology:
 

@@ -92,7 +92,7 @@ Track progress through implementation. Update this file as you complete modules 
 - [x] Duplicate guard — refuses to run twice for the same period
 
 ### Workflow B: Outreach — `[-]`
-- [x] `outreach_chain` — v2 LangGraph (Phase 3); 10-node graph with two critique loops sharing one `compose_email` node; `interrupt_before=("gmail_send",)`
+- [x] `outreach_chain` — 10-node LangGraph with two critique loops sharing one `compose_email` node; `interrupt_before=("gmail_send",)`
 - [-] `pull_hubspot` — returns hardcoded stub data; raises `NotImplementedError` if real token present; no HubSpot integration
 - [-] `web_search` — returns hardcoded fake signals; no real web search
 - [x] `consolidate` — Anthropic LLM call via `invoke_agent("outreach-agent", ...)`
@@ -104,44 +104,34 @@ Track progress through implementation. Update this file as you complete modules 
 - [ ] `gmail_send` — stub only; logs to console; no Gmail integration
 
 ### Workflow C: Content Creation & Publishing — `[-]`
-- [x] `content_creation` — v2 LangGraph (Phase 3); 4-node graph; `voice_review` loops to `draft_post` on fail; no interrupt gate
+- [x] `content_creation` — 4-node LangGraph; `voice_review` loops to `draft_post` on fail; no interrupt gate
 - [x] `interpret_brief` — direct OpenAI call (`ContentStrategyAgent` system prompt; title, angle, target, type)
 - [x] `draft_post` — direct OpenAI call (`LinkedInWritingAgent`); writes/updates `social_posts` row
-- [x] `voice_review` — direct OpenAI call (`PersonalVoiceAgent`); max 3 attempts; pass → `social_posts.status=ready`; exhausted → `failed_terminal` + workflow `failed` (post stays at `status=draft`; mismatch with prior PROGRESS docs noted; revisit when inbox surfaces `needs_revision`)
-- [x] `content_publish` — v2 LangGraph (Phase 1); `supervised_automation` pattern
+- [x] `voice_review` — direct OpenAI call (`PersonalVoiceAgent`); max 3 attempts; pass → `social_posts.status=ready`; exhausted → `failed_terminal` (post stays at `status=draft`; future: surface as `needs_revision` once the inbox supports it)
+- [x] `content_publish` — 2-node LangGraph; `propose_post` → [interrupt_before] → `post_to_linkedin`
 - [x] `propose_post` — execution approval gate (`action_type=post_to_linkedin`)
 - [-] `post_to_linkedin` — stub only; updates DB status to `published` but does not post; no LinkedIn integration
 - [x] Content orchestrator (`content-orchestrator`) — conversational front door
-- [x] Post state machine — `draft` → `ready` → `published | rejected` (`needs_revision` aspirational; not currently set on v2)
+- [x] Post state machine — `draft` → `ready` → `published | rejected` (`needs_revision` aspirational; not currently emitted)
 
 ---
 
 ## Tooling
 
-### Chain Visualizer — `[ ]` (Retired in Phase 5; reimplementation backlogged)
-The v1 prompt-chain visualizer was deleted in Phase 5 because it was tied to the bespoke `Step` abstraction. LangGraph provides `get_graph().draw_mermaid()` natively; a v2 reimplementation is in the Backlog section.
-<!--
-- [x] `chain_to_mermaid` / `chain_to_dict` in `app/orchestrator/diagram.py` — pure transforms over the `Chain` registry
-- [x] Optional `skip_if_label` / `on_approve_label` on `Step` — populated on `rev_rec_monthly`
-- [x] `GET /chains`, `GET /chains/{kind}`, `GET /chains/{kind}/diagram` — read-only API
-- [x] `<MermaidDiagram>` UI component using the `mermaid` npm package
-- [x] AgentDetail "Chains" section — chains filtered by agent_slug
-- [x] `/chains` index page — all registered chains side-by-side; sidebar entry
--->
+### Workflow Visualizer — `[ ]` (Backlogged)
+LangGraph exposes `get_graph().draw_mermaid()` natively. A read-only `/workflows/{id}/diagram` endpoint plus a UI overlay highlighting active/traversed nodes is on the backlog.
 
+---
 
-## LangGraph Migration — `[x]` Complete
+## Architecture status
 
-The bespoke v1 prompt-chain orchestrator + `actions` table has been fully replaced by LangGraph + `approvals` table. Master plan: `.agent/plans/3.langgraph-multi-agent-rearchitecture.md`. All five phases (Foundations, content_publish, rev_rec_monthly, outreach + content_creation, multi-agent primitives, cleanup) are complete; sub-plans `4.*` through `9.*` capture the per-phase detail.
+One orchestrator (`app/orchestrator/`) backed by LangGraph + `AsyncPostgresSaver`. One approval surface (`/approvals`). One inbox type (`Approval`). The frontend inbox single-sources from `/approvals`. Test suite: 58 green across runner, approval flow, agent invocation, sub-workflow spawn, agent messaging, and end-to-end graph tests for all four production workflows.
 
-After Phase 5: one orchestrator (`app/orchestrator/` = LangGraph runner). One approval surface (`/approvals`). One inbox type (`Approval`). `actions`, `pattern`, `current_step`, the v1 prompt-chain machinery, and the chain-visualizer UI are gone. Migrations 0014 + 0015 dropped the v1 schema. The frontend inbox single-sources from `/approvals`. Test suite: 47 green.
-
-Deferred to a post-Phase-5 sweep (tracked separately):
-- Phase 1 + 3 graph tests (`test_v2_content_publish_graph.py` partially flaky against AsyncPostgresSaver; outreach + content_creation graph tests not yet written)
+Known gaps (tracked in Backlog):
 - Native Anthropic tool-use loop in `invoke_agent`
 - Multi-turn thread context in `ask_agent`
 - Provider-aware `invoke_agent` so content_creation can route through it instead of direct `call_openai`
-- Chain visualizer reimplementation on top of LangGraph's `get_graph().draw_mermaid()`
+- Workflow visualizer (Mermaid) endpoint and UI overlay
 
 ---
 

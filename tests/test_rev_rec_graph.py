@@ -1,4 +1,4 @@
-"""End-to-end tests for the rev_rec_monthly v2 graph.
+"""End-to-end tests for the rev_rec_monthly graph.
 
 Drives the runner against a graph whose external integrations
 (airtable, harvest, forecast) are stubbed. Three paths exercised:

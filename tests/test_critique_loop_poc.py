@@ -1,8 +1,8 @@
 """Critique-loop POC tests.
 
-Validates the LangGraph cycle pattern that Phase 3 will use for outreach and
-content_creation chains. No DB, no runner — just the compiled graph driven
-directly so the cycle behavior is isolated.
+Validates the LangGraph cycle pattern used by the real critique-loop graphs
+(`outreach`, `content_creation`). No DB, no runner — just the compiled graph
+driven directly so the cycle behavior is isolated.
 """
 from __future__ import annotations
 
