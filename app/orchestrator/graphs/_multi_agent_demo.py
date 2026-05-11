@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 MULTI_AGENT_DEMO_KIND = "_multi_agent_demo"
 
-SUPERVISOR_SLUG = "outreach-agent"          # any AGENTS-registered Anthropic agent
+SUPERVISOR_SLUG = "outreach-agent"          # any AGENTS-registered agent
 SPECIALIST_OPTIONS = ("voice-critic", "accuracy-critic")
 DEFAULT_SPECIALIST = SPECIALIST_OPTIONS[0]
 

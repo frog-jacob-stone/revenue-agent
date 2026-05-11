@@ -15,24 +15,24 @@ _MODEL = "gpt-4o-mini"
 # ---------------------------------------------------------------------------
 
 
-async def _llm(system: str, user: str) -> str:
+async def _llm(system: str, user: str, *, purpose: str) -> str:
     """Single OpenAI call. Returns the text content of the first choice."""
     from app.config import settings
-    from app.integrations.openai_client import get_client
+    from app.integrations.openai_client import call_openai_chat
 
     if not settings.openai_api_key:
         return "{}"
 
-    client = get_client()
-    response = await client.chat.completions.create(
+    completion = await call_openai_chat(
         model=_MODEL,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
         response_format={"type": "json_object"},
+        purpose=purpose,
     )
-    return response.choices[0].message.content or "{}"
+    return completion.choices[0].message.content or "{}"
 
 
 def _parse(raw: str) -> dict[str, Any]:
@@ -234,7 +234,7 @@ async def _rewrite_post(
         f"Channel: {channel}"
     )
 
-    raw = await _llm(LinkedInWritingAgent.system_prompt, user_msg)
+    raw = await _llm(LinkedInWritingAgent.system_prompt, user_msg, purpose="rewrite_post")
     draft = _parse(raw)
 
     post_text = draft.get("post_text") or post.get("post_text", "")

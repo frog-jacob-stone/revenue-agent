@@ -7,7 +7,7 @@ class OutreachAgent(BaseAgent):
     description = (
         "Drafts and queues personalised outreach emails after SDR Researcher completes."
     )
-    model = "claude-sonnet-4-6"
+    model = "gpt-4o-mini"
 
 
 class VoiceCriticAgent(_CriticAgent):
@@ -17,7 +17,7 @@ class VoiceCriticAgent(_CriticAgent):
         "Evaluates outbound drafts against the Frogslayer voice profile. Used as "
         "an internal critique step inside the Outreach chain."
     )
-    model = "claude-sonnet-4-6"
+    model = "gpt-4o-mini"
 
 
 class AccuracyCriticAgent(_CriticAgent):
@@ -27,4 +27,4 @@ class AccuracyCriticAgent(_CriticAgent):
         "Cross-checks outbound drafts for factual claims that aren't supported by "
         "the upstream context. Used as an internal critique step inside the Outreach chain."
     )
-    model = "claude-sonnet-4-6"
+    model = "gpt-4o-mini"

@@ -10,7 +10,6 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_secret_key: str = ""
     supabase_publishable_key: str = ""
-    anthropic_api_key: str = ""
     openai_api_key: str = ""
     hubspot_token: str = ""
     apollo_api_key: str = ""

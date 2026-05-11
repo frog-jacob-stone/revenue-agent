@@ -38,10 +38,10 @@ Key design points:
 - The most recent failed critique is surfaced into the next draft prompt via
   `state.last_critique_feedback`. The `draft` node clears it after consumption
   so each redraft sees only one critic's feedback at a time.
-- LLM calls go through `invoke_agent` because all three outreach agents
-  (outreach-agent, voice-critic, accuracy-critic) are in `AGENTS` and
-  Anthropic-backed. `invoke_agent` emits AGENT_INVOKED/AGENT_COMPLETED audit
-  events automatically.
+- LLM calls go through `invoke_agent`, which dispatches to OpenAI via the
+  instrumented `call_openai_chat` wrapper. `invoke_agent` emits
+  AGENT_INVOKED/AGENT_COMPLETED audit events; the wrapper writes a row to
+  `llm_calls` with the full request/response and token usage.
 - No infinite-loop guard at framework level; the two budgets bound the loop
   in practice (max ~5 drafts before terminal failure).
 """

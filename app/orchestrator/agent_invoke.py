@@ -1,8 +1,8 @@
 """Uniform entry point for invoking an agent from anywhere.
 
 Same surface from a graph node, a sub-agent, or the chat layer. Looks up the
-agent class, builds a single-turn prompt, dispatches to the right provider,
-and wraps the call with audit events.
+agent class, builds a single-turn prompt, dispatches to OpenAI via the
+instrumented `call_openai_chat` wrapper, and wraps the call with audit events.
 """
 from __future__ import annotations
 
@@ -16,9 +16,10 @@ import asyncpg
 from app.agents.base import BaseAgent, ConversationalAgent
 from app.agents.registry import AGENTS
 from app.db import get_pool
-from app.integrations.anthropic_client import call_anthropic
+from app.integrations.openai_client import call_openai_chat
 from app.orchestrator import events
 from app.services import audit
+from app.services.llm_logging import with_llm_context
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,8 @@ async def invoke_agent(
       { "text": str }
 
     Audit events: AGENT_INVOKED before the call, AGENT_COMPLETED on success,
-    AGENT_FAILED on exception.
+    AGENT_FAILED on exception. LLM telemetry (full request/response, tokens,
+    latency) is written separately to `llm_calls` by the wrapper.
     """
     agent_cls = _agent_class_for_slug(slug)
     pool = (ctx.pool if ctx else None) or await get_pool()
@@ -77,8 +79,6 @@ async def invoke_agent(
     # get_system_prompt(); BaseAgents may have a class-level system_prompt.
     system_prompt = ""
     if issubclass(agent_cls, ConversationalAgent):
-        # Best-effort: instantiate without DB-loaded config since this is a
-        # single-turn invocation; full agent loading not currently wired.
         try:
             instance = agent_cls(agent_id=agent_id, config={})  # type: ignore[arg-type]
             system_prompt = instance.get_system_prompt()
@@ -87,7 +87,10 @@ async def invoke_agent(
     else:
         system_prompt = getattr(agent_cls, "system_prompt", "") or ""
 
-    full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+    messages: list[dict[str, Any]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
 
     async with pool.acquire() as conn:
         await audit.write_audit_event(
@@ -100,11 +103,17 @@ async def invoke_agent(
         )
 
     try:
-        text = await call_anthropic(
-            full_prompt,
-            model=agent_cls.model,
-            max_tokens=max_tokens,
-        )
+        with with_llm_context(
+            agent_slug=slug,
+            workflow_id=workflow_id,
+            purpose=f"agent:{slug}",
+        ):
+            completion = await call_openai_chat(
+                model=agent_cls.model,
+                messages=messages,
+                max_tokens=max_tokens,
+            )
+        text = completion.choices[0].message.content or ""
     except Exception as exc:
         async with pool.acquire() as conn:
             await audit.write_audit_event(

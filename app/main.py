@@ -14,6 +14,7 @@ from app.routers import (
     approvals,
     audit_log,
     chat,
+    llm_calls,
     memories,
     workflows,
 )
@@ -51,6 +52,7 @@ app.include_router(workflows.router)
 app.include_router(analytics.router)
 app.include_router(agents.router)
 app.include_router(audit_log.router)
+app.include_router(llm_calls.router)
 app.include_router(memories.router)
 app.include_router(chat.router)
 app.include_router(approvals.router)

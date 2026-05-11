@@ -11,7 +11,7 @@ interface Integration {
 const INTEGRATIONS: Integration[] = [
   { name: 'HubSpot', description: 'CRM for contacts, companies, and deals', connected: true, key: 'hubspot' },
   { name: 'Apollo.io', description: 'Contact enrichment and prospecting data', connected: true, key: 'apollo' },
-  { name: 'Anthropic API', description: 'Claude LLM for all agent reasoning', connected: true, key: 'anthropic' },
+  { name: 'OpenAI API', description: 'LLM for all agent reasoning', connected: true, key: 'openai' },
   { name: 'Slack', description: 'Notifications and alert delivery', connected: false, key: 'slack' },
 ];
 

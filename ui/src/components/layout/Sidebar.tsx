@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   LayoutDashboard, Inbox, Bot, ScrollText, MessageSquare,
-  BookOpen, BarChart3, Settings, ChevronLeft, ChevronRight,
+  BookOpen, BarChart3, Activity, Settings, ChevronLeft, ChevronRight,
   Zap,
 } from 'lucide-react';
 import { getApprovals } from '../../api';
@@ -20,6 +20,7 @@ const NAV = [
   { to: '/chat', label: 'Chat', icon: MessageSquare },
   { to: '/knowledge', label: 'Knowledge Base', icon: BookOpen },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
+  { to: '/llm-calls', label: 'LLM Calls', icon: Activity },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 

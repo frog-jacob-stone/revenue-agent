@@ -250,3 +250,83 @@ export function getAuditLog(filters: AuditLogFilters = {}): Promise<AuditLogEntr
   const qs = params.toString();
   return apiFetch<AuditLogEntry[]>(`/audit-log${qs ? `?${qs}` : ''}`);
 }
+
+export interface LlmCallSummary {
+  id: number;
+  started_at: string;
+  latency_ms: number;
+  model: string;
+  agent_slug: string | null;
+  status: 'ok' | 'error';
+  streamed: boolean;
+  purpose: string | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  total_tokens: number | null;
+}
+
+export interface LlmCallDetail extends LlmCallSummary {
+  ended_at: string;
+  provider: string;
+  workflow_id: string | null;
+  thread_id: string | null;
+  error: string | null;
+  request: unknown;
+  response: unknown;
+}
+
+export interface LlmCallsModelAgg {
+  model: string;
+  calls: number;
+  tokens: number;
+}
+
+export interface LlmCallsAgentAgg {
+  agent_slug: string | null;
+  calls: number;
+  tokens: number;
+}
+
+export interface LlmCallsSummary {
+  total_calls: number;
+  total_prompt_tokens: number;
+  total_completion_tokens: number;
+  total_tokens: number;
+  avg_latency_ms: number;
+  error_rate: number;
+  by_model: LlmCallsModelAgg[];
+  by_agent: LlmCallsAgentAgg[];
+}
+
+export interface LlmCallsFilters {
+  agent_slug?: string;
+  model?: string;
+  status?: 'ok' | 'error';
+  from?: string;
+  to?: string;
+  limit?: number;
+  cursor?: number;
+}
+
+function buildLlmCallsQuery(filters: LlmCallsFilters): string {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([k, v]) => {
+    if (v !== undefined && v !== '') params.set(k, String(v));
+  });
+  const qs = params.toString();
+  return qs ? `?${qs}` : '';
+}
+
+export function listLlmCalls(filters: LlmCallsFilters = {}): Promise<LlmCallSummary[]> {
+  return apiFetch<LlmCallSummary[]>(`/llm-calls${buildLlmCallsQuery(filters)}`);
+}
+
+export function getLlmCallsSummary(
+  range: { from?: string; to?: string } = {},
+): Promise<LlmCallsSummary> {
+  return apiFetch<LlmCallsSummary>(`/llm-calls/summary${buildLlmCallsQuery(range)}`);
+}
+
+export function getLlmCall(id: number): Promise<LlmCallDetail> {
+  return apiFetch<LlmCallDetail>(`/llm-calls/${id}`);
+}

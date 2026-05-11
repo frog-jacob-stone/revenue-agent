@@ -15,10 +15,9 @@ Four nodes, no interrupt gate, one critique loop:
 The voice review writes `social_posts.status = 'ready'` on pass; on terminal
 failure the row stays at `status='draft'`.
 
-LLM calls use direct `call_openai` because `ContentStrategyAgent`,
-`LinkedInWritingAgent`, and `PersonalVoiceAgent` are OpenAI-backed and
-`invoke_agent` is currently Anthropic-only. A provider-aware refactor would
-unify dispatch.
+All three node LLM calls go through the instrumented `call_openai_chat`
+wrapper, with `with_llm_context` setting the workflow + purpose so each row
+in `llm_calls` is attributable.
 """
 from __future__ import annotations
 
@@ -35,11 +34,12 @@ from app.agents.content import (
     PersonalVoiceAgent,
 )
 from app.db import get_pool
-from app.integrations.openai_client import call_openai
+from app.integrations.openai_client import call_openai_chat
 from app.lib.json_utils import parse_json
 from app.orchestrator.runner import GraphSpec
 from app.orchestrator.state import BaseGraphState
 from app.services import social_posts
+from app.services.llm_logging import with_llm_context
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,11 @@ CONTENT_CREATION_KIND = "content_creation"
 CONTENT_AGENT_SLUG = "content-orchestrator"
 
 DEFAULT_VOICE_MAX_ATTEMPTS = 3
+
+
+def _wf_uuid(state: "ContentCreationState") -> UUID | None:
+    wf_id = state.get("workflow_id")
+    return UUID(wf_id) if wf_id else None
 
 
 # ── State ────────────────────────────────────────────────────────────────────
@@ -86,11 +91,20 @@ async def interpret_brief(state: ContentCreationState) -> ContentCreationState:
     if instructions:
         user_msg += f"\nAdditional instructions: {instructions}"
 
-    raw = await call_openai(
-        ContentStrategyAgent.system_prompt,
-        user_msg,
-        model=ContentStrategyAgent.model,
-    )
+    with with_llm_context(
+        agent_slug=ContentStrategyAgent.slug,
+        workflow_id=_wf_uuid(state),
+        purpose="interpret_brief",
+    ):
+        completion = await call_openai_chat(
+            model=ContentStrategyAgent.model,
+            messages=[
+                {"role": "system", "content": ContentStrategyAgent.system_prompt},
+                {"role": "user", "content": user_msg},
+            ],
+            response_format={"type": "json_object"},
+        )
+    raw = completion.choices[0].message.content or "{}"
     idea = parse_json(raw)
 
     if not idea.get("idea_title"):
@@ -138,12 +152,21 @@ async def draft_post(state: ContentCreationState) -> ContentCreationState:
             f"SPECIFIC ISSUES: {issues}\n"
         )
 
-    raw = await call_openai(
-        LinkedInWritingAgent.system_prompt,
-        user_msg,
-        model=LinkedInWritingAgent.model,
-        max_tokens=1000,
-    )
+    with with_llm_context(
+        agent_slug=LinkedInWritingAgent.slug,
+        workflow_id=_wf_uuid(state),
+        purpose="draft_post",
+    ):
+        completion = await call_openai_chat(
+            model=LinkedInWritingAgent.model,
+            messages=[
+                {"role": "system", "content": LinkedInWritingAgent.system_prompt},
+                {"role": "user", "content": user_msg},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=1000,
+        )
+    raw = completion.choices[0].message.content or "{}"
     draft = parse_json(raw)
 
     post_text = draft.get("post_text") or f"[Draft: {idea.get('idea_title', brief)}]"
@@ -190,12 +213,21 @@ async def voice_review(state: ContentCreationState) -> ContentCreationState:
             post = await social_posts.get_post_conn(conn, UUID(post_id_str))
             post_text = (post or {}).get("post_text", "") or ""
 
-    raw = await call_openai(
-        PersonalVoiceAgent.get_system_prompt(channel),
-        f"Post to review:\n\n{post_text}",
-        model=PersonalVoiceAgent.model,
-        max_tokens=600,
-    )
+    with with_llm_context(
+        agent_slug=PersonalVoiceAgent.slug,
+        workflow_id=_wf_uuid(state),
+        purpose="voice_review",
+    ):
+        completion = await call_openai_chat(
+            model=PersonalVoiceAgent.model,
+            messages=[
+                {"role": "system", "content": PersonalVoiceAgent.get_system_prompt(channel)},
+                {"role": "user", "content": f"Post to review:\n\n{post_text}"},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=600,
+        )
+    raw = completion.choices[0].message.content or "{}"
     review = parse_json(raw)
 
     passed = bool(review.get("passed_voice_review", False))

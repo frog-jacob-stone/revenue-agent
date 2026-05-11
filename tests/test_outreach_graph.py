@@ -1,9 +1,9 @@
 """End-to-end tests for the outreach_chain graph.
 
-Stubs `call_anthropic` so the graph can drive its three agents
-(outreach-agent, voice-critic, accuracy-critic) without network. The
-fake dispatches by prompt marker so each test scenario can declare what
-each role should return.
+Stubs `call_openai_chat` so the graph can drive its three agents
+(outreach-agent, voice-critic, accuracy-critic) without network. The fake
+dispatches by prompt marker so each test scenario can declare what each
+role should return.
 
 Five scenarios:
   - happy: voice + accuracy both pass on first try → pause at gmail_send
@@ -15,6 +15,7 @@ Five scenarios:
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -41,38 +42,52 @@ def _register_graph():
 # ── Fake LLM dispatcher ──────────────────────────────────────────────────────
 
 
+def _completion(text: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        choices=[SimpleNamespace(
+            message=SimpleNamespace(content=text, tool_calls=None, role="assistant"),
+            finish_reason="stop",
+        )],
+        usage=SimpleNamespace(
+            prompt_tokens=1, completion_tokens=1, total_tokens=2,
+            model_dump=lambda: {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        ),
+    )
+
+
 def _make_fake_call(*, voice_results: list[bool], accuracy_results: list[bool]):
-    """Build an async fake for call_anthropic.
+    """Build an async fake for call_openai_chat.
 
     `voice_results` and `accuracy_results` are popped (FIFO) on each critique.
-    The `consolidate` brief and `draft` email are returned for all non-critique
-    calls — the prompt text discriminates which role is being invoked.
+    The user-role message content discriminates which role is being invoked.
     """
     voice = list(voice_results)
     accuracy = list(accuracy_results)
 
-    async def fake(prompt: str, *, model: str, max_tokens: int) -> str:
+    async def fake(**kwargs) -> SimpleNamespace:
+        messages = kwargs.get("messages", [])
+        prompt = "\n".join(m.get("content", "") or "" for m in messages)
         if "Voice Critic" in prompt:
             passed = voice.pop(0) if voice else False
-            return json.dumps({
+            return _completion(json.dumps({
                 "passed": passed,
                 "score": 0.9 if passed else 0.3,
                 "feedback": "ok" if passed else "too generic",
                 "issues": [] if passed else ["cliché opener"],
-            })
+            }))
         if "Accuracy Critic" in prompt:
             passed = accuracy.pop(0) if accuracy else False
-            return json.dumps({
+            return _completion(json.dumps({
                 "passed": passed,
                 "score": 0.9 if passed else 0.3,
                 "feedback": "supported" if passed else "fabricated detail",
                 "issues": [] if passed else ["claim X not in signals"],
-            })
+            }))
         if 'Output JSON: {"subject"' in prompt:
-            return json.dumps({"subject": "Quick question", "body": "Hi there."})
+            return _completion(json.dumps({"subject": "Quick question", "body": "Hi there."}))
         if "produce a 3-4 sentence brief" in prompt:
-            return "Acme Corp is hiring backend engineers and just raised a Series B."
-        return "[unhandled stub]"
+            return _completion("Acme Corp is hiring backend engineers and just raised a Series B.")
+        return _completion("[unhandled stub]")
 
     return fake
 
@@ -89,7 +104,7 @@ async def test_happy_path_voice_pass_accuracy_pass(client: AsyncClient):
     """Both critics pass on first try → graph pauses at the gmail_send gate
     with the draft as the proposed_payload."""
     fake = _make_fake_call(voice_results=[True], accuracy_results=[True])
-    with patch("app.orchestrator.agent_invoke.call_anthropic", side_effect=fake):
+    with patch("app.orchestrator.agent_invoke.call_openai_chat", side_effect=fake):
         wf_id = await runner.start(
             OUTREACH_KIND,
             initial_state={"hubspot_contact_id": "stub-001"},
@@ -116,7 +131,7 @@ async def test_voice_loop_passes_after_one_retry(client: AsyncClient):
     """Voice fails once with budget remaining → redraft → voice passes →
     accuracy passes → pause at gmail_send. Voice attempts == 2 in final state."""
     fake = _make_fake_call(voice_results=[False, True], accuracy_results=[True])
-    with patch("app.orchestrator.agent_invoke.call_anthropic", side_effect=fake):
+    with patch("app.orchestrator.agent_invoke.call_openai_chat", side_effect=fake):
         wf_id = await runner.start(
             OUTREACH_KIND,
             initial_state={"hubspot_contact_id": "stub-002"},
@@ -139,7 +154,7 @@ async def test_voice_budget_exhausted_terminates(client: AsyncClient):
     fake = _make_fake_call(
         voice_results=[False, False, False], accuracy_results=[],
     )
-    with patch("app.orchestrator.agent_invoke.call_anthropic", side_effect=fake):
+    with patch("app.orchestrator.agent_invoke.call_openai_chat", side_effect=fake):
         wf_id = await runner.start(
             OUTREACH_KIND,
             initial_state={"hubspot_contact_id": "stub-003"},
@@ -167,7 +182,7 @@ async def test_accuracy_budget_exhausted_terminates(client: AsyncClient):
         voice_results=[True, True],
         accuracy_results=[False, False],
     )
-    with patch("app.orchestrator.agent_invoke.call_anthropic", side_effect=fake):
+    with patch("app.orchestrator.agent_invoke.call_openai_chat", side_effect=fake):
         wf_id = await runner.start(
             OUTREACH_KIND,
             initial_state={"hubspot_contact_id": "stub-004"},
@@ -186,7 +201,7 @@ async def test_accuracy_budget_exhausted_terminates(client: AsyncClient):
 async def test_reject_at_gmail_send_fails_workflow(client: AsyncClient):
     """Reject at the gmail_send gate → workflow failed."""
     fake = _make_fake_call(voice_results=[True], accuracy_results=[True])
-    with patch("app.orchestrator.agent_invoke.call_anthropic", side_effect=fake):
+    with patch("app.orchestrator.agent_invoke.call_openai_chat", side_effect=fake):
         wf_id = await runner.start(
             OUTREACH_KIND,
             initial_state={"hubspot_contact_id": "stub-005"},

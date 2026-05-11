@@ -9,6 +9,7 @@ import AuditLog from './pages/AuditLog';
 import ChatLayout from './pages/Chat/ChatLayout';
 import KnowledgeBase from './pages/KnowledgeBase';
 import Analytics from './pages/Analytics';
+import LlmCalls from './pages/LlmCalls';
 import Settings from './pages/Settings';
 
 export default function App() {
@@ -26,6 +27,7 @@ export default function App() {
           <Route path="/chat/:agentId" element={<ChatLayout />} />
           <Route path="/knowledge" element={<KnowledgeBase />} />
           <Route path="/analytics" element={<Analytics />} />
+          <Route path="/llm-calls" element={<LlmCalls />} />
           <Route path="/settings" element={<Settings />} />
         </Route>
       </Routes>
