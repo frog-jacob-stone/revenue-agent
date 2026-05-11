@@ -83,3 +83,47 @@ export interface Approval {
 }
 
 export type InboxItem = Approval;
+
+// ── Chat ────────────────────────────────────────────────────────────────────
+
+export type ActivityKind =
+  | 'tool'
+  | 'workflow'
+  | 'node'
+  | 'subagent'
+  | 'pause'
+  | 'error';
+
+export interface ActivityLine {
+  id: string;
+  kind: ActivityKind;
+  parentId: string | null;
+  label: string;
+  status: 'running' | 'ok' | 'fail';
+  detail?: string;
+}
+
+export type ChatMessageStatus = 'streaming' | 'complete' | 'failed';
+
+export interface ChatSession {
+  id: string;
+  agent_slug: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  last_message_at: string | null;
+}
+
+export interface ChatPersistedMessage {
+  id: number;
+  session_id: string;
+  turn_id: string | null;
+  role: 'user' | 'assistant';
+  content: string;
+  activity: ActivityLine[];
+  status: ChatMessageStatus;
+  tool_used: string | null;
+  error: string | null;
+  created_at: string;
+  completed_at: string | null;
+}

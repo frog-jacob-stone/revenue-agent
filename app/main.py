@@ -8,6 +8,7 @@ from app.config import settings
 from app.db import close_pool, get_pool
 from app.orchestrator.graphs import register_all as register_graphs
 from app.orchestrator.runner import runner
+from app.services.chat_sessions import mark_orphaned_streaming_failed
 from app.routers import (
     agents,
     analytics,
@@ -25,7 +26,12 @@ logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.I
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await get_pool()
+    pool = await get_pool()
+    orphaned = await mark_orphaned_streaming_failed(pool)
+    if orphaned:
+        logging.getLogger(__name__).info(
+            "Marked %d orphaned streaming chat message(s) as failed", orphaned
+        )
     await seed_agents()
     await seed_voice_profile()
     await runner.init()

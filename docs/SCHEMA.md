@@ -1,11 +1,11 @@
 # Supabase Schema — Revenue Agent System
 
 > Source of truth for the database. Update this file when the schema changes.
-> Matches migrations: `supabase/migrations/0001_initial_schema.sql` through `0015_drop_workflow_pattern_columns.sql`
+> Matches migrations: `supabase/migrations/0001_initial_schema.sql` through `0017_create_chat_tables.sql`
 
 ## Overview
 
-Eight core tables plus pgvector and LangGraph's checkpoint tables. Every table has RLS enabled from day one so policies can be added without a migration later.
+Ten core tables plus pgvector and LangGraph's checkpoint tables. Every table has RLS enabled from day one so policies can be added without a migration later.
 
 ```
 agents           → registry of agent definitions (config, prompts, scopes)
@@ -16,6 +16,9 @@ audit_log        → append-only record of everything that happened
 knowledge_base   → vector-searchable reference content (playbooks, past deals)
 social_posts     → draft and approval queue for chat-driven content creation
 agent_messages   → turn-by-turn record of agent-to-agent exchanges
+llm_calls        → per-request audit log of LLM provider calls
+chat_sessions    → human-to-agent conversation containers (multi-chat sidebar)
+chat_messages    → turn-by-turn log of human chat with assistant placeholders
 ```
 
 ## Design Principles
@@ -191,6 +194,49 @@ Indexes: `(thread_id, created_at)`, partial `(workflow_id) where workflow_id is 
 
 The table is the audit; service-layer functions in `app/services/agent_messages.py` do **not** write `audit_log` rows for individual messages (volume would dominate the audit log). The runner's `node.exited` events provide enough granularity. Add `AGENT_MESSAGE_SENT` to `app/orchestrator/events.py` if per-turn audit visibility is needed later.
 
+### `llm_calls`
+
+Per-request audit log of every LLM provider call (OpenAI today). Captures full request/response payloads, model, token usage, latency, agent context. Written by `app/services/llm_logging.py::write_llm_call`. Migration `0016`.
+
+Key columns: `started_at`, `latency_ms`, `model`, `agent_slug`, `workflow_id`, `purpose`, `status` (ok/error), `streamed`, `request` (jsonb), `response` (jsonb), `prompt_tokens`, `completion_tokens`, `total_tokens`.
+
+### `chat_sessions`
+
+Human-to-agent conversation containers. Each row is one chat that the user can return to from the sidebar. Migration `0017`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | PK |
+| `agent_slug` | text | Which conversational agent this chat is with |
+| `title` | text | Auto-titled from the first user message (~60 chars), default `'New chat'` |
+| `created_at` | timestamptz | |
+| `updated_at` | timestamptz | Bumped on every turn |
+| `last_message_at` | timestamptz | Drives sidebar sort order |
+
+Index: `(agent_slug, last_message_at desc nulls last)`.
+
+### `chat_messages`
+
+Turn-by-turn log of one chat session. User messages are inserted complete; assistant messages are inserted as `status='streaming'` placeholders by the chat router, then updated by the detached `TurnRuntime` in `app/services/chat_runtime.py` when the turn finishes. Migration `0017`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigserial | PK; insertion order |
+| `session_id` | uuid | FK to `chat_sessions.id` (CASCADE) |
+| `turn_id` | uuid \| null | Shared with the runtime; addresses an in-flight assistant turn |
+| `role` | text | `user` \| `assistant` |
+| `content` | text | Final answer text (empty until the turn completes for assistant rows) |
+| `activity` | jsonb | `ActivityLine[]` tree (tool / workflow / node / subagent / pause / error), built by `app/services/activity_builder.py` and the frontend mirror in `ChatWindow.tsx::onEvent` |
+| `status` | text | `streaming` \| `complete` \| `failed` |
+| `tool_used` | text \| null | Top-level tool the agent called this turn |
+| `error` | text \| null | Failure reason |
+| `created_at` | timestamptz | |
+| `completed_at` | timestamptz \| null | Set when status leaves `streaming` |
+
+Indexes: `(session_id, id)`, partial `(session_id) where status = 'streaming'` (cheap "any turn in flight?" check).
+
+**Durability:** the chat router persists the user message + placeholder, then `detach_turn` spawns an `asyncio.create_task` that runs the OpenAI loop. The task is held in `_ACTIVE_TURNS` so it isn't GC'd; cancellation of the originating HTTP request does NOT cancel the task. On app startup, `mark_orphaned_streaming_failed` flips any leftover `streaming` rows to `failed` (the upstream LLM stream from a prior process is unrecoverable).
+
 ## Agent Types
 
 **Write-proposing agents** — use the full workflow → actions → approval lifecycle. Every operation creates a `workflow` row and one or more `action` rows. Examples: Outreach, Revenue Recognition.
@@ -271,6 +317,8 @@ Migrations run in filename order; each is idempotent.
 13. `0013_create_agent_messages.sql` — adds the `agent_messages` table for turn-by-turn agent-to-agent exchanges (powers the `ask_agent` tool)
 14. `0014_drop_actions_table.sql` — drops the legacy `actions` table. The `audit_log.action_id` FK constraint is dropped via CASCADE; the column itself remains and audit_log rows are preserved
 15. `0015_drop_workflow_pattern_columns.sql` — drops `workflows.pattern` and `workflows.current_step` (legacy prompt-chain progress markers, replaced by LangGraph checkpoints)
+16. `0016_create_llm_calls.sql` — adds the `llm_calls` audit table for per-request LLM provider call logging
+17. `0017_create_chat_tables.sql` — adds `chat_sessions` and `chat_messages` for human-to-agent chat persistence (sidebar multi-chat + durable streaming via `TurnRuntime`)
 
 ## Open Questions
 

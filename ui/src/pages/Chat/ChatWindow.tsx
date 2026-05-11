@@ -1,14 +1,29 @@
 import { useEffect, useRef, useState } from 'react';
-import { Send, Info, ChevronRight, ChevronDown, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
-import { agentChatStream } from '../../api';
-import type { ChatMessage, ChatStreamEvent } from '../../api';
-import type { AgentRecord } from '../../types';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  Send,
+  Info,
+  ChevronRight,
+  ChevronDown,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+} from 'lucide-react';
+import { getChatMessages, sendChatMessage } from '../../api';
+import type { ChatStreamEvent } from '../../api';
+import type {
+  ActivityLine,
+  AgentRecord,
+  ChatPersistedMessage,
+  ChatMessageStatus,
+} from '../../types';
 import { labelForKind, labelForNode } from './nodeLabels';
 
 const AGENT_COLORS: Record<string, string> = {
   'sdr-researcher': '#6366f1',
   'outreach-agent': '#06b6d4',
   'content-writer': '#10b981',
+  'content-orchestrator': '#10b981',
   'proposal-generator': '#f59e0b',
   'slide-deck-agent': '#ec4899',
   'revenue-recognition': '#8b5cf6',
@@ -16,24 +31,8 @@ const AGENT_COLORS: Record<string, string> = {
 
 interface Props {
   agentId: string;
+  sessionId: string;
   agent: AgentRecord | null;
-}
-
-type ActivityKind =
-  | 'tool'
-  | 'workflow'
-  | 'node'
-  | 'subagent'
-  | 'pause'
-  | 'error';
-
-interface ActivityLine {
-  id: string;
-  kind: ActivityKind;
-  parentId: string | null;
-  label: string;
-  status: 'running' | 'ok' | 'fail';
-  detail?: string;
 }
 
 interface DisplayMessage {
@@ -41,17 +40,13 @@ interface DisplayMessage {
   role: 'user' | 'assistant';
   content: string;
   activity?: ActivityLine[];
+  createdAt: string;
+  status: ChatMessageStatus;
+  error?: string | null;
 }
 
-const MAX_HISTORY = 20;
-
-function fmt(ts: number) {
-  return new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-}
-
-function timestampFromId(id: string): number {
-  const parts = id.split('-');
-  return parseInt(parts[1] ?? '0', 10);
+function fmt(iso: string) {
+  return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
 function compactTokens(payload: Record<string, unknown>): string | undefined {
@@ -64,10 +59,23 @@ function compactTokens(payload: Record<string, unknown>): string | undefined {
   return total >= 1000 ? `${(total / 1000).toFixed(1)}k tokens` : `${total} tokens`;
 }
 
-export default function ChatWindow({ agentId, agent }: Props) {
+function hydrate(msg: ChatPersistedMessage): DisplayMessage {
+  return {
+    id: `p-${msg.id}`,
+    role: msg.role,
+    content: msg.content,
+    activity: msg.activity,
+    createdAt: msg.created_at,
+    status: msg.status,
+    error: msg.error,
+  };
+}
+
+export default function ChatWindow({ agentId, sessionId, agent }: Props) {
+  const queryClient = useQueryClient();
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const [triggeredNotice, setTriggeredNotice] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -76,54 +84,70 @@ export default function ChatWindow({ agentId, agent }: Props) {
   const agentName = agent?.name ?? agentId;
   const agentDescription = agent?.description ?? '';
 
+  const messagesQuery = useQuery({
+    queryKey: ['chat-messages', sessionId],
+    queryFn: () => getChatMessages(sessionId),
+    // Poll while a turn is in flight (any message with status='streaming').
+    refetchInterval: (q) => {
+      const data = q.state.data as ChatPersistedMessage[] | undefined;
+      if (isSending) return false; // live stream is active in this tab
+      return data?.some((m) => m.status === 'streaming') ? 3000 : false;
+    },
+  });
+
+  // Hydrate from persisted messages whenever they refresh AND we're not
+  // actively streaming locally (don't clobber the optimistic stream).
   useEffect(() => {
-    setMessages([]);
+    if (isSending) return;
+    if (!messagesQuery.data) return;
+    setMessages(messagesQuery.data.map(hydrate));
+  }, [messagesQuery.data, isSending]);
+
+  // Reset notice + scroll on session change.
+  useEffect(() => {
     setInput('');
     setTriggeredNotice(false);
     setExpanded({});
-  }, [agentId]);
+  }, [sessionId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isLoading]);
+  }, [messages, isSending]);
 
   async function handleSend() {
     const text = input.trim();
-    if (!text || isLoading) return;
+    if (!text || isSending) return;
+    if (messages.some((m) => m.status === 'streaming')) return;
 
+    const nowIso = new Date().toISOString();
     const userMsg: DisplayMessage = {
       id: `u-${Date.now()}`,
       role: 'user',
       content: text,
+      createdAt: nowIso,
+      status: 'complete',
     };
-
     const assistantId = `a-${Date.now()}`;
     const assistantMsg: DisplayMessage = {
       id: assistantId,
       role: 'assistant',
       content: '',
       activity: [],
+      createdAt: nowIso,
+      status: 'streaming',
     };
 
-    const next = [...messages, userMsg, assistantMsg].slice(-MAX_HISTORY);
-    setMessages(next);
+    setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInput('');
-    setIsLoading(true);
+    setIsSending(true);
     setTriggeredNotice(false);
     setExpanded((prev) => ({ ...prev, [assistantId]: true }));
 
-    const apiMessages: ChatMessage[] = next
-      .filter((m) => m.id !== assistantId)
-      .map((m) => ({ role: m.role, content: m.content }));
-
-    // Track parent ids: the current open tool line, and the current workflow line.
+    // Activity-builder cursor state — matches app/services/activity_builder.py
     let toolLineId: string | null = null;
     let workflowLineId: string | null = null;
     let workflowKind = '';
-    // Per-workflow stack of node-line ids so sub-agent events nest under the
-    // most recent node.entered (until that node's node.exited fires).
     let currentNodeLineId: string | null = null;
-    // Pending agent.invoked waiting for its agent.completed match.
     let pendingAgentByLineId: string | null = null;
     let pendingAgentSlug: string | null = null;
 
@@ -183,8 +207,6 @@ export default function ChatWindow({ agentId, agent }: Props) {
               status: 'running',
             });
           } else if (et === 'node.exited') {
-            // The orchestrator currently emits only node.exited (no node.entered)
-            // — push the line at completion time with status ok.
             const node = (evt.payload?.node as string | undefined) ?? '?';
             currentNodeLineId = `nd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
             pushLine({
@@ -225,7 +247,6 @@ export default function ChatWindow({ agentId, agent }: Props) {
                 detail: tokens,
               });
             } else {
-              // Standalone completion (no matching invoked seen): render it solo.
               const slug = (evt.payload?.agent_slug as string) ?? evt.actor ?? 'agent';
               pushLine({
                 id: `ag-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -268,7 +289,7 @@ export default function ChatWindow({ agentId, agent }: Props) {
           currentNodeLineId = null;
           break;
         case 'done':
-          // Auto-collapse activity log on success
+          updateAssistant((m) => ({ ...m, status: 'complete' }));
           setExpanded((prev) => ({ ...prev, [assistantId]: false }));
           break;
         case 'error':
@@ -279,12 +300,13 @@ export default function ChatWindow({ agentId, agent }: Props) {
             label: evt.message,
             status: 'fail',
           });
+          updateAssistant((m) => ({ ...m, status: 'failed', error: evt.message }));
           break;
       }
     };
 
     try {
-      await agentChatStream(agentId, apiMessages, { onEvent });
+      await sendChatMessage(agentId, sessionId, text, { onEvent });
       if (triggered) setTriggeredNotice(true);
     } catch (err) {
       pushLine({
@@ -294,8 +316,15 @@ export default function ChatWindow({ agentId, agent }: Props) {
         label: err instanceof Error ? err.message : 'Something went wrong.',
         status: 'fail',
       });
+      updateAssistant((m) => ({
+        ...m,
+        status: 'failed',
+        error: err instanceof Error ? err.message : 'unknown error',
+      }));
     } finally {
-      setIsLoading(false);
+      setIsSending(false);
+      queryClient.invalidateQueries({ queryKey: ['chat-sessions', agentId] });
+      queryClient.invalidateQueries({ queryKey: ['chat-messages', sessionId] });
     }
   }
 
@@ -305,6 +334,9 @@ export default function ChatWindow({ agentId, agent }: Props) {
       handleSend();
     }
   }
+
+  const hasInFlight = messages.some((m) => m.status === 'streaming');
+  const inputDisabled = isSending || hasInFlight;
 
   return (
     <div className="flex flex-col h-full">
@@ -340,20 +372,35 @@ export default function ChatWindow({ agentId, agent }: Props) {
       )}
 
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-        {messages.length === 0 && !isLoading && (
+        {messages.length === 0 && !messagesQuery.isLoading && (
           <p className="text-xs text-slate-600 text-center mt-8">
             Ask a question or give a command to get started.
           </p>
         )}
         {messages.map((msg) => (
-          <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+          <div
+            key={msg.id}
+            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+          >
             <div className={`max-w-[75%] ${msg.role === 'user' ? 'order-2' : 'order-1'}`}>
               {msg.role === 'assistant' && (
                 <div className="flex items-center gap-2 mb-1.5">
                   <span className="text-xs font-medium" style={{ color }}>
                     {agentName}
                   </span>
-                  <span className="text-xs text-slate-600">{fmt(timestampFromId(msg.id))}</span>
+                  <span className="text-xs text-slate-600">{fmt(msg.createdAt)}</span>
+                  {msg.status === 'streaming' && !isSending && (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-amber-400">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Still working…
+                    </span>
+                  )}
+                  {msg.status === 'failed' && (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-rose-400">
+                      <XCircle className="w-3 h-3" />
+                      Failed
+                    </span>
+                  )}
                 </div>
               )}
 
@@ -367,6 +414,16 @@ export default function ChatWindow({ agentId, agent }: Props) {
                 />
               )}
 
+              {msg.role === 'assistant' &&
+                msg.status === 'streaming' &&
+                !isSending &&
+                !msg.content && (
+                  <div className="rounded-xl px-4 py-3 text-sm leading-relaxed bg-slate-800 text-slate-400 border border-slate-700 italic">
+                    The agent is still working on this turn. It will finish in the
+                    background — refresh later to see the result.
+                  </div>
+                )}
+
               {(msg.content || msg.role === 'user') && (
                 <div
                   className={`rounded-xl px-4 py-3 text-sm leading-relaxed ${
@@ -379,8 +436,12 @@ export default function ChatWindow({ agentId, agent }: Props) {
                 </div>
               )}
 
+              {msg.role === 'assistant' && msg.status === 'failed' && msg.error && (
+                <p className="text-[10px] text-rose-400 mt-1">{msg.error}</p>
+              )}
+
               {msg.role === 'user' && (
-                <p className="text-xs text-slate-600 text-right mt-1">{fmt(timestampFromId(msg.id))}</p>
+                <p className="text-xs text-slate-600 text-right mt-1">{fmt(msg.createdAt)}</p>
               )}
             </div>
           </div>
@@ -394,21 +455,27 @@ export default function ChatWindow({ agentId, agent }: Props) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={`Message ${agentName}…`}
+            placeholder={
+              hasInFlight && !isSending
+                ? 'Waiting for the current turn to finish…'
+                : `Message ${agentName}…`
+            }
             rows={2}
-            disabled={isLoading}
+            disabled={inputDisabled}
             className="flex-1 bg-transparent text-sm text-slate-200 placeholder-slate-600 resize-none focus:outline-none disabled:opacity-50"
           />
           <button
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 hover:bg-cyan-500/30 transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
             onClick={handleSend}
-            disabled={isLoading || !input.trim()}
+            disabled={inputDisabled || !input.trim()}
           >
             <Send className="w-3.5 h-3.5" />
-            {isLoading ? 'Thinking…' : 'Send'}
+            {isSending ? 'Thinking…' : 'Send'}
           </button>
         </div>
-        <p className="text-[10px] text-slate-700 mt-1 px-1">Enter to send · Shift+Enter for new line</p>
+        <p className="text-[10px] text-slate-700 mt-1 px-1">
+          Enter to send · Shift+Enter for new line
+        </p>
       </div>
     </div>
   );
@@ -464,7 +531,8 @@ function ActivityRow({ line, indent }: { line: ActivityLine; indent: number }) {
 }
 
 function StatusIcon({ status }: { status: ActivityLine['status'] }) {
-  if (status === 'ok') return <CheckCircle2 className="w-3 h-3 text-emerald-500 flex-shrink-0" />;
+  if (status === 'ok')
+    return <CheckCircle2 className="w-3 h-3 text-emerald-500 flex-shrink-0" />;
   if (status === 'fail') return <XCircle className="w-3 h-3 text-rose-500 flex-shrink-0" />;
   return <Loader2 className="w-3 h-3 text-slate-500 animate-spin flex-shrink-0" />;
 }

@@ -2,6 +2,8 @@ import type {
   AgentRecord,
   AgentTool,
   Approval,
+  ChatPersistedMessage,
+  ChatSession,
   TriggerResult,
   WorkflowRecord,
   WorkflowTrace,
@@ -136,11 +138,6 @@ export function getAgentTools(slug: string): Promise<AgentTool[]> {
   return apiFetch<AgentTool[]>(`/agents/${encodeURIComponent(slug)}/tools`);
 }
 
-export interface ChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
-
 export type ChatStreamEvent =
   | { type: 'delta'; text: string }
   | { type: 'tool_call_started'; name: string; args: Record<string, unknown> }
@@ -161,25 +158,10 @@ export interface ChatStreamCallbacks {
   signal?: AbortSignal;
 }
 
-/**
- * POST to /chat/{slug} and parse the Server-Sent Events response.
- * EventSource cannot POST, so we use fetch + ReadableStream and parse the
- * `event: <name>\ndata: <json>\n\n` framing ourselves.
- */
-export async function agentChatStream(
-  agentSlug: string,
-  messages: ChatMessage[],
-  { onEvent, signal }: ChatStreamCallbacks,
+async function parseSseStream(
+  res: Response,
+  { onEvent }: ChatStreamCallbacks,
 ): Promise<void> {
-  const res = await fetch(`${BASE}/chat/${encodeURIComponent(agentSlug)}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-    },
-    body: JSON.stringify({ messages }),
-    signal,
-  });
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => '');
     throw new Error(text || `HTTP ${res.status}`);
@@ -215,6 +197,59 @@ export async function agentChatStream(
       }
     }
   }
+}
+
+export function createChatSession(agentSlug: string): Promise<ChatSession> {
+  return apiFetch<ChatSession>('/chat/sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent_slug: agentSlug }),
+  });
+}
+
+export function listChatSessions(agentSlug: string): Promise<ChatSession[]> {
+  return apiFetch<ChatSession[]>(
+    `/chat/sessions?agent_slug=${encodeURIComponent(agentSlug)}`,
+  );
+}
+
+export function getChatSession(sessionId: string): Promise<ChatSession> {
+  return apiFetch<ChatSession>(`/chat/sessions/${sessionId}`);
+}
+
+export function getChatMessages(sessionId: string): Promise<ChatPersistedMessage[]> {
+  return apiFetch<ChatPersistedMessage[]>(`/chat/sessions/${sessionId}/messages`);
+}
+
+export async function deleteChatSession(sessionId: string): Promise<void> {
+  const res = await fetch(`${BASE}/chat/sessions/${sessionId}`, { method: 'DELETE' });
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+}
+
+/**
+ * POST a message to a chat session and parse the SSE response.
+ * The backend persists the user message, detaches the turn into a background
+ * task, and streams events live. If the client disconnects, the turn keeps
+ * running and the final state is persisted to chat_messages.
+ */
+export async function sendChatMessage(
+  agentSlug: string,
+  sessionId: string,
+  content: string,
+  callbacks: ChatStreamCallbacks,
+): Promise<void> {
+  const res = await fetch(`${BASE}/chat/${encodeURIComponent(agentSlug)}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+    },
+    body: JSON.stringify({ session_id: sessionId, content }),
+    signal: callbacks.signal,
+  });
+  await parseSseStream(res, callbacks);
 }
 
 export function getAnalytics(days = 30): Promise<AnalyticsData> {

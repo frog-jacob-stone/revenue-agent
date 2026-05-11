@@ -25,6 +25,7 @@ export default function App() {
           <Route path="/audit" element={<AuditLog />} />
           <Route path="/chat" element={<ChatLayout />} />
           <Route path="/chat/:agentId" element={<ChatLayout />} />
+          <Route path="/chat/:agentId/:sessionId" element={<ChatLayout />} />
           <Route path="/knowledge" element={<KnowledgeBase />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/llm-calls" element={<LlmCalls />} />
