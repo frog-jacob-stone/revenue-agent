@@ -166,7 +166,7 @@ Score guide:
 - 5-6: Needs revision before publishing
 - 1-4: Significant rework needed
 
-Set passed_voice_review to true if score >= 7.
+Set passed_voice_review to true if score >= 8.
 """
 
 

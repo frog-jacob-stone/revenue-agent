@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     apollo_api_key: str = ""
     log_level: str = "INFO"
 
+    chat_stream_show_subagents: bool = True
+
     # Airtable
     airtable_api_key: str = ""
     airtable_base_id: str = ""            # e.g. appntjko6fQEC8Mnk

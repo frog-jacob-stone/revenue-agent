@@ -76,12 +76,26 @@ async def _create_post(
     if instructions:
         initial_state["instructions"] = instructions
 
-    workflow_id = await runner.start(
-        CONTENT_CREATION_KIND,
-        initial_state=initial_state,
-        subject_type="social_post",
-        subject_id=str(post_id),
-    )
+    if ctx.progress is not None:
+        from app.services.audit_tail import forward_workflow_to_progress
+
+        workflow_id, drive_task = await runner.start_in_background(
+            CONTENT_CREATION_KIND,
+            initial_state=initial_state,
+            subject_type="social_post",
+            subject_id=str(post_id),
+        )
+        await forward_workflow_to_progress(
+            pool, workflow_id, CONTENT_CREATION_KIND, ctx.progress,
+            drive_task=drive_task,
+        )
+    else:
+        workflow_id = await runner.start(
+            CONTENT_CREATION_KIND,
+            initial_state=initial_state,
+            subject_type="social_post",
+            subject_id=str(post_id),
+        )
 
     # Return current post state so the orchestrator agent can report back.
     refreshed = await svc.get_post(pool, post_id)
@@ -331,12 +345,26 @@ async def _publish_post(
     if not post.get("post_text"):
         return {"error": f"Post {post_id} has no text to publish"}
 
-    workflow_id = await runner.start(
-        CONTENT_PUBLISH_KIND,
-        initial_state={"post_id": post_id},
-        subject_type="social_post",
-        subject_id=post_id,
-    )
+    if ctx.progress is not None:
+        from app.services.audit_tail import forward_workflow_to_progress
+
+        workflow_id, drive_task = await runner.start_in_background(
+            CONTENT_PUBLISH_KIND,
+            initial_state={"post_id": post_id},
+            subject_type="social_post",
+            subject_id=post_id,
+        )
+        await forward_workflow_to_progress(
+            pool, workflow_id, CONTENT_PUBLISH_KIND, ctx.progress,
+            drive_task=drive_task,
+        )
+    else:
+        workflow_id = await runner.start(
+            CONTENT_PUBLISH_KIND,
+            initial_state={"post_id": post_id},
+            subject_type="social_post",
+            subject_id=post_id,
+        )
 
     return {
         "post_id": post_id,

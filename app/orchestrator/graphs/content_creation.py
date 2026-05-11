@@ -181,6 +181,7 @@ async def voice_review(state: ContentCreationState) -> ContentCreationState:
     Increments `voice_attempts` whether or not the review passes."""
     post_id_str = state.get("post_id")
     channel = state.get("channel") or "linkedin"
+    attempt = state.get("voice_attempts", 0) + 1
 
     post_text = ""
     if post_id_str:
@@ -220,7 +221,7 @@ async def voice_review(state: ContentCreationState) -> ContentCreationState:
     }
 
     return {
-        "voice_attempts": state.get("voice_attempts", 0) + 1,
+        "voice_attempts": attempt,
         "last_voice_review": last_voice_review,
     }
 

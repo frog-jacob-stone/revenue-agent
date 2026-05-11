@@ -49,8 +49,7 @@ async def _trigger_revenue_recognition(
     from app.orchestrator.runner import runner
 
     resolved_date = date_recognized or date.today().isoformat()
-    workflow_id = await runner.start(
-        REV_REC_KIND,
+    start_kwargs = dict(
         initial_state={
             "date_recognized": resolved_date,
             "context": {"date_recognized": resolved_date},
@@ -60,6 +59,21 @@ async def _trigger_revenue_recognition(
         subject_type="rev_rec_period",
         subject_id=resolved_date,
     )
+
+    if ctx.progress is not None:
+        from app.db import get_pool
+        from app.services.audit_tail import forward_workflow_to_progress
+
+        pool = await get_pool()
+        workflow_id, drive_task = await runner.start_in_background(
+            REV_REC_KIND, **start_kwargs
+        )
+        await forward_workflow_to_progress(
+            pool, workflow_id, REV_REC_KIND, ctx.progress, drive_task=drive_task,
+        )
+    else:
+        workflow_id = await runner.start(REV_REC_KIND, **start_kwargs)
+
     return {"workflow_id": str(workflow_id)}
 
 

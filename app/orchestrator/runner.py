@@ -148,6 +148,64 @@ class Runner:
 
         Returns the new workflow_id.
         """
+        workflow_id, seeded = await self._prepare_start(
+            kind,
+            initial_state=initial_state,
+            initiated_by=initiated_by,
+            trigger_source=trigger_source,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            subject_ref=subject_ref,
+            parent_workflow_id=parent_workflow_id,
+        )
+        await self._drive(workflow_id, kind, seeded)
+        return workflow_id
+
+    async def start_in_background(
+        self,
+        kind: str,
+        *,
+        initial_state: dict[str, Any],
+        initiated_by: str = "system",
+        trigger_source: str = "manual",
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        subject_ref: dict[str, Any] | None = None,
+        parent_workflow_id: UUID | None = None,
+    ) -> tuple[UUID, asyncio.Task]:
+        """Like `start()`, but returns immediately with (workflow_id, drive_task).
+
+        The drive task runs the graph in the background. Callers MUST await
+        the task to ensure the graph finishes — otherwise the workflow may
+        be abandoned partway through. Intended for streaming use cases that
+        want to tail audit_log concurrently with execution.
+        """
+        workflow_id, seeded = await self._prepare_start(
+            kind,
+            initial_state=initial_state,
+            initiated_by=initiated_by,
+            trigger_source=trigger_source,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            subject_ref=subject_ref,
+            parent_workflow_id=parent_workflow_id,
+        )
+        task = asyncio.create_task(self._drive(workflow_id, kind, seeded))
+        return workflow_id, task
+
+    async def _prepare_start(
+        self,
+        kind: str,
+        *,
+        initial_state: dict[str, Any],
+        initiated_by: str,
+        trigger_source: str,
+        subject_type: str | None,
+        subject_id: str | None,
+        subject_ref: dict[str, Any] | None,
+        parent_workflow_id: UUID | None,
+    ) -> tuple[UUID, dict[str, Any]]:
+        """Shared setup for start/start_in_background: workflow row + seeded state."""
         if kind not in self._registrations:
             raise ValueError(f"graph kind not registered: {kind}")
         await self._ensure_init()
@@ -168,8 +226,7 @@ class Runner:
         seeded = {**initial_state, "workflow_id": str(workflow_id)}
         if parent_workflow_id is not None:
             seeded["parent_workflow_id"] = str(parent_workflow_id)
-        await self._drive(workflow_id, kind, seeded)
-        return workflow_id
+        return workflow_id, seeded
 
     async def resume(self, workflow_id: UUID | str) -> None:
         """Resume a paused graph. Idempotent — does nothing for terminal workflows.

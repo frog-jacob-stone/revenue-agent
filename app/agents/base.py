@@ -1,6 +1,9 @@
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from app.tools import ProgressEmitter
 
 
 class BaseAgent(ABC):
@@ -51,8 +54,19 @@ class ConversationalAgent(BaseAgent, ABC):
 
         return get_tool_schemas(self.allowed_tools)
 
-    async def execute_tool(self, name: str, tool_input: dict[str, Any]) -> Any:
-        """Dispatch a tool call through the shared registry, enforcing allowed_tools."""
+    async def execute_tool(
+        self,
+        name: str,
+        tool_input: dict[str, Any],
+        *,
+        progress: "ProgressEmitter | None" = None,
+    ) -> Any:
+        """Dispatch a tool call through the shared registry, enforcing allowed_tools.
+
+        `progress`, when provided, is forwarded on ToolContext so the tool can
+        emit intermediate events (e.g., workflow node updates) back to a
+        streaming caller.
+        """
         from app.tools import ToolContext, execute_tool as tools_execute
 
         if name not in self.allowed_tools:
@@ -63,6 +77,7 @@ class ConversationalAgent(BaseAgent, ABC):
             agent_id=self.agent_id,
             agent_slug=self.slug,
             config=self.config,
+            progress=progress,
         )
         return await tools_execute(name, tool_input, ctx)
 

@@ -141,17 +141,80 @@ export interface ChatMessage {
   content: string;
 }
 
-export interface ChatResponse {
-  answer: string;
-  tool_used: string | null;
+export type ChatStreamEvent =
+  | { type: 'delta'; text: string }
+  | { type: 'tool_call_started'; name: string; args: Record<string, unknown> }
+  | { type: 'workflow_started'; workflow_id: string; kind: string }
+  | {
+      type: 'workflow_event';
+      workflow_id: string;
+      event_type: string;
+      actor: string | null;
+      payload: Record<string, unknown>;
+    }
+  | { type: 'tool_call_completed'; name: string; ok: boolean; result_summary: string }
+  | { type: 'done'; answer: string; tool_used: string | null }
+  | { type: 'error'; message: string; status?: number };
+
+export interface ChatStreamCallbacks {
+  onEvent: (evt: ChatStreamEvent) => void;
+  signal?: AbortSignal;
 }
 
-export function agentChat(agentSlug: string, messages: ChatMessage[]): Promise<ChatResponse> {
-  return apiFetch<ChatResponse>(`/chat/${encodeURIComponent(agentSlug)}`, {
+/**
+ * POST to /chat/{slug} and parse the Server-Sent Events response.
+ * EventSource cannot POST, so we use fetch + ReadableStream and parse the
+ * `event: <name>\ndata: <json>\n\n` framing ourselves.
+ */
+export async function agentChatStream(
+  agentSlug: string,
+  messages: ChatMessage[],
+  { onEvent, signal }: ChatStreamCallbacks,
+): Promise<void> {
+  const res = await fetch(`${BASE}/chat/${encodeURIComponent(agentSlug)}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+    },
     body: JSON.stringify({ messages }),
+    signal,
   });
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => '');
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let sep: number;
+    while ((sep = buffer.indexOf('\n\n')) !== -1) {
+      const frame = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      if (!frame.trim()) continue;
+
+      let dataLine: string | null = null;
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('data:')) {
+          dataLine = (dataLine ?? '') + line.slice(5).trimStart();
+        }
+      }
+      if (dataLine == null) continue;
+      try {
+        const evt = JSON.parse(dataLine) as ChatStreamEvent;
+        onEvent(evt);
+      } catch {
+        // ignore malformed frame
+      }
+    }
+  }
 }
 
 export function getAnalytics(days = 30): Promise<AnalyticsData> {
