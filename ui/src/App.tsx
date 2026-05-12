@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import AppShell from './components/layout/AppShell';
+import RequireAuth from './auth/RequireAuth';
 import Dashboard from './pages/Dashboard';
 import InboxList from './pages/Inbox/InboxList';
 import InboxDetail from './pages/Inbox/InboxDetail';
@@ -11,12 +12,20 @@ import KnowledgeBase from './pages/KnowledgeBase';
 import Analytics from './pages/Analytics';
 import LlmCalls from './pages/LlmCalls';
 import Settings from './pages/Settings';
+import Login from './pages/Login';
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route element={<AppShell />}>
+        <Route path="/login" element={<Login />} />
+        <Route
+          element={
+            <RequireAuth>
+              <AppShell />
+            </RequireAuth>
+          }
+        >
           <Route path="/" element={<Dashboard />} />
           <Route path="/inbox" element={<InboxList />} />
           <Route path="/inbox/:itemId" element={<InboxDetail />} />

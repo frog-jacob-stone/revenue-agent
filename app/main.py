@@ -1,11 +1,13 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.auth import get_current_user
 from app.config import settings
 from app.db import close_pool, get_pool
+from app.db_security import lock_down_langgraph_tables
 from app.orchestrator.graphs import register_all as register_graphs
 from app.orchestrator.runner import runner
 from app.services.chat_sessions import mark_orphaned_streaming_failed
@@ -36,6 +38,7 @@ async def lifespan(app: FastAPI):
     await seed_voice_profile()
     await runner.init()
     register_graphs(runner)
+    await lock_down_langgraph_tables(pool)
     yield
     await close_pool()
 
@@ -50,18 +53,20 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
-app.include_router(workflows.router)
-app.include_router(analytics.router)
-app.include_router(agents.router)
-app.include_router(audit_log.router)
-app.include_router(llm_calls.router)
-app.include_router(memories.router)
-app.include_router(chat.router)
-app.include_router(approvals.router)
+_auth = [Depends(get_current_user)]
+
+app.include_router(workflows.router, dependencies=_auth)
+app.include_router(analytics.router, dependencies=_auth)
+app.include_router(agents.router, dependencies=_auth)
+app.include_router(audit_log.router, dependencies=_auth)
+app.include_router(llm_calls.router, dependencies=_auth)
+app.include_router(memories.router, dependencies=_auth)
+app.include_router(chat.router, dependencies=_auth)
+app.include_router(approvals.router, dependencies=_auth)
 
 
 @app.get("/healthz")

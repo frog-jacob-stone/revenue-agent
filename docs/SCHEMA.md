@@ -1,7 +1,7 @@
 # Supabase Schema — Revenue Agent System
 
 > Source of truth for the database. Update this file when the schema changes.
-> Matches migrations: `supabase/migrations/0001_initial_schema.sql` through `0017_create_chat_tables.sql`
+> Matches migrations: `supabase/migrations/0001_initial_schema.sql` through `0018_enable_rls_gaps.sql`
 
 ## Overview
 
@@ -27,7 +27,7 @@ chat_messages    → turn-by-turn log of human chat with assistant placeholders
 2. **Workflows are graphs.** A single business process is one workflow whose progress lives in LangGraph's checkpoint tables. A workflow groups its approvals (one row per human gate) and audit-log events.
 3. **Audit log is append-only.** Enforced at the database role level, not in application code.
 4. **Memory and knowledge are separate.** Memory is what agents learned (emergent). Knowledge base is what we gave them (curated).
-5. **RLS on from day one.** Permissive policies today; scoped policies when users are added.
+5. **RLS on from day one.** Every `public` table has RLS enabled with a `service_role`-only policy. The FastAPI backend uses asyncpg as `service_role` (RLS-bypassing), so backend access is unaffected; the policies exist to block accidental anon/PostgREST exposure. Migration `0018` patched two gaps (`approvals`, `agent_messages`) that were created without RLS. The four LangGraph checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`) are created by `AsyncPostgresSaver.setup()` at app startup, so they're locked down by `app/db_security.py::lock_down_langgraph_tables`, called from the FastAPI lifespan. User-scoped policies are deferred until multi-user.
 
 ## Tables
 

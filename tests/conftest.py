@@ -3,6 +3,21 @@ import os
 import uuid
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Load app/.env into os.environ so test fixtures can read TEST_USER_* etc.
+# `override=False` so pytest-env values in pyproject.toml still win.
+_APP_ENV = Path(__file__).parent.parent / "app" / ".env"
+if _APP_ENV.exists():
+    load_dotenv(_APP_ENV, override=False)
+
+# Tests run on the host, not in Docker, so host.docker.internal won't resolve.
+# Rewrite SUPABASE_URL the same way pytest-env hard-codes TEST_DATABASE_URL.
+if "host.docker.internal" in os.environ.get("SUPABASE_URL", ""):
+    os.environ["SUPABASE_URL"] = os.environ["SUPABASE_URL"].replace(
+        "host.docker.internal", "127.0.0.1"
+    )
+
 # ── Fail loudly before any app import ────────────────────────────────────────
 _TEST_DB_URL = os.environ.get("TEST_DATABASE_URL")
 if not _TEST_DB_URL:
@@ -143,7 +158,69 @@ async def test_agent_slug(test_agent_id: uuid.UUID) -> str:
 
 
 @pytest.fixture(scope="session")
-async def client(_test_pool: asyncpg.Pool) -> AsyncClient:
+def _test_user_credentials() -> tuple[str, str]:
+    """Pull test user email/password from env. The user must exist in Supabase
+    Auth (create it manually via Supabase Studio at http://127.0.0.1:54323)."""
+    email = os.environ.get("TEST_USER_EMAIL")
+    password = os.environ.get("TEST_USER_PASSWORD")
+    if not email or not password:
+        raise RuntimeError(
+            "TEST_USER_EMAIL and TEST_USER_PASSWORD must be set in app/.env.\n"
+            "Create the user via Supabase Studio (http://127.0.0.1:54323 → "
+            "Authentication → Add User) first."
+        )
+    return email, password
+
+
+@pytest.fixture(scope="session")
+async def test_access_token(_test_user_credentials: tuple[str, str]) -> str:
+    """Sign in the test user against the local Supabase Auth server and return
+    the access token. Session-scoped so we hit the auth endpoint once."""
+    import httpx
+
+    from app.config import settings
+
+    if not settings.supabase_url or not settings.supabase_publishable_key:
+        raise RuntimeError(
+            "SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY must be set in app/.env."
+        )
+    email, password = _test_user_credentials
+    async with httpx.AsyncClient(timeout=10.0) as http:
+        res = await http.post(
+            f"{settings.supabase_url.rstrip('/')}/auth/v1/token",
+            params={"grant_type": "password"},
+            headers={
+                "apikey": settings.supabase_publishable_key,
+                "Content-Type": "application/json",
+            },
+            json={"email": email, "password": password},
+        )
+    if res.status_code != 200:
+        raise RuntimeError(
+            f"Failed to sign in test user (status={res.status_code}): "
+            f"{res.text}\nConfirm the user exists in Supabase Studio and "
+            f"the credentials in app/.env match."
+        )
+    return res.json()["access_token"]
+
+
+@pytest.fixture(scope="session")
+async def client(_test_pool: asyncpg.Pool, test_access_token: str) -> AsyncClient:
+    """Authenticated client — attaches a real bearer token from a Supabase
+    sign-in so requests hit the real JWT verification path."""
+    from app.main import app
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {test_access_token}"},
+    ) as c:
+        yield c
+
+
+@pytest.fixture(scope="session")
+async def unauthed_client(_test_pool: asyncpg.Pool) -> AsyncClient:
+    """Client with no auth — for tests that exercise the 401 path directly."""
     from app.main import app
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:

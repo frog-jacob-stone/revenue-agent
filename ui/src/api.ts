@@ -8,6 +8,7 @@ import type {
   WorkflowRecord,
   WorkflowTrace,
 } from './types';
+import { supabase } from './lib/supabase';
 
 export interface SummaryStats {
   accountsResearched: number;
@@ -36,8 +37,31 @@ export interface AnalyticsData {
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 
+async function authedHeaders(extra?: HeadersInit): Promise<Headers> {
+  const headers = new Headers(extra);
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  return headers;
+}
+
+async function handleUnauthorized(res: Response): Promise<void> {
+  if (res.status !== 401) return;
+  await supabase.auth.signOut();
+  if (window.location.pathname !== '/login') {
+    window.location.assign('/login');
+  }
+}
+
+export async function authedFetch(path: string, init?: RequestInit): Promise<Response> {
+  const headers = await authedHeaders(init?.headers);
+  const res = await fetch(`${BASE}${path}`, { ...init, headers });
+  await handleUnauthorized(res);
+  return res;
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, init);
+  const res = await authedFetch(path, init);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -222,7 +246,7 @@ export function getChatMessages(sessionId: string): Promise<ChatPersistedMessage
 }
 
 export async function deleteChatSession(sessionId: string): Promise<void> {
-  const res = await fetch(`${BASE}/chat/sessions/${sessionId}`, { method: 'DELETE' });
+  const res = await authedFetch(`/chat/sessions/${sessionId}`, { method: 'DELETE' });
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}`);
   }
@@ -240,7 +264,7 @@ export async function sendChatMessage(
   content: string,
   callbacks: ChatStreamCallbacks,
 ): Promise<void> {
-  const res = await fetch(`${BASE}/chat/${encodeURIComponent(agentSlug)}`, {
+  const res = await authedFetch(`/chat/${encodeURIComponent(agentSlug)}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

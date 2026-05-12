@@ -17,6 +17,7 @@ dependencies = [
     "langgraph>=0.2.50,<0.3",
     "langgraph-checkpoint-postgres>=2.0.0,<3",
     "psycopg[binary]>=3.2.0",
+    "pyjwt[crypto]>=2.9.0",
 ]
 
 [project.optional-dependencies]

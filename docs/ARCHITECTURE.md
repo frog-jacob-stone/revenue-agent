@@ -13,6 +13,14 @@ The durable shape of the system. Update this when boundaries, layering, or integ
 | Secrets | Doppler (local and cloud, same config) |
 | Runtime | Docker Compose locally → Railway/Render later |
 
+## Authentication
+
+- The FastAPI app sits behind a single auth gate: `app/auth.py::get_current_user` is wired as a `dependencies=[…]` on every router in `app/main.py`. The only public endpoint is `/healthz`. Anything that can't produce a valid bearer token gets a 401.
+- Tokens are Supabase-issued JWTs. Verification uses the project's JWKS (`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`) with `ES256`/`RS256`. A legacy `SUPABASE_JWT_SECRET` HS256 fallback exists for older projects and for tests.
+- The UI (`ui/src/`) uses `@supabase/supabase-js` for sign-in (email + password). Every API call goes through `authedFetch` in `ui/src/api.ts`, which attaches `Authorization: Bearer <access_token>`. A 401 response signs the user out and bounces them to `/login`.
+- DB access from FastAPI stays on the asyncpg service-role connection — no per-request user switching at the DB layer. RLS is on for every `public` table with a `service_role`-only policy. Defense-in-depth against accidental anon-key exposure; user-scoped policies are deferred until multi-user.
+- Same code path works locally and in cloud Supabase — only `SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, and (if needed) `SUPABASE_JWT_SECRET` change.
+
 ## The Propose / Approve / Execute Pattern
 
 No agent may execute a create, update, or delete without a prior approved action row.
