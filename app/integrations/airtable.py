@@ -51,9 +51,9 @@ async def get_revenue_records(
     """Return revenue recognition records, optionally filtered by date range."""
     parts: list[str] = []
     if date_from:
-        parts.append(f"{{Date Recognized}} >= '{date_from}'")
+        parts.append(f"DATESTR({{Date Recognized}}) >= '{date_from}'")
     if date_to:
-        parts.append(f"{{Date Recognized}} <= '{date_to}'")
+        parts.append(f"DATESTR({{Date Recognized}}) <= '{date_to}'")
 
     params: dict[str, Any] = {
         "sort[0][field]": "Date Recognized",

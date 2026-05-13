@@ -48,6 +48,7 @@ _SLIM_FIELDS = {
     "Date Recognized": "date_recognized",
     "Billing Type": "billing_type",
     "Total Recognized Revenue": "total_recognized_revenue",
+    "Revenue Delta": "revenue_delta",
     "Logged Hours": "logged_hours",
     "Scheduled Hours": "scheduled_hours",
     "Percentage Complete": "percentage_complete",

@@ -81,7 +81,7 @@ Track progress through implementation. Update this file as you complete modules 
 
 ## Agentic Workflows
 
-### Workflow A: Revenue Recognition — `[x]`
+### Workflow A: Revenue Recognition — `[-]`
 - [x] `rev_rec_monthly` chain — `supervised_automation` pattern
 - [x] `_sync_and_validate` — real Harvest → Airtable sync; completeness validation
 - [x] `_propose_configure` checkpoint — surfaces incomplete projects; `on_approve` requeues a fresh validation cycle
@@ -90,6 +90,13 @@ Track progress through implementation. Update this file as you complete modules 
 - [x] `_propose_write` — execution approval gate
 - [x] `_write_entries` — real Airtable batch upsert
 - [x] Duplicate guard — refuses to run twice for the same period
+
+#### Conversational Querying — `[-]`
+- [-] Slim payload for LLM context — `get_revenue_data_slim` maps Airtable fields to compact slim keys and derives `blended_rate`; defaults to last 12 months when no range given (`app/services/revenue.py`)
+- [-] Date-filtered Airtable pulls — `get_revenue_records` accepts `date_from` / `date_to` and pushes the filter into Airtable's `filterByFormula` (`app/integrations/airtable.py`)
+- [-] Agent prompt guidance — system prompt documents slim fields, distinguishes `revenue_delta` vs `total_recognized_revenue`, instructs narrowest-date-range usage, and forbids inventing profit/margin numbers (`app/agents/revenue.py`)
+- [ ] Wire `get_revenue_data_slim` into the agent's `get_revenue_data` tool surface — verify the tool actually calls the slim variant, not the full pull
+- [ ] Token-budget guardrail — cap rows returned (or summarize) when a wide date range would blow context; current default is 12-month window but no row cap
 
 ### Workflow B: Outreach — `[-]`
 - [x] `outreach_chain` — 10-node LangGraph with two critique loops sharing one `compose_email` node; `interrupt_before=("gmail_send",)`

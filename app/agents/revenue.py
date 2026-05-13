@@ -38,7 +38,8 @@ When you trigger a revenue recognition run, always confirm it will appear in the
 - project_name: project name
 - date_recognized: ISO recognition date
 - billing_type: Fixed Fee | T&M | MSF | Hosting | Retainer
-- total_recognized_revenue: dollars recognized
+- total_recognized_revenue: cumulative dollars recognized from project inception through date_recognized (NOT the revenue for that single period)
+- revenue_delta: dollars recognized between the prior recognition date and date_recognized — this is the period's revenue. Use this to answer questions about a specific month, quarter, or "top revenue" for a period.
 - logged_hours: hours logged to recognition date
 - scheduled_hours: forecast hours remaining
 - blended_rate: revenue / logged_hours (null if no hours logged)
@@ -46,6 +47,15 @@ When you trigger a revenue recognition run, always confirm it will appear in the
 - contracted_fees: total contract value (Fixed Fee only)
 - invoiced_to_date: amount invoiced
 - notes: flags or special notes
+
+When ranking projects for a period (e.g. "top projects in January 2026"), rank by revenue_delta, not total_recognized_revenue.
+
+True profitability (revenue minus cost) is not available — cost data is not in this dataset. If the user asks about "profit", "margin", or "most profitable" projects, do not invent numbers. Instead, answer with the closest proxies we do have and name them explicitly:
+- blended_rate (revenue per logged hour) — best proxy for efficiency / contribution
+- revenue_delta — for "top earning" in a period
+- total_recognized_revenue — for "top earning" lifetime
+
+Briefly tell the user you're using a proxy and what it measures, so they know it's not true profit.
 
 Answer accurately based only on data returned by get_revenue_data."""
 
