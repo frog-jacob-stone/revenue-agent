@@ -11,6 +11,8 @@ import type {
   LlmCallsSummary,
 } from '../api';
 import type { AgentRecord } from '../types';
+import { usePagination } from '../hooks/usePagination';
+import PaginationControls from '../components/shared/PaginationControls';
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleString('en-US', {
@@ -33,11 +35,10 @@ function fmtPercent(rate: number) {
 }
 
 const STATUS_OPTS: Array<'' | 'ok' | 'error'> = ['', 'ok', 'error'];
+const PAGE_SIZE = 25;
 
 export default function LlmCalls() {
   const [summary, setSummary] = useState<LlmCallsSummary | null>(null);
-  const [calls, setCalls] = useState<LlmCallSummary[]>([]);
-  const [loading, setLoading] = useState(true);
   const [agents, setAgents] = useState<AgentRecord[]>([]);
   const [details, setDetails] = useState<Record<number, LlmCallDetail | 'loading' | 'error'>>({});
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -50,33 +51,40 @@ export default function LlmCalls() {
     listAgents().then(setAgents).catch(console.error);
   }, []);
 
+  const pagination = usePagination<LlmCallSummary, { agentSlug: string; model: string; status: '' | 'ok' | 'error' }>({
+    pageSize: PAGE_SIZE,
+    params: { agentSlug, model, status },
+    mode: { kind: 'cursor', getCursor: (c) => c.id },
+    fetcher: ({ params, limit, cursor }) =>
+      listLlmCalls({
+        agent_slug: params.agentSlug || undefined,
+        model: params.model || undefined,
+        status: params.status || undefined,
+        limit,
+        cursor,
+      }),
+  });
+  const { items: calls, loading } = pagination;
+
+  // Summary is unaffected by pagination, but should still reflect active filters.
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    Promise.all([
-      getLlmCallsSummary(),
-      listLlmCalls({
-        agent_slug: agentSlug || undefined,
-        model: model || undefined,
-        status: status || undefined,
-        limit: 200,
-      }),
-    ])
-      .then(([s, c]) => {
-        if (cancelled) return;
-        setSummary(s);
-        setCalls(c);
+    getLlmCallsSummary()
+      .then((s) => {
+        if (!cancelled) setSummary(s);
       })
       .catch((err) => {
         if (!cancelled) console.error(err);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
     };
   }, [agentSlug, model, status]);
+
+  // Collapse expanded detail when navigating pages or changing filters.
+  useEffect(() => {
+    setExpanded(null);
+  }, [pagination.pageIndex, agentSlug, model, status]);
 
   const modelOptions = useMemo(() => {
     const fromSummary = summary?.by_model.map((m) => m.model) ?? [];
@@ -242,6 +250,17 @@ export default function LlmCalls() {
           </tbody>
         </table>
       </div>
+
+      <PaginationControls
+        hasPrev={pagination.hasPrev}
+        hasNext={pagination.hasNext}
+        onPrev={pagination.goPrev}
+        onNext={pagination.goNext}
+        pageIndex={pagination.pageIndex}
+        pageSize={PAGE_SIZE}
+        itemsOnPage={calls.length}
+        loading={loading}
+      />
     </div>
   );
 }
