@@ -1,6 +1,6 @@
 """OpenAI adapter for the LLM dispatcher.
 
-The only place in the codebase that imports from the `openai` SDK. The
+The single place in the codebase that imports from the `openai` SDK. The
 dispatcher in `app/integrations/llm.py` is the public surface; this file is
 private to it (leading underscore).
 """
@@ -8,8 +8,12 @@ from __future__ import annotations
 
 from typing import Any, AsyncIterator
 
+import openai
+
+from app.config import settings
 from app.integrations.llm import LlmResponse, StreamDelta, ToolCall
-from app.integrations.openai_client import get_client
+
+_client: openai.AsyncOpenAI | None = None
 
 
 class OpenAiProvider:
@@ -18,7 +22,7 @@ class OpenAiProvider:
     name: str = "openai"
 
     async def complete(self, request: dict[str, Any]) -> LlmResponse:
-        client = get_client()
+        client = _get_client()
         kwargs = _to_openai_kwargs(request)
         completion = await client.chat.completions.create(**kwargs)
         choice = completion.choices[0] if completion.choices else None
@@ -47,7 +51,7 @@ class OpenAiProvider:
     async def stream(
         self, request: dict[str, Any]
     ) -> AsyncIterator[StreamDelta | LlmResponse]:
-        client = get_client()
+        client = _get_client()
         kwargs = _to_openai_kwargs(request)
         kwargs["stream"] = True
         kwargs["stream_options"] = {"include_usage": True}
@@ -108,6 +112,13 @@ class OpenAiProvider:
             prompt_tokens=(getattr(usage, "prompt_tokens", None) if usage else None),
             completion_tokens=(getattr(usage, "completion_tokens", None) if usage else None),
         )
+
+
+def _get_client() -> openai.AsyncOpenAI:
+    global _client
+    if _client is None:
+        _client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+    return _client
 
 
 def _to_openai_kwargs(request: dict[str, Any]) -> dict[str, Any]:
