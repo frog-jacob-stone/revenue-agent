@@ -1,49 +1,36 @@
 """outreach_chain — personalised outbound email with two critique loops.
 
-Ten nodes, one interrupt gate, two critique loops sharing one `compose_email` node:
+Eight host-defined nodes plus the critic loop attached by
+`add_critique_loop` (which adds `voice_critique`, `accuracy_critique`, and
+the shared `failed_terminal` node):
 
-    [entry] → pull_hubspot → web_search → consolidate → retrieve_kb → compose_email → voice_critique
-                                                                        ▲          │
-                                                                        │          ▼
-                                                                        │   ┌──────┼──────────┐
-                                                                        │ pass  fail+      fail+
-                                                                        │  │   budget    exhausted
-                                                                        │  ▼     │            │
-                                                                        │ accuracy_critique   │
-                                                                        │  │                  │
-                                                                        │  ▼                  │
-                                                                        │ ┌────┼──────────┐   │
-                                                                        │ pass fail+    fail+ │
-                                                                        │  │  budget  exhaust │
-                                                                        │  │   │          │   │
-                                                                        └──┘ (loop)       ▼   ▼
-                                                                        │             failed_terminal
-                                                                        ▼                    │
-                                                                  propose_send               │
-                                                                        │                    │
-                                                                  [interrupt_before          │
-                                                                   gmail_send]               │
-                                                                        │                    │
-                                                                        ▼                    │
-                                                                  gmail_send → END           │
-                                                                                             ▼
-                                                                                            END
+    [entry] → pull_hubspot → web_search → consolidate → retrieve_kb → compose_email
+                                                                          │
+                                       ┌──────────────────────────────────┘
+                                       ▼
+                          add_critique_loop(...)
+                          (voice 3× → accuracy 2× → fail loops back to compose_email)
+                                       │ pass
+                                       ▼
+                                propose_send
+                                       │
+                                [interrupt_before
+                                  gmail_send]
+                                       │
+                                       ▼
+                                  gmail_send → END
 
-Key design points:
+Cross-critic counter semantics (preserved by `add_critique_loop`):
+`voice_attempts` and `accuracy_attempts` are independent counters that
+accumulate monotonically across the workflow — when accuracy fails and
+the loop returns to compose_email, voice runs again and its counter ticks
+upward.
 
-- `voice_attempts` and `accuracy_attempts` are independent counters with
-  independent `max_attempts` ceilings (defaults: 3 voice, 2 accuracy). When
-  accuracy fails and we loop back to draft, voice runs again on the new
-  draft — voice_attempts continues to accumulate.
-- The most recent failed critique is surfaced into the next draft prompt via
-  `state.last_critique_feedback`. The `draft` node clears it after consumption
-  so each redraft sees only one critic's feedback at a time.
-- LLM calls go through `invoke_agent`, which dispatches to OpenAI via the
-  instrumented `call_openai_chat` wrapper. `invoke_agent` emits
-  AGENT_INVOKED/AGENT_COMPLETED audit events; the wrapper writes a row to
-  `llm_calls` with the full request/response and token usage.
-- No infinite-loop guard at framework level; the two budgets bound the loop
-  in practice (max ~5 drafts before terminal failure).
+The shared slot `last_critique_feedback` is set by whichever critic last
+failed; the `compose_email` node consumes it and clears it (sets to None
+in its returned state). On budget exhaustion, the helper sets
+`failure_reason = "{critic} budget exhausted"` and routes to
+`failed_terminal`.
 """
 from __future__ import annotations
 
@@ -57,6 +44,7 @@ from app.config import settings
 from app.db import get_pool
 from app.lib.json_utils import parse_json
 from app.orchestrator.agent_invoke import NodeContext, invoke_agent
+from app.orchestrator.critique_loop import Critic, add_critique_loop
 from app.orchestrator.runner import GraphSpec
 from app.orchestrator.state import BaseGraphState
 
@@ -92,7 +80,7 @@ class OutreachState(BaseGraphState, total=False):
     # Current draft (overwritten each draft attempt)
     draft_email: NotRequired[dict[str, Any]]   # {to, to_name, subject, body}
 
-    # Critique state (independent budgets)
+    # Critique state — written by the critique_loop helper.
     voice_attempts: NotRequired[int]
     voice_max_attempts: NotRequired[int]
     last_voice_critique: NotRequired[dict[str, Any]]
@@ -101,15 +89,17 @@ class OutreachState(BaseGraphState, total=False):
     accuracy_max_attempts: NotRequired[int]
     last_accuracy_critique: NotRequired[dict[str, Any]]
 
-    # Most recent failed critique — surfaced in the next draft prompt; cleared after consumption
+    # Shared slot — set by whichever critic last failed; cleared by compose_email.
     last_critique_feedback: NotRequired[dict[str, Any] | None]
+
+    # Set by the critique_loop helper on the exhausting attempt.
+    failure_reason: NotRequired[str]
 
     # Approval bridge
     executed_payload: NotRequired[dict[str, Any]]
 
-    # Terminal states
+    # Terminal result (written by failed_terminal or gmail_send)
     result: NotRequired[dict[str, Any]]
-    failure_reason: NotRequired[str]
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -250,7 +240,7 @@ async def retrieve_kb(state: OutreachState) -> OutreachState:
     }
 
 
-async def draft(state: OutreachState) -> OutreachState:
+async def compose_email(state: OutreachState) -> OutreachState:
     """Draft a personalised outreach email. On retry, surface the most recent
     critique feedback so the model addresses it. Clears `last_critique_feedback`
     after consumption — the next critic invocation will reset it on fail."""
@@ -305,9 +295,11 @@ async def draft(state: OutreachState) -> OutreachState:
     }
 
 
-async def voice_critique(state: OutreachState) -> OutreachState:
-    """Run the Voice Critic against the latest draft. Increments voice_attempts.
-    Sets `last_critique_feedback` on fail so the next draft can address it."""
+# ── Critic bodies (host-owned; helper wraps them with counter + slot logic) ──
+
+
+async def run_voice_critic(state: OutreachState) -> dict[str, Any]:
+    """LLM call: evaluate the latest draft against the voice profile."""
     draft_payload = state.get("draft_email") or {}
     voice_profile = await _load_voice_profile()
 
@@ -327,20 +319,11 @@ async def voice_critique(state: OutreachState) -> OutreachState:
         {"prompt": prompt, "max_tokens": 400},
         _ctx_from_state(state),
     )
-    critique = _parse_critique(response["text"])
-
-    update: dict[str, Any] = {
-        "voice_attempts": state.get("voice_attempts", 0) + 1,
-        "last_voice_critique": critique,
-    }
-    if not critique.get("passed"):
-        update["last_critique_feedback"] = critique
-    return update
+    return _parse_critique(response["text"])
 
 
-async def accuracy_critique(state: OutreachState) -> OutreachState:
-    """Run the Accuracy Critic against the latest draft. Increments accuracy_attempts.
-    Sets `last_critique_feedback` on fail so the next draft can address it."""
+async def run_accuracy_critic(state: OutreachState) -> dict[str, Any]:
+    """LLM call: evaluate the latest draft against the source facts."""
     draft_payload = state.get("draft_email") or {}
     contact = state.get("contact") or {}
     company = state.get("company") or {}
@@ -366,15 +349,7 @@ async def accuracy_critique(state: OutreachState) -> OutreachState:
         {"prompt": prompt, "max_tokens": 400},
         _ctx_from_state(state),
     )
-    critique = _parse_critique(response["text"])
-
-    update: dict[str, Any] = {
-        "accuracy_attempts": state.get("accuracy_attempts", 0) + 1,
-        "last_accuracy_critique": critique,
-    }
-    if not critique.get("passed"):
-        update["last_critique_feedback"] = critique
-    return update
+    return _parse_critique(response["text"])
 
 
 async def propose_send(state: OutreachState) -> OutreachState:
@@ -408,43 +383,6 @@ async def gmail_send(state: OutreachState) -> OutreachState:
     }
 
 
-async def failed_terminal(state: OutreachState) -> OutreachState:
-    """Terminal failure node: critique budget exhausted on either voice or accuracy."""
-    last = state.get("last_critique_feedback") or {}
-    return {
-        "result": {
-            "outcome": "failed",
-            "reason": state.get("failure_reason") or "critique budget exhausted",
-            "last_feedback": last.get("feedback"),
-        },
-    }
-
-
-# ── Routing ──────────────────────────────────────────────────────────────────
-
-
-def route_after_voice(state: OutreachState) -> str:
-    last = state.get("last_voice_critique") or {}
-    if last.get("passed"):
-        return "accuracy_critique"
-    attempts = state.get("voice_attempts", 0)
-    max_attempts = state.get("voice_max_attempts", DEFAULT_VOICE_MAX_ATTEMPTS)
-    if attempts >= max_attempts:
-        return "failed_terminal"
-    return "compose_email"  # loop
-
-
-def route_after_accuracy(state: OutreachState) -> str:
-    last = state.get("last_accuracy_critique") or {}
-    if last.get("passed"):
-        return "propose_send"
-    attempts = state.get("accuracy_attempts", 0)
-    max_attempts = state.get("accuracy_max_attempts", DEFAULT_ACCURACY_MAX_ATTEMPTS)
-    if attempts >= max_attempts:
-        return "failed_terminal"
-    return "compose_email"  # loop (will re-run voice on the new draft too)
-
-
 # ── Graph factory ────────────────────────────────────────────────────────────
 
 
@@ -455,39 +393,30 @@ def build_graph() -> GraphSpec:
     g.add_node("web_search", web_search)
     g.add_node("consolidate", consolidate)
     g.add_node("retrieve_kb", retrieve_kb)
-    g.add_node("compose_email", draft)
-    g.add_node("voice_critique", voice_critique)
-    g.add_node("accuracy_critique", accuracy_critique)
+    g.add_node("compose_email", compose_email)
     g.add_node("propose_send", propose_send)
     g.add_node("gmail_send", gmail_send)
-    g.add_node("failed_terminal", failed_terminal)
 
     g.set_entry_point("pull_hubspot")
     g.add_edge("pull_hubspot", "web_search")
     g.add_edge("web_search", "consolidate")
     g.add_edge("consolidate", "retrieve_kb")
     g.add_edge("retrieve_kb", "compose_email")
-    g.add_edge("compose_email", "voice_critique")
-    g.add_conditional_edges(
-        "voice_critique",
-        route_after_voice,
-        {
-            "accuracy_critique": "accuracy_critique",
-            "compose_email": "compose_email",
-            "failed_terminal": "failed_terminal",
-        },
+
+    # Attach the critique loop: voice → accuracy, both loop back to compose_email
+    # on fail with budget remaining; budget exhaustion routes to the helper's
+    # shared `failed_terminal`.
+    add_critique_loop(
+        g,
+        draft_node="compose_email",
+        critics=[
+            Critic("voice", run_voice_critic, DEFAULT_VOICE_MAX_ATTEMPTS),
+            Critic("accuracy", run_accuracy_critic, DEFAULT_ACCURACY_MAX_ATTEMPTS),
+        ],
+        pass_target="propose_send",
     )
-    g.add_conditional_edges(
-        "accuracy_critique",
-        route_after_accuracy,
-        {
-            "propose_send": "propose_send",
-            "compose_email": "compose_email",
-            "failed_terminal": "failed_terminal",
-        },
-    )
+
     g.add_edge("propose_send", "gmail_send")
     g.add_edge("gmail_send", END)
-    g.add_edge("failed_terminal", END)
 
     return GraphSpec(graph=g, interrupt_before=("gmail_send",))

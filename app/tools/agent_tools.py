@@ -18,7 +18,6 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from app.db import get_pool
-from app.orchestrator.agent_invoke import NodeContext, invoke_agent
 from app.services import agent_messages
 from app.tools.base import ToolContext, ToolDefinition
 
@@ -31,6 +30,11 @@ async def _ask_agent(
     thread_id: str | None = None,
     **_: Any,
 ) -> dict[str, Any]:
+    # Lazy import: top-level import here would create a cycle through
+    # app/orchestrator/__init__.py → agent_invoke → app.agents.registry →
+    # app.agents.revenue → app.tools (this module).
+    from app.orchestrator.agent_invoke import NodeContext, invoke_agent
+
     pool = await get_pool()
     thread_uuid = UUID(thread_id) if thread_id else uuid4()
     workflow_id = ctx.workflow_id

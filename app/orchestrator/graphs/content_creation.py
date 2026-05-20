@@ -1,23 +1,26 @@
 """content_creation — drafts a social post with a voice-review critique loop.
 
-Four nodes, no interrupt gate, one critique loop:
+Three host-defined nodes plus the critique loop attached by
+`add_critique_loop` (which adds `voice_critique` and the shared
+`failed_terminal` node):
 
-    [entry] → interpret_brief → draft_post → voice_review
-                                    ▲           │
-                                    │           ▼
-                                    │   ┌───────┼─────────┐
-                                    │ pass   fail+      fail+
-                                    │  │    budget    exhausted
-                                    │  ▼      │           │
-                                    │ END    (loop)       ▼
-                                    └────────┘     failed_terminal → END
+    [entry] → interpret_brief → draft_post
+                                    │
+            ┌───────────────────────┘
+            ▼
+       add_critique_loop(...)
+       (voice 3× → fail loops back to draft_post)
+            │ pass
+            ▼
+           END
 
-The voice review writes `social_posts.status = 'ready'` on pass; on terminal
-failure the row stays at `status='draft'`.
+The voice review writes `social_posts.status = 'ready'` on pass (inside
+`run_voice_review`). On terminal failure the row stays at `status='draft'`.
 
-All three node LLM calls go through the instrumented `call_openai_chat`
-wrapper, with `with_llm_context` setting the workflow + purpose so each row
-in `llm_calls` is attributable.
+LLM calls in `interpret_brief` and `draft_post` go through the
+instrumented `call_openai_chat` wrapper directly. `run_voice_review` does
+the same. The provider-aware `invoke_agent` refactor is on the backlog;
+the critique-loop helper is provider-agnostic and works with either path.
 """
 from __future__ import annotations
 
@@ -36,6 +39,7 @@ from app.agents.content import (
 from app.db import get_pool
 from app.integrations.openai_client import call_openai_chat
 from app.lib.json_utils import parse_json
+from app.orchestrator.critique_loop import Critic, add_critique_loop
 from app.orchestrator.runner import GraphSpec
 from app.orchestrator.state import BaseGraphState
 from app.services import social_posts
@@ -68,14 +72,19 @@ class ContentCreationState(BaseGraphState, total=False):
     # Built by interpret_brief
     idea: NotRequired[dict[str, Any]]
 
-    # Critique state
+    # Critique state — written by the critique_loop helper.
     voice_attempts: NotRequired[int]
     voice_max_attempts: NotRequired[int]
-    last_voice_review: NotRequired[dict[str, Any]]
+    last_voice_critique: NotRequired[dict[str, Any]]
+
+    # Shared slot — set by the voice critic on fail; cleared by draft_post.
+    last_critique_feedback: NotRequired[dict[str, Any] | None]
+
+    # Set by the critique_loop helper on the exhausting attempt.
+    failure_reason: NotRequired[str]
 
     # Final
     result: NotRequired[dict[str, Any]]
-    failure_reason: NotRequired[str]
 
 
 # ── Nodes ────────────────────────────────────────────────────────────────────
@@ -121,7 +130,8 @@ async def interpret_brief(state: ContentCreationState) -> ContentCreationState:
 
 async def draft_post(state: ContentCreationState) -> ContentCreationState:
     """LLM call: draft the post; on retry surface the prior voice feedback so
-    the model can address specific issues. Writes/updates the social_posts row."""
+    the model can address specific issues. Writes/updates the social_posts row.
+    Clears `last_critique_feedback` after consumption."""
     idea = state.get("idea") or {}
     channel = state.get("channel") or "linkedin"
     brief = state.get("brief") or ""
@@ -132,12 +142,11 @@ async def draft_post(state: ContentCreationState) -> ContentCreationState:
         f"Channel: {channel}"
     )
 
-    last_review = state.get("last_voice_review") or {}
-    if last_review and not last_review.get("passed"):
-        feedback = last_review.get("feedback", "")
-        issues = last_review.get("issues", [])
-        # We don't have the prior post_text in state directly, so read it
-        # from the social_posts row.
+    last_feedback = state.get("last_critique_feedback") or {}
+    if last_feedback:
+        feedback = last_feedback.get("feedback", "")
+        issues = last_feedback.get("issues", [])
+        # The prior post_text lives in the DB; surface it for the revision prompt.
         post_id_str = state.get("post_id")
         prior_text = ""
         if post_id_str:
@@ -196,15 +205,21 @@ async def draft_post(state: ContentCreationState) -> ContentCreationState:
             )
             post_id_str = str(new_id)
 
-    return {"post_id": post_id_str}
+    return {"post_id": post_id_str, "last_critique_feedback": None}
 
 
-async def voice_review(state: ContentCreationState) -> ContentCreationState:
+# ── Critic body (host-owned; helper wraps it with counter + slot logic) ──────
+
+
+async def run_voice_review(state: ContentCreationState) -> dict[str, Any]:
     """LLM call: evaluate the latest draft against the personal voice profile.
-    Increments `voice_attempts` whether or not the review passes."""
+
+    Side effect on pass: writes `revised_post_text` to social_posts and flips
+    status to 'ready'. Returns the critique dict; the wrapped node owns the
+    counter/slot bookkeeping.
+    """
     post_id_str = state.get("post_id")
     channel = state.get("channel") or "linkedin"
-    attempt = state.get("voice_attempts", 0) + 1
 
     post_text = ""
     if post_id_str:
@@ -240,7 +255,7 @@ async def voice_review(state: ContentCreationState) -> ContentCreationState:
                 conn, UUID(post_id_str), post_text=revised_text, status="ready"
             )
 
-    last_voice_review = {
+    return {
         "passed": passed,
         "score": float(review.get("voice_score", 0.0)),
         "feedback": (
@@ -252,43 +267,6 @@ async def voice_review(state: ContentCreationState) -> ContentCreationState:
         "revised_post_text": revised_text,
     }
 
-    return {
-        "voice_attempts": attempt,
-        "last_voice_review": last_voice_review,
-    }
-
-
-async def failed_terminal(state: ContentCreationState) -> ContentCreationState:
-    """Terminal failure node: voice review budget exhausted.
-
-    The social_posts row is left at `status='draft'`. A future enhancement
-    could move it to a `needs_revision` status once the inbox UI surfaces
-    that.
-    """
-    last = state.get("last_voice_review") or {}
-    return {
-        "result": {
-            "outcome": "failed",
-            "reason": "voice review budget exhausted",
-            "last_score": last.get("score"),
-        },
-    }
-
-
-# ── Routing ──────────────────────────────────────────────────────────────────
-
-
-def route_after_voice_review(state: ContentCreationState) -> str:
-    """pass → END; fail with budget → loop back to draft_post; budget exhausted → terminal."""
-    last = state.get("last_voice_review") or {}
-    if last.get("passed"):
-        return END
-    attempts = state.get("voice_attempts", 0)
-    max_attempts = state.get("voice_max_attempts", DEFAULT_VOICE_MAX_ATTEMPTS)
-    if attempts >= max_attempts:
-        return "failed_terminal"
-    return "draft_post"
-
 
 # ── Graph factory ────────────────────────────────────────────────────────────
 
@@ -298,21 +276,15 @@ def build_graph() -> GraphSpec:
 
     g.add_node("interpret_brief", interpret_brief)
     g.add_node("draft_post", draft_post)
-    g.add_node("voice_review", voice_review)
-    g.add_node("failed_terminal", failed_terminal)
 
     g.set_entry_point("interpret_brief")
     g.add_edge("interpret_brief", "draft_post")
-    g.add_edge("draft_post", "voice_review")
-    g.add_conditional_edges(
-        "voice_review",
-        route_after_voice_review,
-        {
-            "draft_post": "draft_post",
-            "failed_terminal": "failed_terminal",
-            END: END,
-        },
+
+    add_critique_loop(
+        g,
+        draft_node="draft_post",
+        critics=[Critic("voice", run_voice_review, DEFAULT_VOICE_MAX_ATTEMPTS)],
+        pass_target=END,
     )
-    g.add_edge("failed_terminal", END)
 
     return GraphSpec(graph=g)

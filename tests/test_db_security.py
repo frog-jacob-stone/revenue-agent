@@ -11,22 +11,30 @@ async def _checkpoint_tables(_test_pool: asyncpg.Pool):
     """Stand in for LangGraph's AsyncPostgresSaver.setup(): create the four
     checkpoint tables so lock_down_langgraph_tables has something to operate on.
 
-    The autouse `_rollback` fixture only rolls back changes made through the
-    *app's* pool (which it overrides), not those made directly through
-    `_test_pool`. So we drop the placeholder tables on teardown ourselves —
-    otherwise their fake schema would conflict with the real LangGraph
-    AsyncPostgresSaver schema used by other tests.
+    Earlier tests in the session may have triggered `runner.init()` →
+    `AsyncPostgresSaver.setup()`, which creates the real LangGraph schema.
+    Only drop the tables this fixture actually created — otherwise teardown
+    wipes the real schema and every subsequent runner-using test fails with
+    `relation "checkpoints" does not exist`.
     """
+    created: list[str] = []
     async with _test_pool.acquire() as conn:
         for t in LANGGRAPH_TABLES:
-            await conn.execute(
-                f'create table if not exists public."{t}" (id serial primary key)'
+            exists = await conn.fetchval(
+                "select to_regclass($1) is not null",
+                f'public."{t}"',
             )
+            if exists:
+                continue
+            await conn.execute(
+                f'create table public."{t}" (id serial primary key)'
+            )
+            created.append(t)
     try:
         yield
     finally:
         async with _test_pool.acquire() as conn:
-            for t in LANGGRAPH_TABLES:
+            for t in created:
                 await conn.execute(f'drop table if exists public."{t}" cascade')
 
 

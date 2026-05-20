@@ -106,7 +106,8 @@ async def test_stream_emits_deltas_and_done_for_text_only_response():
         ]
     )
 
-    with patch("app.services.chat.get_client", return_value=fake):
+    with patch("app.services.chat.get_client", return_value=fake), \
+         patch("app.services.chat.fire_and_forget_write", new=lambda **_: None):
         out: list[dict[str, Any]] = []
         async for evt in agent_chat_stream("revenue-recognition", [{"role": "user", "content": "hi"}]):
             out.append(evt)
@@ -183,6 +184,7 @@ async def test_stream_emits_tool_lifecycle_and_workflow_events(monkeypatch):
             yield ev
 
     with patch("app.services.chat.get_client", return_value=fake), \
+         patch("app.services.chat.fire_and_forget_write", new=lambda **_: None), \
          patch("app.orchestrator.runner.runner.start_in_background",
                new=AsyncMock(side_effect=fake_runner_start_bg)), \
          patch("app.services.audit_tail.tail_workflow_events", new=fake_tail), \
@@ -263,6 +265,7 @@ async def test_subagent_toggle_filters_agent_events(monkeypatch):
             yield ev
 
     with patch("app.services.chat.get_client", return_value=fake), \
+         patch("app.services.chat.fire_and_forget_write", new=lambda **_: None), \
          patch("app.orchestrator.runner.runner.start_in_background",
                new=AsyncMock(side_effect=fake_runner_start_bg)), \
          patch("app.services.audit_tail.tail_workflow_events", new=fake_tail), \
