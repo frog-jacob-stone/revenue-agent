@@ -1,5 +1,5 @@
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from uuid import UUID
 
@@ -55,6 +55,5 @@ class ProgressEmitter:
 class ToolContext:
     agent_id: UUID
     agent_slug: str
-    config: dict[str, Any] = field(default_factory=dict)
     workflow_id: UUID | None = None  # set when invoked from a graph node; None for chat
     progress: ProgressEmitter | None = None  # set when invoked from streaming chat

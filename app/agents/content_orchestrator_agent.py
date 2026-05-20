@@ -18,7 +18,6 @@ class ContentOrchestratorAgent(BaseAgent):
     )
     requires_approval = False
     model = "gpt-4o-mini"
-    default_config: ClassVar[dict] = {"model": "gpt-4o-mini"}
 
     system_prompt: ClassVar[str] = """\
 You are a content-strategy specialist for a senior technology executive at a B2B professional \

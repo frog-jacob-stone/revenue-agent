@@ -19,7 +19,6 @@ class BaseAgent(ABC):
     description: ClassVar[str] = ""
     requires_approval: ClassVar[bool] = True
     allowed_tools: ClassVar[tuple[str, ...]] = ()
-    default_config: ClassVar[dict[str, Any]] = {}
     model: ClassVar[str] = ""
 
 
@@ -34,11 +33,9 @@ class ConversationalAgent(BaseAgent, ABC):
     def __init__(
         self,
         agent_id: UUID,
-        config: dict[str, Any],
         allowed_tools: list[str] | None = None,
     ) -> None:
         self.agent_id = agent_id
-        self.config = config
         self.allowed_tools: list[str] = (
             list(allowed_tools) if allowed_tools is not None else list(type(self).allowed_tools)
         )
@@ -76,7 +73,6 @@ class ConversationalAgent(BaseAgent, ABC):
         ctx = ToolContext(
             agent_id=self.agent_id,
             agent_slug=self.slug,
-            config=self.config,
             progress=progress,
         )
         return await tools_execute(name, tool_input, ctx)

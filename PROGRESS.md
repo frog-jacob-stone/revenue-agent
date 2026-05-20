@@ -36,7 +36,7 @@ Track progress through implementation. Update this file as you complete modules 
 - [x] Run history — table of last N actions with outcome and reasoning
 - [x] Manual trigger button — `triggerAgent()` real API call with error handling
 - [x] Agent tools list — tools registry view
-- [-] Agent-specific config panels — 6 panels render inputs; no save handlers wired to `agents.config`
+- [ ] Agent-specific config panels — deferred. Original storage target (`agents.config` jsonb) was dropped in migration 0020 as unused; if/when this feature returns, design the storage shape from scratch
 
 ### Module 4: Audit Log — `[-]`
 - [x] Chronological log table — timestamp, agent, action type, target, outcome, reason

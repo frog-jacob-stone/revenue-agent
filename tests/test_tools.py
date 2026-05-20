@@ -54,7 +54,7 @@ def test_get_tool_schemas_filters_by_name():
 
 @pytest.mark.asyncio
 async def test_execute_tool_unknown_raises():
-    ctx = ToolContext(agent_id=uuid.UUID(int=0), agent_slug="revenue-recognition", config={})
+    ctx = ToolContext(agent_id=uuid.UUID(int=0), agent_slug="revenue-recognition")
     with pytest.raises(ValueError, match="Unknown tool"):
         await execute_tool("not_a_real_tool", {}, ctx)
 
@@ -62,7 +62,7 @@ async def test_execute_tool_unknown_raises():
 @pytest.mark.asyncio
 async def test_execute_tool_dispatches_to_service():
     """Calling an allowed tool flows through to the service layer."""
-    ctx = ToolContext(agent_id=uuid.UUID(int=0), agent_slug="revenue-recognition", config={})
+    ctx = ToolContext(agent_id=uuid.UUID(int=0), agent_slug="revenue-recognition")
     fake = {"records": []}
     with patch(
         "app.services.revenue.get_revenue_data_slim",
@@ -83,7 +83,6 @@ async def test_execute_tool_dispatches_to_service():
 async def test_agent_rejects_unregistered_tool():
     agent = RevenueOpsAgent(
         agent_id=uuid.UUID(int=0),
-        config={},
         allowed_tools=list(AGENTS_BY_SLUG["revenue-ops"].allowed_tools),
     )
     with pytest.raises(PermissionError, match="fake_tool"):
@@ -95,7 +94,6 @@ async def test_agent_allows_registered_tool():
     """Front-door agent can call an allowed tool; dispatch reaches the service."""
     agent = RevenueOpsAgent(
         agent_id=uuid.UUID(int=0),
-        config={},
         allowed_tools=list(AGENTS_BY_SLUG["revenue-ops"].allowed_tools),
     )
     fake = {"records": [{"id": 42}]}
@@ -113,7 +111,7 @@ async def test_agent_allows_registered_tool():
 def test_agent_get_tools_matches_allowed_tools():
     allowed = list(AGENTS_BY_SLUG["revenue-ops"].allowed_tools)
     agent = RevenueOpsAgent(
-        agent_id=uuid.UUID(int=0), config={}, allowed_tools=allowed
+        agent_id=uuid.UUID(int=0), allowed_tools=allowed
     )
     names = [s["function"]["name"] for s in agent.get_tools()]
     assert names == allowed
@@ -123,7 +121,7 @@ def test_agent_get_tools_matches_allowed_tools():
 async def test_agent_with_explicit_empty_allowed_tools_rejects_everything():
     """Explicitly passing `[]` overrides the class default and locks the agent down."""
     agent = RevenueOpsAgent(
-        agent_id=uuid.UUID(int=0), config={}, allowed_tools=[]
+        agent_id=uuid.UUID(int=0), allowed_tools=[]
     )
     assert agent.get_tools() == []
     with pytest.raises(PermissionError):
@@ -132,6 +130,6 @@ async def test_agent_with_explicit_empty_allowed_tools_rejects_everything():
 
 def test_agent_defaults_to_class_allowed_tools():
     """Omitting allowed_tools picks up the class-declared default."""
-    agent = RevenueOpsAgent(agent_id=uuid.UUID(int=0), config={})
+    agent = RevenueOpsAgent(agent_id=uuid.UUID(int=0))
     assert agent.allowed_tools == list(RevenueOpsAgent.allowed_tools)
     assert agent.allowed_tools, "class default should be non-empty for implemented agent"

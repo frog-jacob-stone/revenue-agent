@@ -145,7 +145,7 @@ async def test_agent_id(_test_pool: asyncpg.Pool) -> uuid.UUID:
     to all tests.
     """
     return await _test_pool.fetchval(
-        "INSERT INTO agents (slug, config) VALUES ($1, '{}'::jsonb) RETURNING id",
+        "INSERT INTO agents (slug) VALUES ($1) RETURNING id",
         _TEST_AGENT_SLUG,
     )
 

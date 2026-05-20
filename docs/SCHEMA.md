@@ -8,7 +8,7 @@
 Ten core tables plus pgvector and LangGraph's checkpoint tables. Every table has RLS enabled from day one so policies can be added without a migration later.
 
 ```
-agents           → registry of agent definitions (config, prompts, scopes)
+agents           → registry of agent definitions (slug-keyed identity rows; metadata lives on the Python class)
 workflows        → a business process instance (e.g. "outbound to Acme")
 approvals        → human-in-the-loop queue for graph nodes that pause for review
 memories         → unified agent memory (facts, summaries, embeddings)
@@ -39,7 +39,6 @@ Stores only runtime-mutable state. Static metadata (`name`, `description`, `requ
 |---|---|---|
 | `id` | uuid | PK |
 | `slug` | text | Unique identifier matching the class `slug`, e.g. `outreach-agent` |
-| `config` | jsonb | Runtime overrides (model, temperature, etc.) |
 | `is_active` | boolean | Soft disable |
 | `created_at` / `updated_at` | timestamptz | |
 
@@ -321,6 +320,7 @@ Migrations run in filename order; each is idempotent.
 17. `0017_create_chat_tables.sql` — adds `chat_sessions` and `chat_messages` for human-to-agent chat persistence (sidebar multi-chat + durable streaming via `TurnRuntime`)
 18. `0018_enable_rls_gaps.sql` — enables RLS on `approvals` and `agent_messages`
 19. `0019_chat_sessions_default_slug.sql` — gives `chat_sessions.agent_slug` a `DEFAULT 'revenue-ops'`. Single front-door pattern means new sessions always target the same conversational agent; this lets the router create sessions with no body
+20. `0020_drop_agents_config.sql` — drops `agents.config`. The column was a free-form jsonb knob that no app code ever read; per-agent LLM selection lives on the Python class `model` attribute. Follows the precedent of `0006_simplify_agents.sql`
 
 ## Open Questions
 

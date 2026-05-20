@@ -63,14 +63,12 @@ async def seed_agents() -> None:
         for cls in AGENTS:
             await conn.execute(
                 """
-                insert into agents (slug, config)
-                values ($1, $2)
+                insert into agents (slug)
+                values ($1)
                 on conflict (slug) do update set
-                    config     = excluded.config,
                     updated_at = now()
                 """,
                 cls.slug,
-                dict(cls.default_config),
             )
             logger.debug("seeded agent: %s", cls.slug)
 

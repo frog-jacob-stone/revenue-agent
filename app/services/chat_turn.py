@@ -63,7 +63,6 @@ def _get_front_door() -> ConversationalAgent:
         )
     return cls(
         agent_id=UUID(int=0),
-        config=dict(cls.default_config),
         allowed_tools=list(cls.allowed_tools),
     )
 
@@ -136,7 +135,7 @@ async def _stream_llm_turn(
     attribution = Attribution(agent_slug=FRONT_DOOR_SLUG, purpose="chat")
 
     while True:
-        model = agent.config.get("model", "gpt-4o-mini")
+        model = agent.model or "gpt-4o-mini"
 
         tool_calls_buf: dict[int, dict[str, Any]] = {}
         terminal: LlmResponse | None = None

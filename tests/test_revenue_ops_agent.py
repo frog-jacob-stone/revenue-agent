@@ -17,7 +17,7 @@ def test_revenue_ops_is_conversational():
 
 
 def test_system_prompt_non_empty():
-    inst = RevenueOpsAgent(agent_id=uuid4(), config={})
+    inst = RevenueOpsAgent(agent_id=uuid4())
     prompt = inst.get_system_prompt()
     assert isinstance(prompt, str)
     assert len(prompt) > 200
@@ -27,7 +27,7 @@ def test_system_prompt_non_empty():
 
 
 def test_allowed_tools_include_mandatory_set():
-    inst = RevenueOpsAgent(agent_id=uuid4(), config={})
+    inst = RevenueOpsAgent(agent_id=uuid4())
     mandatory = {
         "ask_agent",
         "trigger_revenue_recognition",
@@ -43,7 +43,7 @@ def test_allowed_tools_include_mandatory_set():
 
 
 def test_get_tools_returns_schemas_for_allowed_tools():
-    inst = RevenueOpsAgent(agent_id=uuid4(), config={})
+    inst = RevenueOpsAgent(agent_id=uuid4())
     schemas = inst.get_tools()
     names = {s["function"]["name"] for s in schemas}
     # ask_agent is the load-bearing one — delegation entry point.

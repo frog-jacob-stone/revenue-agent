@@ -24,7 +24,6 @@ class RevenueOpsAgent(ConversationalAgent):
     )
     requires_approval = False
     model = "gpt-4o"
-    default_config: ClassVar[dict] = {"model": "gpt-4o"}
 
     allowed_tools: ClassVar[tuple[str, ...]] = (
         "ask_agent",

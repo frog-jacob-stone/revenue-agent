@@ -108,9 +108,9 @@ Every state transition writes a row to `audit_log`. The inbox is the canonical r
 
 ## Module 3: Agent Detail Pages
 
-**Build:** Per-agent status indicator (idle/running/paused); enable/disable toggle wired to `setAgentActive()` API call; last run summary (timestamp + outcome); pending approvals mini-panel with inline approve/reject icons; run history table (last N actions, outcome, reasoning); manual trigger button with error handling; agent tools list from the registry; agent-specific config panels for six agents: Content Writer, Outreach Agent, Proposal Generator, Revenue Recognition, SDR Researcher, Slide Deck Agent
+**Build:** Per-agent status indicator (idle/running/paused); enable/disable toggle wired to `setAgentActive()` API call; last run summary (timestamp + outcome); pending approvals mini-panel with inline approve/reject icons; run history table (last N actions, outcome, reasoning); manual trigger button with error handling; agent tools list from the registry.
 
-**Learn:** Agent identity — one coherent job, one audit trail, one approval context. Why read-only analytics agents and write-proposing operations agents are separate even when they work on the same data. How config panels expose per-agent settings without a deploy (stored in `agents.config` jsonb).
+**Learn:** Agent identity — one coherent job, one audit trail, one approval context. Why read-only analytics agents and write-proposing operations agents are separate even when they work on the same data.
 
 ---
 
