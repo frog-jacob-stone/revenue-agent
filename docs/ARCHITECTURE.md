@@ -6,10 +6,10 @@ The durable shape of the system. Update this when boundaries, layering, or integ
 
 | Layer | Tool |
 |---|---|
-| API / agent logic | FastAPI + Python 3.12 + Anthropic SDK |
+| API / agent logic | FastAPI + Python 3.12 + OpenAI |
 | Memory & state | Supabase (Postgres + pgvector) — agent memory, action queue, audit log |
 | UI | React + TypeScript + Vite (`ui/`) |
-| Integration bus | n8n — triggers and third-party calls only, no business logic |
+| Integration bus | triggers and third-party calls only, no business logic |
 | Secrets | Doppler (local and cloud, same config) |
 | Runtime | Docker Compose locally → Railway/Render later |
 
@@ -43,16 +43,10 @@ router  →  service  →  (agent | integration client | db)
 
 - **Routers** validate input and call services. No business logic.
 - **Services** hold business logic. Never call routers. Every state-changing service function calls `write_audit_event()`.
-- **Agents** are services that propose actions via Anthropic SDK. They never reach out to third-party systems on their own.
+- **Agents** are services that propose actions. They never reach out to third-party systems on their own.
 - **Integration clients** (HubSpot, Gmail, Harvest) are called only by services executing approved actions.
 - **Orchestrator** drives multi-step chains for workflows whose `pattern` is set. See "Prompt Chain Orchestrator" below.
 - All DB, HTTP, and agent calls are async.
-
-## Integration Model
-
-- n8n handles **triggers** (webhooks, schedules) and **third-party I/O** only.
-- All complex logic lives in FastAPI. n8n calls FastAPI; FastAPI does not call n8n.
-- New integrations: build the client in `app/`, expose a service, then wire the n8n trigger last.
 
 ## Agent Scoping Principles
 
@@ -79,7 +73,7 @@ Lives in `app/orchestrator/`. Workflows are LangGraph `StateGraph`s; checkpoint 
 - **Loop pattern (iterate on human input).** A node may have an outgoing edge that points back to an earlier node, with an interrupt gate sitting on the loop edge. The canonical example is `rev_rec_monthly`: `validate_and_sync` → (incomplete) → `propose_configure` → [interrupt_before `apply_configure_or_loop`] → human approves → `apply_configure_or_loop` → loops back to `validate_and_sync`. One workflow_id covers the full iteration cycle. The graph author owns loop-termination logic; the framework imposes no infinite-loop guard.
 - **Critique loop with shared draft.** A draft node feeds one or more critic nodes; critics on fail loop back to the draft. State carries per-critic `*_attempts` counters and a single `last_critique_feedback` slot that the next draft consumes and clears. The canonical example is `outreach_chain`: `compose_email` → `voice_critique` (max 3) → `accuracy_critique` (max 2); either critic loops back to `compose_email` on fail with budget remaining. Counters are independent (voice's attempts accumulate across the same draft sequence even when accuracy was the failure that caused the loop). Budget exhaustion routes to a terminal `failed_terminal` node. `content_creation` is the simpler single-critic version. Node names must not collide with state field names.
 - **Production graphs.** `content_publish`, `rev_rec_monthly`, `outreach_chain`, `content_creation`. The `_multi_agent_demo` and `_critique_poc` graphs are not registered at startup — tests register them explicitly.
-- **Provider dispatch.** `invoke_agent` is currently Anthropic-only. The outreach graph (Anthropic) uses it. The content_creation graph (OpenAI) calls `call_openai` directly; a provider-aware refactor is on the backlog.
+- **Provider dispatch.** `invoke_agent` is currently OpenAI-only. The outreach graph uses it. The content_creation graph (OpenAI) calls `call_openai` directly; a provider-aware refactor is on the backlog.
 - **Multi-agent messaging.** `app/services/agent_messages.py` (backed by the `agent_messages` table) records every agent-to-agent turn with a `thread_id` correlation key and an optional `workflow_id` link. The `ask_agent` tool (`app/tools/agent_tools.py`) is the canonical primitive: it writes the outbound prompt, invokes the target agent via `invoke_agent` (single-turn), writes the inbound reply, and returns `{answer, thread_id}`. `ToolContext` carries `workflow_id` so node-driven `ask_agent` calls automatically link their messages to the workflow. Threads are recorded but not yet *used* as conversational context — receivers see only the current question. The `_multi_agent_demo` graph is the canonical end-to-end example.
 
 ## Approval Inbox
@@ -96,7 +90,6 @@ Three patterns, in order of planned adoption:
 
 ## Anti-Patterns
 
-- Business logic in n8n function nodes
 - Agents executing CUD actions without an approved action row
 - Secrets anywhere outside Doppler
 - Agent-specific UI before the shared approval inbox exists

@@ -279,7 +279,7 @@ Historical audit_log rows may carry pre-migration vocabulary (`action.proposed/a
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /workflows` | n8n or manual trigger creates a workflow |
+| `POST /workflows` | trigger creates a workflow |
 | `GET /workflows/{id}` | Workflow detail |
 | `GET /workflows/{id}/trace` | Audit-log event timeline for the workflow |
 | `GET /approvals?status=pending` | The approval inbox query |

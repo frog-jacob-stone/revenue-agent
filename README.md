@@ -6,8 +6,6 @@ FastAPI service that orchestrates AI agents for revenue operations. Every action
 
 - **FastAPI + asyncpg** — async Python API backed directly by Postgres
 - **Supabase** — local Postgres (via Docker), RLS, and migrations
-- **Anthropic SDK** — Claude-powered agents (next sprint)
-- **n8n** — triggers and third-party integration routing only; complex logic lives here in FastAPI
 - **Agents are scoped by coherent identity** — separate agents for write-proposing operations vs. read-only analytics, even within the same domain. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the scoping principles.
 
 ## Prerequisites
