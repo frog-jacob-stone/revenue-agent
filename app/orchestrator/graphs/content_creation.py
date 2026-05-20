@@ -17,10 +17,7 @@ Three host-defined nodes plus the critique loop attached by
 The voice review writes `social_posts.status = 'ready'` on pass (inside
 `run_voice_review`). On terminal failure the row stays at `status='draft'`.
 
-LLM calls in `interpret_brief` and `draft_post` go through the
-instrumented `call_openai_chat` wrapper directly. `run_voice_review` does
-the same. The provider-aware `invoke_agent` refactor is on the backlog;
-the critique-loop helper is provider-agnostic and works with either path.
+All LLM calls go through the dispatcher in `app.integrations.llm`.
 """
 from __future__ import annotations
 
@@ -31,31 +28,29 @@ from uuid import UUID
 
 from langgraph.graph import END, StateGraph
 
+from app.agents.content import ContentOrchestratorAgent
 from app.db import get_pool
-from app.integrations.openai_client import call_openai_chat
+from app.integrations.llm import Attribution, dispatch
 from app.lib.json_utils import parse_json
 from app.orchestrator.critique_loop import Critic, add_critique_loop
 from app.orchestrator.graphs._content_creation_prompts import (
-    CONTENT_STRATEGY_MODEL,
-    CONTENT_STRATEGY_SLUG,
     CONTENT_STRATEGY_SYSTEM_PROMPT,
-    LINKEDIN_WRITER_MODEL,
-    LINKEDIN_WRITER_SLUG,
     LINKEDIN_WRITER_SYSTEM_PROMPT,
-    PERSONAL_VOICE_MODEL,
-    PERSONAL_VOICE_SLUG,
     build_personal_voice_system_prompt,
 )
 from app.orchestrator.runner import GraphSpec
 from app.orchestrator.state import BaseGraphState
 from app.services import social_posts
-from app.services.llm_logging import with_llm_context
 
 logger = logging.getLogger(__name__)
 
 
 CONTENT_CREATION_KIND = "content_creation"
-CONTENT_AGENT_SLUG = "content-orchestrator"
+
+# This graph is content-orchestrator's work. Every LLM call inside attributes
+# to ContentOrchestratorAgent.slug; the sub-step (strategy vs draft vs voice
+# review) is captured by the `purpose` field on each dispatch.
+OWNING_AGENT = ContentOrchestratorAgent
 
 DEFAULT_VOICE_MAX_ATTEMPTS = 3
 
@@ -63,6 +58,20 @@ DEFAULT_VOICE_MAX_ATTEMPTS = 3
 def _wf_uuid(state: "ContentCreationState") -> UUID | None:
     wf_id = state.get("workflow_id")
     return UUID(wf_id) if wf_id else None
+
+
+def _attribution(state: "ContentCreationState", purpose: str) -> Attribution:
+    """Build an Attribution for a dispatch from this graph.
+
+    `agent_slug` comes from the workflow's owning agent (seeded by the runner
+    from the GraphSpec default or an invoker override); `purpose` discriminates
+    the sub-step.
+    """
+    return Attribution(
+        agent_slug=state.get("_owning_agent_slug"),
+        purpose=purpose,
+        workflow_id=_wf_uuid(state),
+    )
 
 
 # ── State ────────────────────────────────────────────────────────────────────
@@ -106,21 +115,16 @@ async def interpret_brief(state: ContentCreationState) -> ContentCreationState:
     if instructions:
         user_msg += f"\nAdditional instructions: {instructions}"
 
-    with with_llm_context(
-        agent_slug=CONTENT_STRATEGY_SLUG,
-        workflow_id=_wf_uuid(state),
-        purpose="content_creation.interpret_brief",
-    ):
-        completion = await call_openai_chat(
-            model=CONTENT_STRATEGY_MODEL,
-            messages=[
-                {"role": "system", "content": CONTENT_STRATEGY_SYSTEM_PROMPT},
-                {"role": "user", "content": user_msg},
-            ],
-            response_format={"type": "json_object"},
-        )
-    raw = completion.choices[0].message.content or "{}"
-    idea = parse_json(raw)
+    response = await dispatch(
+        model=ContentOrchestratorAgent.model,
+        messages=[
+            {"role": "system", "content": CONTENT_STRATEGY_SYSTEM_PROMPT},
+            {"role": "user", "content": user_msg},
+        ],
+        attribution=_attribution(state, "content_creation.interpret_brief"),
+        response_format={"type": "json_object"},
+    )
+    idea = parse_json(response.text or "{}")
 
     if not idea.get("idea_title"):
         idea = {
@@ -167,22 +171,17 @@ async def draft_post(state: ContentCreationState) -> ContentCreationState:
             f"SPECIFIC ISSUES: {issues}\n"
         )
 
-    with with_llm_context(
-        agent_slug=LINKEDIN_WRITER_SLUG,
-        workflow_id=_wf_uuid(state),
-        purpose="content_creation.draft_post",
-    ):
-        completion = await call_openai_chat(
-            model=LINKEDIN_WRITER_MODEL,
-            messages=[
-                {"role": "system", "content": LINKEDIN_WRITER_SYSTEM_PROMPT},
-                {"role": "user", "content": user_msg},
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=1000,
-        )
-    raw = completion.choices[0].message.content or "{}"
-    draft = parse_json(raw)
+    response = await dispatch(
+        model=ContentOrchestratorAgent.model,
+        messages=[
+            {"role": "system", "content": LINKEDIN_WRITER_SYSTEM_PROMPT},
+            {"role": "user", "content": user_msg},
+        ],
+        attribution=_attribution(state, "content_creation.draft_post"),
+        response_format={"type": "json_object"},
+        max_tokens=1000,
+    )
+    draft = parse_json(response.text or "{}")
 
     post_text = draft.get("post_text") or f"[Draft: {idea.get('idea_title', brief)}]"
 
@@ -234,22 +233,17 @@ async def run_voice_review(state: ContentCreationState) -> dict[str, Any]:
             post = await social_posts.get_post_conn(conn, UUID(post_id_str))
             post_text = (post or {}).get("post_text", "") or ""
 
-    with with_llm_context(
-        agent_slug=PERSONAL_VOICE_SLUG,
-        workflow_id=_wf_uuid(state),
-        purpose="content_creation.voice_review",
-    ):
-        completion = await call_openai_chat(
-            model=PERSONAL_VOICE_MODEL,
-            messages=[
-                {"role": "system", "content": build_personal_voice_system_prompt(channel)},
-                {"role": "user", "content": f"Post to review:\n\n{post_text}"},
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=600,
-        )
-    raw = completion.choices[0].message.content or "{}"
-    review = parse_json(raw)
+    response = await dispatch(
+        model=ContentOrchestratorAgent.model,
+        messages=[
+            {"role": "system", "content": build_personal_voice_system_prompt(channel)},
+            {"role": "user", "content": f"Post to review:\n\n{post_text}"},
+        ],
+        attribution=_attribution(state, "content_creation.voice_review"),
+        response_format={"type": "json_object"},
+        max_tokens=600,
+    )
+    review = parse_json(response.text or "{}")
 
     passed = bool(review.get("passed_voice_review", False))
     revised_text = review.get("revised_post_text") or post_text
@@ -293,4 +287,4 @@ def build_graph() -> GraphSpec:
         pass_target=END,
     )
 
-    return GraphSpec(graph=g)
+    return GraphSpec(graph=g, owning_agent=OWNING_AGENT)

@@ -1,8 +1,8 @@
 """Uniform entry point for invoking an agent from anywhere.
 
 Same surface from a graph node, a sub-agent, or the chat layer. Looks up the
-agent class, builds a single-turn prompt, dispatches to OpenAI via the
-instrumented `call_openai_chat` wrapper, and wraps the call with audit events.
+agent class, builds a single-turn prompt, dispatches via the LLM dispatcher
+(`app.integrations.llm`), and wraps the call with audit events.
 """
 from __future__ import annotations
 
@@ -16,10 +16,9 @@ import asyncpg
 from app.agents.base import BaseAgent, ConversationalAgent
 from app.agents.registry import AGENTS
 from app.db import get_pool
-from app.integrations.openai_client import call_openai_chat
+from app.integrations.llm import Attribution, dispatch
 from app.orchestrator import events
 from app.services import audit
-from app.services.llm_logging import with_llm_context
 
 logger = logging.getLogger(__name__)
 
@@ -103,17 +102,17 @@ async def invoke_agent(
         )
 
     try:
-        with with_llm_context(
-            agent_slug=slug,
-            workflow_id=workflow_id,
-            purpose=f"agent:{slug}",
-        ):
-            completion = await call_openai_chat(
-                model=agent_cls.model,
-                messages=messages,
-                max_tokens=max_tokens,
-            )
-        text = completion.choices[0].message.content or ""
+        response = await dispatch(
+            model=agent_cls.model,
+            messages=messages,
+            attribution=Attribution(
+                agent_slug=slug,
+                purpose=f"agent:{slug}",
+                workflow_id=workflow_id,
+            ),
+            max_tokens=max_tokens,
+        )
+        text = response.text
     except Exception as exc:
         async with pool.acquire() as conn:
             await audit.write_audit_event(

@@ -4,7 +4,7 @@ Replaces the prior `test_chat_stream.py` (loop only) and `test_chat_runtime.py`
 (detached runtime) — both surfaces are now exercised through `chat_turn.py`.
 
 Two layers of testing:
-  1. `_stream_llm_turn` — drive the OpenAI tool-call loop with a fake client.
+  1. `_stream_llm_turn` — drive the LLM tool-call loop with a fake provider.
   2. `start_turn` — drive the full detached runtime + persistence.
 """
 from __future__ import annotations
@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.db import get_pool
+from app.integrations.llm import LlmResponse, StreamDelta, ToolCall, use_provider
 from app.models.workflows import TraceEvent
 from app.orchestrator import events as evt_const
 from app.services import chat_sessions as cs
@@ -27,79 +28,7 @@ from app.services.chat_turn import (
     get_active,
     start_turn,
 )
-
-
-# ── Fake OpenAI streaming chunks ────────────────────────────────────────────
-
-
-class _FakeFunctionDelta:
-    def __init__(self, name: str | None = None, arguments: str | None = None) -> None:
-        self.name = name
-        self.arguments = arguments
-
-
-class _FakeToolCallDelta:
-    def __init__(self, index: int, id: str | None = None, function: _FakeFunctionDelta | None = None) -> None:
-        self.index = index
-        self.id = id
-        self.function = function
-
-
-class _FakeDelta:
-    def __init__(
-        self,
-        content: str | None = None,
-        tool_calls: list[_FakeToolCallDelta] | None = None,
-    ) -> None:
-        self.content = content
-        self.tool_calls = tool_calls
-
-
-class _FakeChoice:
-    def __init__(self, delta: _FakeDelta, finish_reason: str | None = None) -> None:
-        self.delta = delta
-        self.finish_reason = finish_reason
-
-
-class _FakeChunk:
-    def __init__(self, choices: list[_FakeChoice]) -> None:
-        self.choices = choices
-
-
-def _chunk_text(text: str, finish: str | None = None) -> _FakeChunk:
-    return _FakeChunk([_FakeChoice(_FakeDelta(content=text), finish_reason=finish)])
-
-
-def _chunk_tool_call(
-    *, idx: int, id: str | None, name: str | None, arguments: str | None, finish: str | None
-) -> _FakeChunk:
-    tc = _FakeToolCallDelta(
-        index=idx, id=id, function=_FakeFunctionDelta(name=name, arguments=arguments)
-    )
-    return _FakeChunk([_FakeChoice(_FakeDelta(tool_calls=[tc]), finish_reason=finish)])
-
-
-async def _async_iter(chunks: list[_FakeChunk]):
-    for c in chunks:
-        yield c
-
-
-class _FakeOpenAIClient:
-    """Replays a queue of pre-built streams, one per `create()` call."""
-
-    def __init__(self, streams: list[list[_FakeChunk]]) -> None:
-        self._streams = list(streams)
-
-        class _Chat:
-            def __init__(_self_inner) -> None:
-                _self_inner.completions = self  # type: ignore[assignment]
-
-        self.chat = _Chat()
-
-    async def create(self, **_kwargs):
-        if not self._streams:
-            raise RuntimeError("no more fake streams queued")
-        return _async_iter(self._streams.pop(0))
+from tests.fakes.llm import FakeProvider
 
 
 # ── _stream_llm_turn (loop) ─────────────────────────────────────────────────
@@ -107,18 +36,18 @@ class _FakeOpenAIClient:
 
 @pytest.mark.asyncio
 async def test_stream_emits_deltas_and_done_for_text_only_response():
-    fake = _FakeOpenAIClient(
+    provider = FakeProvider(
         streams=[
             [
-                _chunk_text("Hello"),
-                _chunk_text(", "),
-                _chunk_text("world", finish="stop"),
+                StreamDelta(text="Hello"),
+                StreamDelta(text=", "),
+                StreamDelta(text="world"),
+                LlmResponse(text="Hello, world", finish_reason="stop"),
             ]
         ]
     )
 
-    with patch("app.services.chat_turn.get_client", return_value=fake), \
-         patch("app.services.chat_turn.fire_and_forget_write", new=lambda **_: None):
+    with use_provider(provider):
         out: list[dict[str, Any]] = []
         async for evt in _stream_llm_turn([{"role": "user", "content": "hi"}]):
             out.append(evt)
@@ -137,18 +66,33 @@ async def test_stream_emits_tool_lifecycle_and_workflow_events():
     including workflow_started + workflow_event lines tailed from audit_log."""
 
     args_json = json.dumps({"date_recognized": "2026-05-01"})
-    fake = _FakeOpenAIClient(
+    provider = FakeProvider(
         streams=[
+            # First round-trip: model emits a tool_call.
             [
-                _chunk_tool_call(
-                    idx=0, id="call_1", name="trigger_revenue_recognition",
-                    arguments=None, finish=None,
+                StreamDelta(
+                    tool_call_index=0,
+                    tool_call_id="call_1",
+                    tool_call_name_delta="trigger_revenue_recognition",
                 ),
-                _chunk_tool_call(
-                    idx=0, id=None, name=None, arguments=args_json, finish="tool_calls",
+                StreamDelta(tool_call_index=0, tool_call_args_delta=args_json),
+                LlmResponse(
+                    text="",
+                    tool_calls=[
+                        ToolCall(
+                            id="call_1",
+                            name="trigger_revenue_recognition",
+                            arguments=args_json,
+                        )
+                    ],
+                    finish_reason="tool_calls",
                 ),
             ],
-            [_chunk_text("Triggered.", finish="stop")],
+            # Second round-trip: model responds with text.
+            [
+                StreamDelta(text="Triggered."),
+                LlmResponse(text="Triggered.", finish_reason="stop"),
+            ],
         ]
     )
 
@@ -182,8 +126,7 @@ async def test_stream_emits_tool_lifecycle_and_workflow_events():
                 continue
             yield ev
 
-    with patch("app.services.chat_turn.get_client", return_value=fake), \
-         patch("app.services.chat_turn.fire_and_forget_write", new=lambda **_: None), \
+    with use_provider(provider), \
          patch("app.orchestrator.runner.runner.start_in_background",
                new=AsyncMock(side_effect=fake_runner_start_bg)), \
          patch("app.services.audit_tail.tail_workflow_events", new=fake_tail), \
@@ -338,6 +281,57 @@ async def test_activity_is_persisted_with_tool_lifecycle():
     assert line["kind"] == "tool"
     assert line["status"] == "ok"
     assert line["label"] == "Calling create_post"
+
+
+@pytest.mark.asyncio
+async def test_chat_turn_writes_started_and_completed_audit_events():
+    """A successful turn emits CHAT_TURN_STARTED + CHAT_TURN_COMPLETED with
+    matching turn_id in the payload."""
+    pool = await get_pool()
+    session = await cs.create_session(pool, FRONT_DOOR_SLUG)
+
+    events_list = [
+        {"type": "delta", "text": "ok"},
+        {"type": "done", "answer": "ok", "tool_used": None},
+    ]
+    fake_gen = await _fake_stream_gen(events_list)
+    with patch("app.services.chat_turn._stream_llm_turn", new=fake_gen):
+        runtime = await start_turn(pool, session["id"], "hi")
+        await runtime.task
+
+    rows = await pool.fetch(
+        "SELECT event_type, payload FROM audit_log WHERE event_type LIKE 'chat.turn.%' "
+        "ORDER BY id"
+    )
+    types = [r["event_type"] for r in rows]
+    assert types == [evt_const.CHAT_TURN_STARTED, evt_const.CHAT_TURN_COMPLETED]
+    assert rows[0]["payload"]["turn_id"] == str(runtime.turn_id)
+    assert rows[1]["payload"]["turn_id"] == str(runtime.turn_id)
+    assert rows[1]["payload"]["status"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_chat_turn_writes_failed_audit_event_on_error():
+    """A turn that raises emits CHAT_TURN_FAILED with the error in the payload."""
+    pool = await get_pool()
+    session = await cs.create_session(pool, FRONT_DOOR_SLUG)
+
+    async def boom(_history):
+        raise RuntimeError("upstream timeout")
+        yield  # pragma: no cover
+
+    with patch("app.services.chat_turn._stream_llm_turn", new=boom):
+        runtime = await start_turn(pool, session["id"], "hi")
+        await runtime.task
+
+    rows = await pool.fetch(
+        "SELECT event_type, payload FROM audit_log WHERE event_type LIKE 'chat.turn.%' "
+        "ORDER BY id"
+    )
+    types = [r["event_type"] for r in rows]
+    assert types == [evt_const.CHAT_TURN_STARTED, evt_const.CHAT_TURN_FAILED]
+    assert rows[1]["payload"]["status"] == "failed"
+    assert "upstream timeout" in rows[1]["payload"]["error"]
 
 
 @pytest.mark.asyncio

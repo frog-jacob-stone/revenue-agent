@@ -28,3 +28,7 @@ AGENT_FAILED = "agent.failed"
 
 SUBWORKFLOW_SPAWNED = "subworkflow.spawned"
 SUBWORKFLOW_COMPLETED = "subworkflow.completed"
+
+CHAT_TURN_STARTED = "chat.turn.started"
+CHAT_TURN_COMPLETED = "chat.turn.completed"
+CHAT_TURN_FAILED = "chat.turn.failed"

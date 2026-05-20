@@ -1,32 +1,17 @@
 """Tests for orchestrator.agent_invoke.
 
-Stubs `call_openai_chat` to avoid real network. Verifies AGENT_INVOKED /
-AGENT_COMPLETED audit events bookend the call, and that AGENT_FAILED is
-emitted when the underlying call raises.
+Scopes a `FakeProvider` via `use_provider()` so no real OpenAI traffic happens.
+Verifies AGENT_INVOKED / AGENT_COMPLETED audit events bookend the call, and
+that AGENT_FAILED is emitted when the underlying call raises.
 """
 from __future__ import annotations
-
-from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 
 from app.db import get_pool
+from app.integrations.llm import LlmResponse, use_provider
 from app.orchestrator import NodeContext, agent_invoke, events
-
-
-def _fake_completion(text: str) -> SimpleNamespace:
-    """Build the minimal shape of a ChatCompletion used by invoke_agent."""
-    return SimpleNamespace(
-        choices=[SimpleNamespace(
-            message=SimpleNamespace(content=text, tool_calls=None, role="assistant"),
-            finish_reason="stop",
-        )],
-        usage=SimpleNamespace(
-            prompt_tokens=1, completion_tokens=1, total_tokens=2,
-            model_dump=lambda: {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-        ),
-    )
+from tests.fakes.llm import FakeProvider
 
 
 async def _seed_workflow_row(kind: str = "_agent_invoke_test"):
@@ -53,11 +38,13 @@ async def _events_for(workflow_id):
 
 async def test_invoke_agent_emits_invoked_and_completed(test_agent_slug):
     wf_id = await _seed_workflow_row()
+    fake = FakeProvider(
+        completions=[
+            LlmResponse(text="[stub from model]", finish_reason="stop")
+        ]
+    )
 
-    async def fake_call(**kwargs):
-        return _fake_completion(f"[stub from {kwargs.get('model')}]")
-
-    with patch("app.orchestrator.agent_invoke.call_openai_chat", side_effect=fake_call):
+    with use_provider(fake):
         from app.agents.registry import AGENTS
         agent_cls = next(c for c in AGENTS if getattr(c, "model", ""))
         ctx = NodeContext(workflow_id=wf_id)
@@ -73,14 +60,12 @@ async def test_invoke_agent_emits_invoked_and_completed(test_agent_slug):
 
 async def test_invoke_agent_emits_failed_on_exception(test_agent_slug):
     wf_id = await _seed_workflow_row()
-
-    async def boom(**kwargs):
-        raise RuntimeError("network ded")
+    fake = FakeProvider(completions=[RuntimeError("network ded")])
 
     from app.agents.registry import AGENTS
     agent_cls = next(c for c in AGENTS if getattr(c, "model", ""))
 
-    with patch("app.orchestrator.agent_invoke.call_openai_chat", side_effect=boom):
+    with use_provider(fake):
         ctx = NodeContext(workflow_id=wf_id)
         with pytest.raises(RuntimeError, match="network ded"):
             await agent_invoke.invoke_agent(agent_cls.slug, {"prompt": "x"}, ctx)

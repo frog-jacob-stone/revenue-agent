@@ -7,32 +7,10 @@ from app.tools.base import ToolContext, ToolDefinition
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "gpt-4o-mini"
-
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-async def _llm(system: str, user: str, *, purpose: str) -> str:
-    """Single OpenAI call. Returns the text content of the first choice."""
-    from app.config import settings
-    from app.integrations.openai_client import call_openai_chat
-
-    if not settings.openai_api_key:
-        return "{}"
-
-    completion = await call_openai_chat(
-        model=_MODEL,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        response_format={"type": "json_object"},
-        purpose=purpose,
-    )
-    return completion.choices[0].message.content or "{}"
 
 
 def _parse(raw: str) -> dict[str, Any]:
@@ -216,8 +194,9 @@ async def _rewrite_post(
     channel: str = "linkedin",
     **_: Any,
 ) -> dict[str, Any]:
-    from app.agents.content import LinkedInWritingAgent
+    from app.agents.content import ContentOrchestratorAgent, LinkedInWritingAgent
     from app.db import get_pool
+    from app.integrations.llm import Attribution, dispatch
     from app.services import social_posts as svc
 
     pool = await get_pool()
@@ -234,8 +213,19 @@ async def _rewrite_post(
         f"Channel: {channel}"
     )
 
-    raw = await _llm(LinkedInWritingAgent.system_prompt, user_msg, purpose="rewrite_post")
-    draft = _parse(raw)
+    response = await dispatch(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": LinkedInWritingAgent.system_prompt},
+            {"role": "user", "content": user_msg},
+        ],
+        attribution=Attribution(
+            agent_slug=ContentOrchestratorAgent.slug,
+            purpose="rewrite_post",
+        ),
+        response_format={"type": "json_object"},
+    )
+    draft = _parse(response.text or "{}")
 
     post_text = draft.get("post_text") or post.get("post_text", "")
 

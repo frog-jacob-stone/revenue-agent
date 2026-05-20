@@ -20,6 +20,7 @@ from uuid import UUID
 
 from langgraph.graph import END, StateGraph
 
+from app.agents.content import ContentOrchestratorAgent
 from app.db import get_pool
 from app.orchestrator.runner import GraphSpec
 from app.orchestrator.state import BaseGraphState
@@ -29,8 +30,13 @@ logger = logging.getLogger(__name__)
 
 
 CONTENT_PUBLISH_KIND = "content_publish"
-CONTENT_AGENT_SLUG = "content-orchestrator"
+OWNING_AGENT = ContentOrchestratorAgent
 ACTION_TYPE = "post_to_linkedin"
+
+
+def _owning_slug(state: "ContentPublishState") -> str:
+    """Effective owning-agent slug for proposals from this graph."""
+    return state.get("_owning_agent_slug") or OWNING_AGENT.slug
 
 
 class ContentPublishState(BaseGraphState, total=False):
@@ -45,7 +51,7 @@ async def propose_post(state: ContentPublishState) -> ContentPublishState:
     if not post_id_str:
         return {"_propose": {
             "action_type": ACTION_TYPE,
-            "agent_slug": CONTENT_AGENT_SLUG,
+            "agent_slug": _owning_slug(state),
             "risk_level": "medium",
             "summary": "Cannot publish: no post_id in initial state",
             "proposed_payload": {"error": "no post_id"},
@@ -58,7 +64,7 @@ async def propose_post(state: ContentPublishState) -> ContentPublishState:
     if not post:
         return {"_propose": {
             "action_type": ACTION_TYPE,
-            "agent_slug": CONTENT_AGENT_SLUG,
+            "agent_slug": _owning_slug(state),
             "risk_level": "medium",
             "summary": f"Cannot publish: post {post_id_str} not found",
             "proposed_payload": {"error": f"post {post_id_str} not found"},
@@ -73,7 +79,7 @@ async def propose_post(state: ContentPublishState) -> ContentPublishState:
     return {
         "_propose": {
             "action_type": ACTION_TYPE,
-            "agent_slug": CONTENT_AGENT_SLUG,
+            "agent_slug": _owning_slug(state),
             "risk_level": "medium",
             "summary": post.get("idea_title") or "LinkedIn post",
             "proposed_payload": proposed_payload,
@@ -119,4 +125,8 @@ def build_graph() -> GraphSpec:
     g.set_entry_point("propose_post")
     g.add_edge("propose_post", "post_to_linkedin")
     g.add_edge("post_to_linkedin", END)
-    return GraphSpec(graph=g, interrupt_before=("post_to_linkedin",))
+    return GraphSpec(
+        graph=g,
+        interrupt_before=("post_to_linkedin",),
+        owning_agent=OWNING_AGENT,
+    )

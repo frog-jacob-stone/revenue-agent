@@ -14,7 +14,8 @@ identity-bearing agents:
 
 Single-turn LLM calls made by graph nodes are NOT agents. Their prompts live
 inline in the graph files as `MODEL` + `SYSTEM_PROMPT` constants, attributed
-to free-form slug strings via `with_llm_context(agent_slug=..., purpose=...)`.
+to free-form slug strings via `Attribution(agent_slug=..., purpose=...)` on the
+dispatcher.
 """
 from app.agents.base import BaseAgent
 from app.agents.bdr import BDRAgent

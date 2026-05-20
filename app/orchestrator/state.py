@@ -30,3 +30,9 @@ class BaseGraphState(TypedDict):
     workflow_id: NotRequired[str]
     parent_workflow_id: NotRequired[str | None]
     _propose: NotRequired[ProposeApproval]
+    # Slug of the agent identity this workflow's work attributes to. Seeded by
+    # the runner from `GraphSpec.owning_agent` (default) or the invoker's
+    # override on `runner.start(...)`. Every LLM dispatch inside the workflow
+    # uses this for `Attribution.agent_slug`. None when no owning agent is
+    # declared and no override is supplied.
+    _owning_agent_slug: NotRequired[str | None]

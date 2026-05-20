@@ -40,29 +40,24 @@ from uuid import UUID
 
 from langgraph.graph import END, StateGraph
 
+from app.agents.bdr import BDRAgent
 from app.config import settings
 from app.db import get_pool
-from app.integrations.openai_client import call_openai_chat
+from app.integrations.llm import Attribution, dispatch
 from app.lib.json_utils import parse_json
 from app.orchestrator.critique_loop import Critic, add_critique_loop
 from app.orchestrator.runner import GraphSpec
 from app.orchestrator.state import BaseGraphState
-from app.services.llm_logging import with_llm_context
 
 logger = logging.getLogger(__name__)
 
 
 OUTREACH_KIND = "outreach_chain"
 
-# Slug attribution for LLM-call audit. No agent class lookup — these are
-# free-form audit tags, not class names. The consolidation + email drafting
-# work belongs to the BDR persona; critics carry their own slugs.
-BDR_SLUG = "bdr"
-BDR_MODEL = "gpt-4o-mini"
-VOICE_CRITIC_SLUG = "voice-critic"
-VOICE_CRITIC_MODEL = "gpt-4o-mini"
-ACCURACY_CRITIC_SLUG = "accuracy-critic"
-ACCURACY_CRITIC_MODEL = "gpt-4o-mini"
+# This graph is BDR's work. Every LLM call inside attributes to BDRAgent.slug.
+# The sub-step (compose vs voice-critique vs accuracy-critique) is captured by
+# the `purpose` field on each dispatch, not by separate per-node slugs.
+OWNING_AGENT = BDRAgent
 
 ACTION_TYPE_SEND = "send_email"
 
@@ -118,9 +113,28 @@ def _wf_uuid(state: OutreachState) -> UUID | None:
     return UUID(wf_id) if wf_id else None  # type: ignore[arg-type]
 
 
+def _attribution(state: OutreachState, purpose: str) -> Attribution:
+    """Build an Attribution for a dispatch from this graph.
+
+    `agent_slug` comes from the workflow's owning agent (seeded by the runner
+    from the GraphSpec default or an invoker override); `purpose` discriminates
+    the sub-step.
+    """
+    return Attribution(
+        agent_slug=state.get("_owning_agent_slug"),
+        purpose=purpose,
+        workflow_id=_wf_uuid(state),
+    )
+
+
 async def _load_voice_profile() -> str:
-    """Read the most recent voice profile preference memory written for the
-    voice-critic agent."""
+    """Read the most recent voice profile preference memory.
+
+    The lookup keys on the legacy `"voice-critic"` slug — a memory-table key,
+    not an LLM-attribution slug. There is no `voice-critic` agent class; if a
+    memory row exists under that slug it was inserted by a separate
+    voice-profile seeding flow. Lookup is best-effort; missing → empty string.
+    """
     pool = await get_pool()
     row = await pool.fetchrow(
         """
@@ -133,7 +147,7 @@ async def _load_voice_profile() -> str:
         ORDER BY m.created_at DESC
         LIMIT 1
         """,
-        VOICE_CRITIC_SLUG,
+        "voice-critic",
     )
     return (row["content"] if row else "") or ""
 
@@ -222,18 +236,13 @@ async def consolidate(state: OutreachState) -> OutreachState:
         "first outreach email. Avoid fluff.\n\n"
         f"CONTACT:\n{contact}\n\nCOMPANY:\n{company}\n\nWEB SIGNALS:\n{web}\n\nBRIEF:"
     )
-    with with_llm_context(
-        agent_slug=BDR_SLUG,
-        workflow_id=_wf_uuid(state),
-        purpose="outreach.consolidate",
-    ):
-        completion = await call_openai_chat(
-            model=BDR_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=400,
-        )
-    text = completion.choices[0].message.content or ""
-    return {"brief": text.strip()}
+    response = await dispatch(
+        model=BDRAgent.model,
+        messages=[{"role": "user", "content": prompt}],
+        attribution=_attribution(state, "outreach.consolidate"),
+        max_tokens=400,
+    )
+    return {"brief": response.text.strip()}
 
 
 async def retrieve_kb(state: OutreachState) -> OutreachState:
@@ -284,18 +293,13 @@ async def compose_email(state: OutreachState) -> OutreachState:
         "Output JSON: {\"subject\": \"...\", \"body\": \"...\"}"
     )
 
-    with with_llm_context(
-        agent_slug=BDR_SLUG,
-        workflow_id=_wf_uuid(state),
-        purpose="outreach.compose_email",
-    ):
-        completion = await call_openai_chat(
-            model=BDR_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=600,
-        )
-    text = completion.choices[0].message.content or ""
-    subject, body = _parse_email(text)
+    response = await dispatch(
+        model=BDRAgent.model,
+        messages=[{"role": "user", "content": prompt}],
+        attribution=_attribution(state, "outreach.compose_email"),
+        max_tokens=600,
+    )
+    subject, body = _parse_email(response.text)
 
     return {
         "draft_email": {
@@ -329,18 +333,13 @@ async def run_voice_critic(state: OutreachState) -> dict[str, Any]:
         '"feedback": "one or two sentences explaining why", '
         '"issues": ["specific problems if any"]}'
     )
-    with with_llm_context(
-        agent_slug=VOICE_CRITIC_SLUG,
-        workflow_id=_wf_uuid(state),
-        purpose="outreach.voice_critique",
-    ):
-        completion = await call_openai_chat(
-            model=VOICE_CRITIC_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=400,
-        )
-    text = completion.choices[0].message.content or ""
-    return _parse_critique(text)
+    response = await dispatch(
+        model=BDRAgent.model,
+        messages=[{"role": "user", "content": prompt}],
+        attribution=_attribution(state, "outreach.voice_critique"),
+        max_tokens=400,
+    )
+    return _parse_critique(response.text)
 
 
 async def run_accuracy_critic(state: OutreachState) -> dict[str, Any]:
@@ -365,18 +364,13 @@ async def run_accuracy_critic(state: OutreachState) -> dict[str, Any]:
         '"feedback": "one or two sentences", '
         '"issues": ["specific unsupported claims if any"]}'
     )
-    with with_llm_context(
-        agent_slug=ACCURACY_CRITIC_SLUG,
-        workflow_id=_wf_uuid(state),
-        purpose="outreach.accuracy_critique",
-    ):
-        completion = await call_openai_chat(
-            model=ACCURACY_CRITIC_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=400,
-        )
-    text = completion.choices[0].message.content or ""
-    return _parse_critique(text)
+    response = await dispatch(
+        model=BDRAgent.model,
+        messages=[{"role": "user", "content": prompt}],
+        attribution=_attribution(state, "outreach.accuracy_critique"),
+        max_tokens=400,
+    )
+    return _parse_critique(response.text)
 
 
 async def propose_send(state: OutreachState) -> OutreachState:
@@ -385,7 +379,7 @@ async def propose_send(state: OutreachState) -> OutreachState:
     return {
         "_propose": {
             "action_type": ACTION_TYPE_SEND,
-            "agent_slug": BDR_SLUG,
+            "agent_slug": state.get("_owning_agent_slug") or OWNING_AGENT.slug,
             "risk_level": "medium",
             "summary": draft_payload.get("subject") or "Outreach email",
             "proposed_payload": draft_payload,
@@ -446,4 +440,8 @@ def build_graph() -> GraphSpec:
     g.add_edge("propose_send", "gmail_send")
     g.add_edge("gmail_send", END)
 
-    return GraphSpec(graph=g, interrupt_before=("gmail_send",))
+    return GraphSpec(
+        graph=g,
+        interrupt_before=("gmail_send",),
+        owning_agent=OWNING_AGENT,
+    )

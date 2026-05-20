@@ -19,12 +19,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import AsyncClient
 
+from app.agents.revenue import RevenueRecognitionAgent
 from app.db import get_pool
 from app.orchestrator import runner
 from app.orchestrator.graphs.rev_rec import (
     ACTION_TYPE_CONFIGURE,
     ACTION_TYPE_WRITE,
-    REV_REC_AGENT_SLUG,
     REV_REC_KIND,
     build_graph,
 )
@@ -117,7 +117,7 @@ async def test_happy_path_writes_revenue_entries(client: AsyncClient):
         )
         assert appr["status"] == "pending"
         assert appr["action_type"] == ACTION_TYPE_WRITE
-        assert appr["agent_slug"] == REV_REC_AGENT_SLUG
+        assert appr["agent_slug"] == RevenueRecognitionAgent.slug
 
         payload = _payload(appr)
         assert payload["date_recognized"] == "2025-04-30"

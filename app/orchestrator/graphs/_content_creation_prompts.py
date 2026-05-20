@@ -11,14 +11,11 @@ identity-less prompt holders — never invoked through `invoke_agent`,
 never used as autonomous agents. Inlining them as module-level constants
 makes the "Agent" abstraction stop lying.
 
-Slug strings stay as free-form audit tags via `with_llm_context(agent_slug=...)`.
+Slug strings stay as free-form audit tags via `Attribution(agent_slug=...)`.
 No class lookup happens at runtime.
 """
 
 # ── Content strategy (interpret_brief) ──────────────────────────────────────
-
-CONTENT_STRATEGY_SLUG = "content-strategy"
-CONTENT_STRATEGY_MODEL = "gpt-4o-mini"
 
 CONTENT_STRATEGY_SYSTEM_PROMPT = """\
 You are a content strategist for a senior technology executive at a B2B professional services firm.
@@ -46,9 +43,6 @@ Format:
 
 
 # ── LinkedIn writer (draft_post) ────────────────────────────────────────────
-
-LINKEDIN_WRITER_SLUG = "linkedin-writer"
-LINKEDIN_WRITER_MODEL = "gpt-4o-mini"
 
 LINKEDIN_WRITER_SYSTEM_PROMPT = """\
 You are a LinkedIn ghostwriter for a senior technology executive at a B2B professional services firm.
@@ -79,9 +73,6 @@ Format:
 
 
 # ── Personal voice (run_voice_review) ───────────────────────────────────────
-
-PERSONAL_VOICE_SLUG = "personal-voice"
-PERSONAL_VOICE_MODEL = "gpt-4o-mini"
 
 _PERSONAL_VOICE_PROFILE = """\
 Voice profile — Jacob Stone, VP of Revenue at Frogslayer.

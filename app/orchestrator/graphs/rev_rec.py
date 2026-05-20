@@ -32,6 +32,7 @@ from typing import Any, Literal, NotRequired
 
 from langgraph.graph import END, StateGraph
 
+from app.agents.revenue import RevenueRecognitionAgent
 from app.config import settings
 from app.integrations import airtable, forecast, harvest
 from app.orchestrator.runner import GraphSpec
@@ -43,10 +44,15 @@ logger = logging.getLogger(__name__)
 
 
 REV_REC_KIND = "rev_rec_monthly"
-REV_REC_AGENT_SLUG = "revenue-recognition"
+OWNING_AGENT = RevenueRecognitionAgent
 
 ACTION_TYPE_CONFIGURE = "configure_rev_rec_projects"
 ACTION_TYPE_WRITE = "write_rev_rec"
+
+
+def _owning_slug(state: "RevRecState") -> str:
+    """Effective owning-agent slug for proposals from this graph."""
+    return state.get("_owning_agent_slug") or OWNING_AGENT.slug
 
 
 # ── State ────────────────────────────────────────────────────────────────────
@@ -163,7 +169,7 @@ async def propose_configure(state: RevRecState) -> RevRecState:
     return {
         "_propose": {
             "action_type": ACTION_TYPE_CONFIGURE,
-            "agent_slug": REV_REC_AGENT_SLUG,
+            "agent_slug": _owning_slug(state),
             "risk_level": "low",
             "summary": (
                 f"Configure {len(state.get('incomplete_projects') or [])} incomplete "
@@ -252,7 +258,7 @@ async def propose_write_entries(state: RevRecState) -> RevRecState:
     return {
         "_propose": {
             "action_type": ACTION_TYPE_WRITE,
-            "agent_slug": REV_REC_AGENT_SLUG,
+            "agent_slug": _owning_slug(state),
             "risk_level": "low",
             "summary": (
                 f"Write {len(state.get('entries') or [])} revenue entries "
@@ -320,4 +326,5 @@ def build_graph() -> GraphSpec:
     return GraphSpec(
         graph=g,
         interrupt_before=("apply_configure_or_loop", "write_entries"),
+        owning_agent=OWNING_AGENT,
     )

@@ -1,14 +1,9 @@
 """End-to-end tests for the outreach_chain graph.
 
-Stubs `call_openai_chat` so the graph can drive its four LLM call sites
-(consolidate brief, compose email, voice critique, accuracy critique)
-without network. The fake dispatches by prompt marker so each test scenario
-can declare what each role should return.
-
-The graph now calls `call_openai_chat` directly inside the node bodies
-(see plan 12 — the prior `invoke_agent` indirection was removed for these
-single-turn, fixed-prompt calls). Approval attribution moved from
-`outreach-agent` to `bdr`.
+Uses `use_provider(FakeProvider(respond=...))` so the graph's four LLM call
+sites (consolidate brief, compose email, voice critique, accuracy critique)
+run without network. The respond callable dispatches by prompt marker so each
+test scenario declares what each role should return.
 
 Five scenarios:
   - happy: voice + accuracy both pass on first try → pause at gmail_send
@@ -20,20 +15,20 @@ Five scenarios:
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
 
+from app.agents.bdr import BDRAgent
 from app.db import get_pool
+from app.integrations.llm import LlmResponse, use_provider
 from app.orchestrator import runner
 from app.orchestrator.graphs.outreach import (
     ACTION_TYPE_SEND,
-    BDR_SLUG,
     OUTREACH_KIND,
     build_graph,
 )
+from tests.fakes.llm import FakeProvider
 
 
 @pytest.fixture(autouse=True)
@@ -44,57 +39,55 @@ def _register_graph():
     runner.unregister(OUTREACH_KIND)
 
 
-# ── Fake LLM dispatcher ──────────────────────────────────────────────────────
+# ── Provider router ─────────────────────────────────────────────────────────
 
 
-def _completion(text: str) -> SimpleNamespace:
-    return SimpleNamespace(
-        choices=[SimpleNamespace(
-            message=SimpleNamespace(content=text, tool_calls=None, role="assistant"),
-            finish_reason="stop",
-        )],
-        usage=SimpleNamespace(
-            prompt_tokens=1, completion_tokens=1, total_tokens=2,
-            model_dump=lambda: {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-        ),
-    )
-
-
-def _make_fake_call(*, voice_results: list[bool], accuracy_results: list[bool]):
-    """Build an async fake for call_openai_chat.
+def _make_provider(*, voice_results: list[bool], accuracy_results: list[bool]) -> FakeProvider:
+    """Build a FakeProvider that dispatches by prompt marker.
 
     `voice_results` and `accuracy_results` are popped (FIFO) on each critique.
-    The user-role message content discriminates which role is being invoked.
     """
     voice = list(voice_results)
     accuracy = list(accuracy_results)
 
-    async def fake(**kwargs) -> SimpleNamespace:
-        messages = kwargs.get("messages", [])
+    def respond(request: dict) -> LlmResponse:
+        messages = request.get("messages", [])
         prompt = "\n".join(m.get("content", "") or "" for m in messages)
         if "Voice Critic" in prompt:
             passed = voice.pop(0) if voice else False
-            return _completion(json.dumps({
-                "passed": passed,
-                "score": 0.9 if passed else 0.3,
-                "feedback": "ok" if passed else "too generic",
-                "issues": [] if passed else ["cliché opener"],
-            }))
+            return LlmResponse(
+                text=json.dumps({
+                    "passed": passed,
+                    "score": 0.9 if passed else 0.3,
+                    "feedback": "ok" if passed else "too generic",
+                    "issues": [] if passed else ["cliché opener"],
+                }),
+                finish_reason="stop",
+            )
         if "Accuracy Critic" in prompt:
             passed = accuracy.pop(0) if accuracy else False
-            return _completion(json.dumps({
-                "passed": passed,
-                "score": 0.9 if passed else 0.3,
-                "feedback": "supported" if passed else "fabricated detail",
-                "issues": [] if passed else ["claim X not in signals"],
-            }))
+            return LlmResponse(
+                text=json.dumps({
+                    "passed": passed,
+                    "score": 0.9 if passed else 0.3,
+                    "feedback": "supported" if passed else "fabricated detail",
+                    "issues": [] if passed else ["claim X not in signals"],
+                }),
+                finish_reason="stop",
+            )
         if 'Output JSON: {"subject"' in prompt:
-            return _completion(json.dumps({"subject": "Quick question", "body": "Hi there."}))
+            return LlmResponse(
+                text=json.dumps({"subject": "Quick question", "body": "Hi there."}),
+                finish_reason="stop",
+            )
         if "produce a 3-4 sentence brief" in prompt:
-            return _completion("Acme Corp is hiring backend engineers and just raised a Series B.")
-        return _completion("[unhandled stub]")
+            return LlmResponse(
+                text="Acme Corp is hiring backend engineers and just raised a Series B.",
+                finish_reason="stop",
+            )
+        return LlmResponse(text="[unhandled stub]", finish_reason="stop")
 
-    return fake
+    return FakeProvider(respond=respond)
 
 
 def _payload(approval) -> dict:
@@ -108,8 +101,8 @@ def _payload(approval) -> dict:
 async def test_happy_path_voice_pass_accuracy_pass(client: AsyncClient):
     """Both critics pass on first try → graph pauses at the gmail_send gate
     with the draft as the proposed_payload."""
-    fake = _make_fake_call(voice_results=[True], accuracy_results=[True])
-    with patch("app.orchestrator.graphs.outreach.call_openai_chat", side_effect=fake):
+    provider = _make_provider(voice_results=[True], accuracy_results=[True])
+    with use_provider(provider):
         wf_id = await runner.start(
             OUTREACH_KIND,
             initial_state={"hubspot_contact_id": "stub-001"},
@@ -124,7 +117,7 @@ async def test_happy_path_voice_pass_accuracy_pass(client: AsyncClient):
     )
     assert appr["status"] == "pending"
     assert appr["action_type"] == ACTION_TYPE_SEND
-    assert appr["agent_slug"] == BDR_SLUG  # outreach attribution moved to BDR
+    assert appr["agent_slug"] == BDRAgent.slug  # outreach attribution = BDR (owning agent)
 
     payload = _payload(appr)
     assert payload["subject"] == "Quick question"
@@ -135,8 +128,8 @@ async def test_happy_path_voice_pass_accuracy_pass(client: AsyncClient):
 async def test_voice_loop_passes_after_one_retry(client: AsyncClient):
     """Voice fails once with budget remaining → redraft → voice passes →
     accuracy passes → pause at gmail_send. Voice attempts == 2 in final state."""
-    fake = _make_fake_call(voice_results=[False, True], accuracy_results=[True])
-    with patch("app.orchestrator.graphs.outreach.call_openai_chat", side_effect=fake):
+    provider = _make_provider(voice_results=[False, True], accuracy_results=[True])
+    with use_provider(provider):
         wf_id = await runner.start(
             OUTREACH_KIND,
             initial_state={"hubspot_contact_id": "stub-002"},
@@ -156,10 +149,10 @@ async def test_voice_loop_passes_after_one_retry(client: AsyncClient):
 async def test_voice_budget_exhausted_terminates(client: AsyncClient):
     """Voice fails 3 times (default max) → failed_terminal → workflow completed
     with no approval row created (no gmail_send gate reached)."""
-    fake = _make_fake_call(
+    provider = _make_provider(
         voice_results=[False, False, False], accuracy_results=[],
     )
-    with patch("app.orchestrator.graphs.outreach.call_openai_chat", side_effect=fake):
+    with use_provider(provider):
         wf_id = await runner.start(
             OUTREACH_KIND,
             initial_state={"hubspot_contact_id": "stub-003"},
@@ -183,11 +176,11 @@ async def test_accuracy_budget_exhausted_terminates(client: AsyncClient):
     failed_terminal. Voice runs again on each new draft so we need two voice
     passes; accuracy runs twice and both fail.
     """
-    fake = _make_fake_call(
+    provider = _make_provider(
         voice_results=[True, True],
         accuracy_results=[False, False],
     )
-    with patch("app.orchestrator.graphs.outreach.call_openai_chat", side_effect=fake):
+    with use_provider(provider):
         wf_id = await runner.start(
             OUTREACH_KIND,
             initial_state={"hubspot_contact_id": "stub-004"},
@@ -205,8 +198,8 @@ async def test_accuracy_budget_exhausted_terminates(client: AsyncClient):
 
 async def test_reject_at_gmail_send_fails_workflow(client: AsyncClient):
     """Reject at the gmail_send gate → workflow failed."""
-    fake = _make_fake_call(voice_results=[True], accuracy_results=[True])
-    with patch("app.orchestrator.graphs.outreach.call_openai_chat", side_effect=fake):
+    provider = _make_provider(voice_results=[True], accuracy_results=[True])
+    with use_provider(provider):
         wf_id = await runner.start(
             OUTREACH_KIND,
             initial_state={"hubspot_contact_id": "stub-005"},

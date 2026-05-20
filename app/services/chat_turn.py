@@ -32,8 +32,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
-from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 from uuid import UUID, uuid4
 
@@ -41,14 +39,16 @@ import asyncpg
 
 from app.agents.base import ConversationalAgent
 from app.agents.registry import AGENTS_BY_SLUG
-from app.integrations.openai_client import get_client
+from app.agents.revenue_ops import RevenueOpsAgent
+from app.integrations.llm import Attribution, LlmResponse, StreamDelta, dispatch_stream
+from app.orchestrator import events
+from app.services import audit
 from app.services.activity_builder import ActivityState, apply_event
-from app.services.llm_logging import fire_and_forget_write, with_llm_context
 from app.tools.base import ProgressEmitter
 
 logger = logging.getLogger(__name__)
 
-FRONT_DOOR_SLUG: str = "revenue-ops"
+FRONT_DOOR_SLUG: str = RevenueOpsAgent.slug
 
 
 # ── Agent helpers ───────────────────────────────────────────────────────────
@@ -114,166 +114,111 @@ async def _execute_tool_streaming(
 async def _stream_llm_turn(
     messages: list[dict[str, Any]],
 ) -> AsyncIterator[dict[str, Any]]:
-    """Drive the OpenAI tool-call loop for one chat turn and yield SSE events.
+    """Drive the LLM tool-call loop for one chat turn and yield SSE events.
 
     The system prompt and tool roster are pulled from the front-door agent
     (`FRONT_DOOR_SLUG`). No agent selection — there is only one.
+
+    The streaming dispatcher owns provider details and `llm_calls` row writes;
+    this function owns only the tool-use loop: assemble each round-trip's
+    deltas, decide whether to call tools, thread tool results back into the
+    message list, loop.
 
     Events yielded: delta, tool_call_started, workflow_started, workflow_event,
     tool_call_completed, done.
     """
     agent = _get_front_door()
-    client = get_client()
 
     msg_list: list[dict] = [{"role": "system", "content": agent.get_system_prompt()}] + list(messages)
     tools = agent.get_tools()
     last_tool_used: str | None = None
     final_answer: str = ""
+    attribution = Attribution(agent_slug=FRONT_DOOR_SLUG, purpose="chat")
 
-    with with_llm_context(agent_slug=FRONT_DOOR_SLUG, purpose="chat"):
-        while True:
-            model = agent.config.get("model", "gpt-4o-mini")
+    while True:
+        model = agent.config.get("model", "gpt-4o-mini")
 
-            started_wall = datetime.now(timezone.utc)
-            started_mono = time.perf_counter()
-            request_snapshot: dict[str, Any] = {
-                "model": model,
-                "messages": list(msg_list),
-                "stream": True,
+        tool_calls_buf: dict[int, dict[str, Any]] = {}
+        terminal: LlmResponse | None = None
+
+        async for evt in dispatch_stream(
+            model=model,
+            messages=msg_list,
+            attribution=attribution,
+            tools=tools or None,
+        ):
+            if isinstance(evt, LlmResponse):
+                terminal = evt
+                continue
+            # StreamDelta — either text or a tool-call delta fragment.
+            if evt.text:
+                yield {"type": "delta", "text": evt.text}
+            if evt.tool_call_index is not None:
+                slot = tool_calls_buf.setdefault(
+                    evt.tool_call_index, {"id": "", "name": "", "arguments": ""}
+                )
+                if evt.tool_call_id:
+                    slot["id"] = evt.tool_call_id
+                if evt.tool_call_name_delta:
+                    slot["name"] += evt.tool_call_name_delta
+                if evt.tool_call_args_delta:
+                    slot["arguments"] += evt.tool_call_args_delta
+
+        assert terminal is not None, "dispatch_stream must yield a terminal LlmResponse"
+        finish_reason = terminal.finish_reason
+        assembled_text = terminal.text
+
+        if finish_reason != "tool_calls":
+            final_answer = assembled_text
+            break
+
+        # Prefer the dispatcher's reconstructed tool_calls (terminal.tool_calls)
+        # so chat_turn doesn't depend on its own buffer reconstruction. The
+        # assembled args strings are what OpenAI expects on the round-trip.
+        assembled_tool_calls = [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {"name": tc.name, "arguments": tc.arguments},
             }
-            if tools:
-                request_snapshot["tools"] = tools
+            for tc in terminal.tool_calls
+        ]
 
+        msg_list.append({
+            "role": "assistant",
+            "content": assembled_text or None,
+            "tool_calls": assembled_tool_calls,
+        })
+
+        for tc in terminal.tool_calls:
+            name = tc.name
             try:
-                stream = await client.chat.completions.create(
-                    model=model,
-                    messages=msg_list,
-                    stream=True,
-                    stream_options={"include_usage": True},
-                    **({"tools": tools} if tools else {}),
-                )
-            except Exception as exc:
-                ended_wall = datetime.now(timezone.utc)
-                latency_ms = int((time.perf_counter() - started_mono) * 1000)
-                fire_and_forget_write(
-                    started_at=started_wall,
-                    ended_at=ended_wall,
-                    latency_ms=latency_ms,
-                    model=model,
-                    request=request_snapshot,
-                    response=None,
-                    status="error",
-                    error=f"{type(exc).__name__}: {exc}",
-                    streamed=True,
-                )
-                raise
+                args = json.loads(tc.arguments or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            last_tool_used = name
+            yield {"type": "tool_call_started", "name": name, "args": args}
 
-            text_buf: list[str] = []
-            tool_calls_buf: dict[int, dict[str, Any]] = {}
-            finish_reason: str | None = None
-            usage: Any = None
+            tool_result: Any = None
+            async for sub_evt in _execute_tool_streaming(agent, name, args):
+                if "_result" in sub_evt:
+                    tool_result = sub_evt["_result"]
+                else:
+                    yield sub_evt
 
-            async for chunk in stream:
-                if getattr(chunk, "usage", None):
-                    usage = chunk.usage
-                if not chunk.choices:
-                    continue
-                choice = chunk.choices[0]
-                delta = choice.delta
-
-                if delta.content:
-                    text_buf.append(delta.content)
-                    yield {"type": "delta", "text": delta.content}
-
-                if delta.tool_calls:
-                    for tc_delta in delta.tool_calls:
-                        idx = tc_delta.index
-                        slot = tool_calls_buf.setdefault(
-                            idx, {"id": "", "name": "", "arguments": ""}
-                        )
-                        if tc_delta.id:
-                            slot["id"] = tc_delta.id
-                        if tc_delta.function:
-                            if tc_delta.function.name:
-                                slot["name"] += tc_delta.function.name
-                            if tc_delta.function.arguments:
-                                slot["arguments"] += tc_delta.function.arguments
-
-                if choice.finish_reason:
-                    finish_reason = choice.finish_reason
-
-            ended_wall = datetime.now(timezone.utc)
-            latency_ms = int((time.perf_counter() - started_mono) * 1000)
-
-            assembled_text = "".join(text_buf)
-            assembled_tool_calls = [
-                {
-                    "id": tc["id"],
-                    "type": "function",
-                    "function": {"name": tc["name"], "arguments": tc["arguments"]},
-                }
-                for tc in tool_calls_buf.values()
-            ]
-
-            fire_and_forget_write(
-                started_at=started_wall,
-                ended_at=ended_wall,
-                latency_ms=latency_ms,
-                model=model,
-                request=request_snapshot,
-                response={
-                    "content": assembled_text or None,
-                    "tool_calls": assembled_tool_calls or None,
-                    "finish_reason": finish_reason,
-                    "raw_usage": usage.model_dump() if usage else None,
-                },
-                status="ok",
-                streamed=True,
-                prompt_tokens=getattr(usage, "prompt_tokens", None) if usage else None,
-                completion_tokens=getattr(usage, "completion_tokens", None) if usage else None,
-                total_tokens=getattr(usage, "total_tokens", None) if usage else None,
-            )
-
-            if finish_reason != "tool_calls":
-                final_answer = assembled_text
-                break
-
-            assistant_msg: dict[str, Any] = {
-                "role": "assistant",
-                "content": assembled_text or None,
-                "tool_calls": assembled_tool_calls,
+            ok = not (isinstance(tool_result, dict) and "error" in tool_result)
+            yield {
+                "type": "tool_call_completed",
+                "name": name,
+                "ok": ok,
+                "result_summary": _summarize_result(tool_result),
             }
-            msg_list.append(assistant_msg)
 
-            for tc in tool_calls_buf.values():
-                name = tc["name"]
-                try:
-                    args = json.loads(tc["arguments"] or "{}")
-                except json.JSONDecodeError:
-                    args = {}
-                last_tool_used = name
-                yield {"type": "tool_call_started", "name": name, "args": args}
-
-                tool_result: Any = None
-                async for evt in _execute_tool_streaming(agent, name, args):
-                    if "_result" in evt:
-                        tool_result = evt["_result"]
-                    else:
-                        yield evt
-
-                ok = not (isinstance(tool_result, dict) and "error" in tool_result)
-                yield {
-                    "type": "tool_call_completed",
-                    "name": name,
-                    "ok": ok,
-                    "result_summary": _summarize_result(tool_result),
-                }
-
-                msg_list.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": json.dumps(tool_result, default=str),
-                })
+            msg_list.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": json.dumps(tool_result, default=str),
+            })
 
     yield {"type": "done", "answer": final_answer, "tool_used": last_tool_used}
 
@@ -343,6 +288,16 @@ async def _append_user_message_and_prepare_turn(
                 """,
                 session_id,
             )
+            await audit.write_audit_event(
+                conn,
+                events.CHAT_TURN_STARTED,
+                actor=f"chat:{session_id}",
+                payload={
+                    "turn_id": str(turn_id),
+                    "session_id": str(session_id),
+                    "user_chars": len(content),
+                },
+            )
     return turn_id, placeholder_id
 
 
@@ -381,13 +336,31 @@ async def _finalize_assistant_message(
             )
             if row is None:
                 return
+            session_id = row["session_id"]
             await conn.execute(
                 """
                 UPDATE chat_sessions
                 SET last_message_at = now(), updated_at = now()
                 WHERE id = $1
                 """,
-                row["session_id"],
+                session_id,
+            )
+            event_type = (
+                events.CHAT_TURN_FAILED if status == "failed" else events.CHAT_TURN_COMPLETED
+            )
+            payload: dict[str, Any] = {
+                "turn_id": str(turn_id),
+                "status": status,
+                "tool_used": tool_used,
+                "assistant_chars": len(content),
+            }
+            if error is not None:
+                payload["error"] = error
+            await audit.write_audit_event(
+                conn,
+                event_type,
+                actor=f"chat:{session_id}",
+                payload=payload,
             )
 
 

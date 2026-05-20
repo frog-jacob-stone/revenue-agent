@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 from uuid import UUID
 
 import asyncpg
@@ -31,6 +31,9 @@ from app.orchestrator import events
 from app.services import approvals as approvals_service
 from app.services import audit
 
+if TYPE_CHECKING:
+    from app.agents.base import BaseAgent
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,10 +44,19 @@ GraphFactory = Callable[[], "GraphSpec"]
 
 @dataclass(frozen=True)
 class GraphSpec:
-    """What a graph factory returns: the graph plus which nodes need approval."""
+    """What a graph factory returns: the graph, which nodes need approval, and
+    the agent identity this graph's work attributes to by default.
+
+    `owning_agent` is the default identity used for `Attribution.agent_slug` on
+    every LLM call inside the workflow. Domain-owned graphs set this to their
+    fixed agent class (e.g. BDRAgent for outreach). Shared / tool-like graphs
+    leave it None and require the invoker to pass `owning_agent=` to
+    `runner.start(...)`.
+    """
 
     graph: StateGraph
     interrupt_before: tuple[str, ...] = ()
+    owning_agent: type["BaseAgent"] | None = None
 
 
 class Runner:
@@ -63,6 +75,7 @@ class Runner:
 
     def __init__(self) -> None:
         self._compiled: dict[str, CompiledStateGraph] = {}
+        self._specs: dict[str, GraphSpec] = {}
         self._registrations: dict[str, GraphFactory] = {}
         self._checkpointer: AsyncPostgresSaver | None = None
         self._cp_pool: AsyncConnectionPool | None = None
@@ -117,6 +130,7 @@ class Runner:
 
     def _compile(self, kind: str) -> None:
         spec = self._registrations[kind]()
+        self._specs[kind] = spec
         self._compiled[kind] = spec.graph.compile(
             checkpointer=self._checkpointer,
             interrupt_before=list(spec.interrupt_before) or None,
@@ -125,6 +139,7 @@ class Runner:
     def unregister(self, kind: str) -> None:
         """Test helper. Production code should not call this."""
         self._compiled.pop(kind, None)
+        self._specs.pop(kind, None)
         self._registrations.pop(kind, None)
 
     def is_registered(self, kind: str) -> bool:
@@ -143,8 +158,14 @@ class Runner:
         subject_id: str | None = None,
         subject_ref: dict[str, Any] | None = None,
         parent_workflow_id: UUID | None = None,
+        owning_agent: type["BaseAgent"] | None = None,
     ) -> UUID:
         """Insert a workflow row, then drive the graph until interrupt or completion.
+
+        `owning_agent` overrides the graph's default owning agent for this
+        invocation. Useful when a shared (tool-like) graph is invoked by
+        different agents; for domain-owned graphs, leave it None and let the
+        GraphSpec default apply.
 
         Returns the new workflow_id.
         """
@@ -157,6 +178,7 @@ class Runner:
             subject_id=subject_id,
             subject_ref=subject_ref,
             parent_workflow_id=parent_workflow_id,
+            owning_agent=owning_agent,
         )
         await self._drive(workflow_id, kind, seeded)
         return workflow_id
@@ -172,6 +194,7 @@ class Runner:
         subject_id: str | None = None,
         subject_ref: dict[str, Any] | None = None,
         parent_workflow_id: UUID | None = None,
+        owning_agent: type["BaseAgent"] | None = None,
     ) -> tuple[UUID, asyncio.Task]:
         """Like `start()`, but returns immediately with (workflow_id, drive_task).
 
@@ -189,6 +212,7 @@ class Runner:
             subject_id=subject_id,
             subject_ref=subject_ref,
             parent_workflow_id=parent_workflow_id,
+            owning_agent=owning_agent,
         )
         task = asyncio.create_task(self._drive(workflow_id, kind, seeded))
         return workflow_id, task
@@ -204,6 +228,7 @@ class Runner:
         subject_id: str | None,
         subject_ref: dict[str, Any] | None,
         parent_workflow_id: UUID | None,
+        owning_agent: type["BaseAgent"] | None,
     ) -> tuple[UUID, dict[str, Any]]:
         """Shared setup for start/start_in_background: workflow row + seeded state."""
         if kind not in self._registrations:
@@ -226,6 +251,14 @@ class Runner:
         seeded = {**initial_state, "workflow_id": str(workflow_id)}
         if parent_workflow_id is not None:
             seeded["parent_workflow_id"] = str(parent_workflow_id)
+
+        # Resolve the workflow's owning agent: explicit override wins, else
+        # fall back to the GraphSpec's declared default. Either may be None.
+        spec_default = self._specs[kind].owning_agent if kind in self._specs else None
+        effective = owning_agent or spec_default
+        if effective is not None:
+            seeded["_owning_agent_slug"] = effective.slug
+
         return workflow_id, seeded
 
     async def resume(self, workflow_id: UUID | str) -> None:

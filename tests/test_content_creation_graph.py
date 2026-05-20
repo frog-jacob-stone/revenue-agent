@@ -1,8 +1,8 @@
 """End-to-end tests for the content_creation graph.
 
-Stubs `call_openai_chat` so the three OpenAI-backed agents (ContentStrategy,
-LinkedInWriting, PersonalVoice) can run without network. The fake
-dispatches by system-prompt content — each role has a distinct phrase.
+Uses `use_provider(FakeProvider(respond=...))` so the three roles
+(ContentStrategy, LinkedInWriting, PersonalVoice) can run without network.
+Dispatches by system-prompt content — each role has a distinct phrase.
 
 Three scenarios:
   - happy: voice passes immediately → social_posts.status='ready'
@@ -15,18 +15,18 @@ failed_terminal) synchronously inside `runner.start`.
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
-from unittest.mock import patch
 from uuid import UUID
 
 import pytest
 
 from app.db import get_pool
+from app.integrations.llm import LlmResponse, use_provider
 from app.orchestrator import runner
 from app.orchestrator.graphs.content_creation import (
     CONTENT_CREATION_KIND,
     build_graph,
 )
+from tests.fakes.llm import FakeProvider
 
 
 @pytest.fixture(autouse=True)
@@ -37,55 +37,51 @@ def _register_graph():
     runner.unregister(CONTENT_CREATION_KIND)
 
 
-# ── Fake LLM dispatcher ──────────────────────────────────────────────────────
+# ── Provider router ─────────────────────────────────────────────────────────
 
 
-def _completion(text: str) -> SimpleNamespace:
-    """Shape returned by call_openai_chat — minimal subset the graph reads."""
-    return SimpleNamespace(
-        choices=[SimpleNamespace(
-            message=SimpleNamespace(content=text, tool_calls=None, role="assistant"),
-            finish_reason="stop",
-        )],
-        usage=SimpleNamespace(
-            prompt_tokens=1, completion_tokens=1, total_tokens=2,
-            model_dump=lambda: {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-        ),
-    )
-
-
-def _make_fake_call(*, voice_results: list[bool]):
-    """Build a fake `call_openai_chat`. `voice_results` is FIFO-popped on each
-    voice_review call. interpret_brief and draft_post return canned shapes.
-    Dispatches by the system-message content (each agent's system prompt has
-    a distinguishing phrase)."""
+def _make_provider(*, voice_results: list[bool]) -> FakeProvider:
+    """`voice_results` is FIFO-popped on each voice_review call. interpret_brief
+    and draft_post return canned shapes. Dispatches by the system-message
+    content (each role's system prompt has a distinguishing phrase)."""
     voice = list(voice_results)
 
-    async def fake(**kwargs) -> SimpleNamespace:
-        messages = kwargs.get("messages", [])
-        system = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
+    def respond(request: dict) -> LlmResponse:
+        messages = request.get("messages", [])
+        system = next(
+            (m.get("content", "") for m in messages if m.get("role") == "system"), ""
+        )
         if "personal writing coach" in system:
             passed = voice.pop(0) if voice else False
-            return _completion(json.dumps({
-                "passed_voice_review": passed,
-                "voice_score": 0.9 if passed else 0.4,
-                "issues_found": [] if passed else ["too generic"],
-                "suggested_changes": [] if passed else ["add a concrete example"],
-                "revised_post_text": "Polished post text." if passed else None,
-            }))
+            return LlmResponse(
+                text=json.dumps({
+                    "passed_voice_review": passed,
+                    "voice_score": 0.9 if passed else 0.4,
+                    "issues_found": [] if passed else ["too generic"],
+                    "suggested_changes": [] if passed else ["add a concrete example"],
+                    "revised_post_text": "Polished post text." if passed else None,
+                }),
+                finish_reason="stop",
+            )
         if "content strategist" in system:
-            return _completion(json.dumps({
-                "idea_title": "AI agents in revenue ops",
-                "core_angle": "operational infrastructure, not a chatbot",
-                "target_reader": "CROs",
-                "main_point": "treat agents like new hires",
-                "suggested_post_type": "opinion",
-            }))
+            return LlmResponse(
+                text=json.dumps({
+                    "idea_title": "AI agents in revenue ops",
+                    "core_angle": "operational infrastructure, not a chatbot",
+                    "target_reader": "CROs",
+                    "main_point": "treat agents like new hires",
+                    "suggested_post_type": "opinion",
+                }),
+                finish_reason="stop",
+            )
         if "LinkedIn ghostwriter" in system:
-            return _completion(json.dumps({"post_text": "Draft post body."}))
-        return _completion("{}")
+            return LlmResponse(
+                text=json.dumps({"post_text": "Draft post body."}),
+                finish_reason="stop",
+            )
+        return LlmResponse(text="{}", finish_reason="stop")
 
-    return fake
+    return FakeProvider(respond=respond)
 
 
 async def _post_status(post_id: UUID) -> str | None:
@@ -101,8 +97,8 @@ async def _post_status(post_id: UUID) -> str | None:
 async def test_happy_path_voice_passes_first_try():
     """Voice review passes on first try → workflow completes; post status=ready
     with the revised_post_text written by voice_review."""
-    fake = _make_fake_call(voice_results=[True])
-    with patch("app.orchestrator.graphs.content_creation.call_openai_chat", side_effect=fake):
+    provider = _make_provider(voice_results=[True])
+    with use_provider(provider):
         wf_id = await runner.start(
             CONTENT_CREATION_KIND,
             initial_state={"brief": "talk about AI agents", "channel": "linkedin"},
@@ -126,8 +122,8 @@ async def test_happy_path_voice_passes_first_try():
 async def test_voice_loop_passes_after_one_retry():
     """Voice fails once with budget remaining → loops back to draft_post → voice
     passes on second review → post status=ready. Two voice attempts total."""
-    fake = _make_fake_call(voice_results=[False, True])
-    with patch("app.orchestrator.graphs.content_creation.call_openai_chat", side_effect=fake):
+    provider = _make_provider(voice_results=[False, True])
+    with use_provider(provider):
         wf_id = await runner.start(
             CONTENT_CREATION_KIND,
             initial_state={"brief": "second-try post", "channel": "linkedin"},
@@ -146,8 +142,8 @@ async def test_voice_loop_passes_after_one_retry():
 async def test_voice_budget_exhausted_terminates():
     """Voice fails 3 times (default max) → failed_terminal → workflow completes
     but post stays at status='draft'."""
-    fake = _make_fake_call(voice_results=[False, False, False])
-    with patch("app.orchestrator.graphs.content_creation.call_openai_chat", side_effect=fake):
+    provider = _make_provider(voice_results=[False, False, False])
+    with use_provider(provider):
         wf_id = await runner.start(
             CONTENT_CREATION_KIND,
             initial_state={"brief": "doomed post", "channel": "linkedin"},

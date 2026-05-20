@@ -48,6 +48,18 @@ router  →  service  →  (agent | integration client | db)
 - **Orchestrator** drives multi-step chains for workflows whose `pattern` is set. See "Prompt Chain Orchestrator" below.
 - All DB, HTTP, and agent calls are async.
 
+## LLM dispatch
+
+Every LLM call in the system flows through the dispatcher at `app/integrations/llm.py`. Callers reach for `dispatch()` (non-streaming) or `dispatch_stream()` (streaming with `StreamDelta` chunks + a terminal `LlmResponse`). Provider details, the OpenAI SDK types, request snapshotting, latency timing, and the `llm_calls` row write all live inside the dispatcher. Nothing outside `app/integrations/` imports from the `openai` package.
+
+Attribution is structural, not ambient: every call passes `Attribution(agent_slug, purpose, workflow_id?, thread_id?)` as a required argument. `purpose` is a dotted free-form label that lands on `llm_calls.purpose` and is how telemetry gets sliced (`"chat"`, `"agent:bdr"`, `"outreach.compose_email"`, `"content_creation.voice_review"`, etc.). There is no contextvar form — forgetting attribution is a type error, not a silent NULL.
+
+**Owning agent.** Each workflow attributes its LLM calls to a single agent identity — its *owning agent*. Domain-owned graphs declare their default at the schema level: `GraphSpec(graph=g, owning_agent=BDRAgent)`. The runner reads it (or an explicit override on `runner.start(owning_agent=...)`) and seeds `_owning_agent_slug` into graph state; every graph node's `_attribution(state, purpose)` helper reads it back and stamps it on the dispatch. Sub-step LLM calls (voice critique, accuracy critique, brief interpretation, draft writing) all share the owning agent's slug; their distinct role is the `purpose` field, not a separate slug. Shared / tool-like graphs leave `owning_agent=None` in `GraphSpec` and require the invoker to specify per call.
+
+Tests scope a fake provider with `use_provider(FakeProvider(...))` from `tests/fakes/llm.py`. The `LlmProvider` Protocol is the internal seam — production adapter is `_OpenAiProvider` (`app/integrations/_openai_provider.py`). A second provider lands as another adapter behind the same seam; no caller changes.
+
+The multi-round tool-use loop in `chat_turn._stream_llm_turn` is intentionally still in chat_turn — only one caller has a tool loop today. When a second caller appears, the wide tool-loop dispatcher becomes a real seam worth extracting.
+
 ## Agent Scoping Principles
 
 An agent has a single coherent identity: one job, one audit trail, one approval context. To decide whether a capability belongs in an existing agent or a new one, ask:

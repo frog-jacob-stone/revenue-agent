@@ -132,12 +132,11 @@ LangGraph exposes `get_graph().draw_mermaid()` natively. A read-only `/workflows
 
 ## Architecture status
 
-One orchestrator (`app/orchestrator/`) backed by LangGraph + `AsyncPostgresSaver`. One approval surface (`/approvals`). One inbox type (`Approval`). One conversational agent (`revenue-ops`) sitting in front of three worker agents (`bdr`, `revenue-recognition`, `content-orchestrator`). The chat-turn module (`app/services/chat_turn.py`) owns the OpenAI tool-call loop, turn lifecycle, and persistence; `app/services/chat_sessions.py` is pure CRUD. Single-turn LLM calls made by graph nodes (consolidate, draft, voice critique, accuracy critique, voice review, idea interpretation, post drafting) live inline in their graph modules as `MODEL` + `SYSTEM_PROMPT` constants — not as agent classes. Test suite: ~125 tests covering runner, approval flow, agent invocation, sub-workflow spawn, agent messaging, chat turn lifecycle, and end-to-end graph tests for all four production workflows.
+One orchestrator (`app/orchestrator/`) backed by LangGraph + `AsyncPostgresSaver`. One approval surface (`/approvals`). One inbox type (`Approval`). One conversational agent (`revenue-ops`) sitting in front of three worker agents (`bdr`, `revenue-recognition`, `content-orchestrator`). The chat-turn module (`app/services/chat_turn.py`) owns the LLM tool-call loop, turn lifecycle, and persistence; `app/services/chat_sessions.py` is pure CRUD. Single-turn LLM calls made by graph nodes (consolidate, draft, voice critique, accuracy critique, voice review, idea interpretation, post drafting) live inline in their graph modules as `MODEL` + `SYSTEM_PROMPT` constants — not as agent classes. Every LLM call (single-turn or streaming) flows through the dispatcher at `app/integrations/llm.py`, which absorbs provider details, the `llm_calls` row write, and attribution (`Attribution(agent_slug, purpose, ...)` — required argument, not a contextvar). Chat turns emit `CHAT_TURN_STARTED` / `CHAT_TURN_COMPLETED` / `CHAT_TURN_FAILED` audit events. Test suite: ~132 tests covering runner, approval flow, agent invocation, sub-workflow spawn, agent messaging, chat turn lifecycle, the LLM dispatcher in isolation, and end-to-end graph tests for all four production workflows.
 
 Known gaps (tracked in Backlog):
-- Native Anthropic tool-use loop in `invoke_agent`
 - Multi-turn thread context in `ask_agent`
-- Provider-aware `invoke_agent` so content_creation can route through it instead of direct `call_openai`
+- Anthropic provider adapter (lands behind the existing dispatcher seam; no caller changes)
 - Workflow visualizer (Mermaid) endpoint and UI overlay
 
 ---

@@ -13,11 +13,11 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import AsyncClient
 
+from app.agents.content import ContentOrchestratorAgent
 from app.db import get_pool
 from app.orchestrator import runner
 from app.orchestrator.graphs.content_publish import (
     ACTION_TYPE,
-    CONTENT_AGENT_SLUG,
     CONTENT_PUBLISH_KIND,
     build_graph,
 )
@@ -72,7 +72,7 @@ async def test_happy_path_publishes_post(client: AsyncClient, test_agent_slug):
     assert appr["status"] == "pending"
     assert appr["action_type"] == ACTION_TYPE
     assert appr["risk_level"] == "medium"
-    assert appr["agent_slug"] == CONTENT_AGENT_SLUG
+    assert appr["agent_slug"] == ContentOrchestratorAgent.slug
 
     proposed = appr["proposed_payload"]
     if isinstance(proposed, str):
