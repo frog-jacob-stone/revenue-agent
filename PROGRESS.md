@@ -118,7 +118,7 @@ Track progress through implementation. Update this file as you complete modules 
 - [x] `content_publish` — 2-node LangGraph; `propose_post` → [interrupt_before] → `post_to_linkedin`
 - [x] `propose_post` — execution approval gate (`action_type=post_to_linkedin`)
 - [-] `post_to_linkedin` — stub only; updates DB status to `published` but does not post; no LinkedIn integration
-- [x] Content orchestrator (`content-orchestrator`) — conversational front door
+- [x] Content orchestrator (`content-orchestrator`) — demoted to `BaseAgent` worker; invoked via `ask_agent` from the single front-door `revenue-ops` agent. Internal LLM calls inside the content_creation graph (interpret_brief, draft_post, voice_review) are inlined as prompt constants in `app/orchestrator/graphs/_content_creation_prompts.py` rather than separate agent classes.
 - [x] Post state machine — `draft` → `ready` → `published | rejected` (`needs_revision` aspirational; not currently emitted)
 
 ---
@@ -132,7 +132,7 @@ LangGraph exposes `get_graph().draw_mermaid()` natively. A read-only `/workflows
 
 ## Architecture status
 
-One orchestrator (`app/orchestrator/`) backed by LangGraph + `AsyncPostgresSaver`. One approval surface (`/approvals`). One inbox type (`Approval`). The frontend inbox single-sources from `/approvals`. Test suite: 58 green across runner, approval flow, agent invocation, sub-workflow spawn, agent messaging, and end-to-end graph tests for all four production workflows.
+One orchestrator (`app/orchestrator/`) backed by LangGraph + `AsyncPostgresSaver`. One approval surface (`/approvals`). One inbox type (`Approval`). One conversational agent (`revenue-ops`) sitting in front of three worker agents (`bdr`, `revenue-recognition`, `content-orchestrator`). The chat-turn module (`app/services/chat_turn.py`) owns the OpenAI tool-call loop, turn lifecycle, and persistence; `app/services/chat_sessions.py` is pure CRUD. Single-turn LLM calls made by graph nodes (consolidate, draft, voice critique, accuracy critique, voice review, idea interpretation, post drafting) live inline in their graph modules as `MODEL` + `SYSTEM_PROMPT` constants — not as agent classes. Test suite: ~125 tests covering runner, approval flow, agent invocation, sub-workflow spawn, agent messaging, chat turn lifecycle, and end-to-end graph tests for all four production workflows.
 
 Known gaps (tracked in Backlog):
 - Native Anthropic tool-use loop in `invoke_agent`

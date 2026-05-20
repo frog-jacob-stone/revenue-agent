@@ -207,7 +207,7 @@ Human-to-agent conversation containers. Each row is one chat that the user can r
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid | PK |
-| `agent_slug` | text | Which conversational agent this chat is with |
+| `agent_slug` | text | Which conversational agent this chat is with. `DEFAULT 'revenue-ops'` (migration `0019`) since the single-front-door pattern means new sessions always target the same agent; old rows preserve their original slug for the audit trail. |
 | `title` | text | Auto-titled from the first user message (~60 chars), default `'New chat'` |
 | `created_at` | timestamptz | |
 | `updated_at` | timestamptz | Bumped on every turn |
@@ -217,7 +217,7 @@ Index: `(agent_slug, last_message_at desc nulls last)`.
 
 ### `chat_messages`
 
-Turn-by-turn log of one chat session. User messages are inserted complete; assistant messages are inserted as `status='streaming'` placeholders by the chat router, then updated by the detached `TurnRuntime` in `app/services/chat_runtime.py` when the turn finishes. Migration `0017`.
+Turn-by-turn log of one chat session. User messages are inserted complete; assistant messages are inserted as `status='streaming'` placeholders inside `start_turn`, then updated by the detached `TurnRuntime` in `app/services/chat_turn.py` when the turn finishes. Migration `0017`.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -319,6 +319,8 @@ Migrations run in filename order; each is idempotent.
 15. `0015_drop_workflow_pattern_columns.sql` — drops `workflows.pattern` and `workflows.current_step` (legacy prompt-chain progress markers, replaced by LangGraph checkpoints)
 16. `0016_create_llm_calls.sql` — adds the `llm_calls` audit table for per-request LLM provider call logging
 17. `0017_create_chat_tables.sql` — adds `chat_sessions` and `chat_messages` for human-to-agent chat persistence (sidebar multi-chat + durable streaming via `TurnRuntime`)
+18. `0018_enable_rls_gaps.sql` — enables RLS on `approvals` and `agent_messages`
+19. `0019_chat_sessions_default_slug.sql` — gives `chat_sessions.agent_slug` a `DEFAULT 'revenue-ops'`. Single front-door pattern means new sessions always target the same conversational agent; this lets the router create sessions with no body
 
 ## Open Questions
 

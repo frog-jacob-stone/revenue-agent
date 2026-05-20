@@ -59,7 +59,11 @@ An agent has a single coherent identity: one job, one audit trail, one approval 
 
 **Read-only vs. write-proposing is a hard split.** An analytics agent and an operations agent for the same domain are distinct agents — different audit trails, different inbox behavior, different UI presentation.
 
-**Chat is an interface, not an agent type.** The same agent can be triggered by webhook, schedule, or chat. All paths that propose writes flow through the approval inbox. Chat-only read-only agents never touch the inbox.
+**Agents vs. inline LLM calls.** Classes in `app/agents/` represent identity-bearing things: the conversational front door (`RevenueOpsAgent`) or worker personas meant to be invoked via `ask_agent` / `invoke_agent` and accountable in the audit trail (`BDRAgent`, `RevenueRecognitionAgent`, `ContentOrchestratorAgent`). Single-turn, fixed-prompt LLM calls made by graph nodes are NOT agents — they live inline in the graph file (or a sibling `_prompts.py`) as `MODEL` + `SYSTEM_PROMPT` constants, attributed via `with_llm_context(agent_slug=..., purpose=...)`. The slug is a free-form audit tag; no class lookup is required. Rule of thumb: if a "thing" has no identity, no autonomy, and one caller, it's a prompt, not an agent.
+
+**Chat is an interface, not an agent type.** Chat is one of several trigger sources (webhook, schedule, chat). All paths that propose writes flow through the approval inbox.
+
+**Single front-door pattern.** Exactly one agent is conversational: `RevenueOpsAgent` (slug `revenue-ops`), defined in `app/agents/revenue_ops.py`. The user only ever chats with this agent. Specialist agents (`revenue-recognition`, `content-orchestrator`, etc.) are plain `BaseAgent` workers invoked single-turn via `invoke_agent` from graph nodes, or via `ask_agent` from the front door. The front-door slug is hardcoded as `FRONT_DOOR_SLUG` in `app/services/chat_turn.py` — there is no agent picker.
 
 ## Orchestrator (LangGraph)
 
@@ -82,11 +86,16 @@ The inbox UI sources from `/approvals` only. `Approval` rows discriminate by sta
 
 ## Multi-Agent Orchestration
 
-Three patterns, in order of planned adoption:
+The system is a **single front door + specialist workers**. There is one conversational agent (`revenue-ops`); every other agent is a worker invoked single-turn.
 
-1. **Explicit agent selection.** User picks the agent in the chat UI. Simple, no magic.
-2. **Router agent.** Reads the user's message, determines intent, hands off to a specialist. Build only after 4–6 specialists exist and real routing patterns are visible. Specialists remain directly selectable — the router is a convenience front door, not a gatekeeper.
-3. **Full orchestrator.** Decomposes multi-step requests across multiple agents and coordinates execution.
+Dispatch shape:
+
+- **User → front door (chat).** `app/services/chat_turn.py::start_turn` drives the OpenAI tool-call loop against `RevenueOpsAgent`. The front door has the action tools (`trigger_revenue_recognition`, `create_post`, `publish_post`, etc.) directly.
+- **Front door → specialist (LLM delegation).** The front door calls `ask_agent(target_slug, prompt)` for domain-specific explanation or reasoning. Single-turn, no tool use on the receiver — the specialist's `system_prompt` is what's load-bearing.
+- **Graph node → specialist (workflow context).** Nodes call `invoke_agent(slug, input, ctx)` directly when they need a specialist mid-workflow. Same single-turn shape.
+- **Graph node → graph node (sub-workflow).** `spawn_workflow(kind, ...)` for nested traces linked by `parent_workflow_id`.
+
+Specialists never appear in the chat surface. To iterate on a specialist's prompt, drive `invoke_agent` from a test or shell — there is intentionally no admin chat endpoint for them.
 
 ## Anti-Patterns
 

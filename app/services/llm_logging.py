@@ -5,7 +5,7 @@ captures every request/response and writes a row to `llm_calls`. Callers thread
 agent/workflow/purpose context in via the `with_llm_context` context manager so
 log rows are attributable to the agent and workflow that made the call.
 
-Streaming callers (see `app/services/chat.py`) cannot use the non-streaming
+Streaming callers (see `app/services/chat_turn.py`) cannot use the non-streaming
 wrapper, but they call `write_llm_call` directly with the assembled request and
 response after each streaming round-trip completes.
 """

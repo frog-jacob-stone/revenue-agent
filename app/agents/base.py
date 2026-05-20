@@ -82,12 +82,3 @@ class ConversationalAgent(BaseAgent, ABC):
         return await tools_execute(name, tool_input, ctx)
 
 
-class _CriticAgent(BaseAgent):
-    """Internal evaluator invoked by orchestrator graphs, not by humans.
-
-    Critics never appear in the inbox: they run as internal nodes in critique
-    loops (e.g. `voice_critique`, `accuracy_critique`) and never write to
-    `approvals`.
-    """
-
-    requires_approval: ClassVar[bool] = False

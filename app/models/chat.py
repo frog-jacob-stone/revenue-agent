@@ -6,7 +6,9 @@ from app.models.common import ORMBase
 
 
 class ChatSessionCreate(ORMBase):
-    agent_slug: str
+    # Front-door pattern: agent_slug is optional and defaults at the DB layer.
+    # Sending nothing creates a session for the single conversational agent.
+    agent_slug: str | None = None
 
 
 class ChatSessionResponse(ORMBase):
@@ -33,5 +35,4 @@ class ChatMessageResponse(ORMBase):
 
 
 class ChatSendRequest(ORMBase):
-    session_id: UUID
     content: str

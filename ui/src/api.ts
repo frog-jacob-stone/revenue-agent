@@ -259,18 +259,17 @@ export async function deleteChatSession(sessionId: string): Promise<void> {
  * running and the final state is persisted to chat_messages.
  */
 export async function sendChatMessage(
-  agentSlug: string,
   sessionId: string,
   content: string,
   callbacks: ChatStreamCallbacks,
 ): Promise<void> {
-  const res = await authedFetch(`/chat/${encodeURIComponent(agentSlug)}`, {
+  const res = await authedFetch(`/chat/sessions/${sessionId}/messages`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
     },
-    body: JSON.stringify({ session_id: sessionId, content }),
+    body: JSON.stringify({ content }),
     signal: callbacks.signal,
   });
   await parseSseStream(res, callbacks);

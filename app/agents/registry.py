@@ -4,23 +4,29 @@ The agent class is the single source of truth for slug, name, description,
 requires_approval, and allowed_tools. This module only declares the list of
 classes and exposes a slug → class lookup. Never add metadata here — put it
 on the class.
+
+After the inline-LLM-tools cleanup (plan 12), this registry contains only
+identity-bearing agents:
+  - `revenue-ops` — the single conversational front door
+  - `bdr` — Business Development Representative (worker; outreach attribution)
+  - `revenue-recognition` — domain worker; rev-rec approval attribution
+  - `content-orchestrator` — domain worker; content approval attribution
+
+Single-turn LLM calls made by graph nodes are NOT agents. Their prompts live
+inline in the graph files as `MODEL` + `SYSTEM_PROMPT` constants, attributed
+to free-form slug strings via `with_llm_context(agent_slug=..., purpose=...)`.
 """
 from app.agents.base import BaseAgent
-from app.agents.content import ContentOrchestratorAgent, PersonalVoiceAgent
-from app.agents.outreach import (
-    AccuracyCriticAgent,
-    OutreachAgent,
-    VoiceCriticAgent,
-)
+from app.agents.bdr import BDRAgent
+from app.agents.content import ContentOrchestratorAgent
 from app.agents.revenue import RevenueRecognitionAgent
+from app.agents.revenue_ops import RevenueOpsAgent
 
 AGENTS: tuple[type[BaseAgent], ...] = (
-    OutreachAgent,
-    VoiceCriticAgent,
-    AccuracyCriticAgent,
+    RevenueOpsAgent,
+    BDRAgent,
     RevenueRecognitionAgent,
     ContentOrchestratorAgent,
-    PersonalVoiceAgent,
 )
 
 

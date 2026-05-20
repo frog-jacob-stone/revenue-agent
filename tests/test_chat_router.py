@@ -1,4 +1,8 @@
-"""HTTP-layer tests for the chat router endpoints."""
+"""HTTP-layer tests for the chat router.
+
+Single front-door pattern: there is no `/{agent_slug}` path segment any more.
+Sessions default to `revenue-ops` at the DB layer.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -11,7 +15,7 @@ from app.db import get_pool
 
 
 async def _fake_stream(events: list[dict[str, Any]]):
-    async def gen(_agent_slug, _history):
+    async def gen(_history):
         for e in events:
             await asyncio.sleep(0)
             yield e
@@ -20,23 +24,28 @@ async def _fake_stream(events: list[dict[str, Any]]):
 
 
 @pytest.mark.asyncio
-async def test_create_session_unknown_agent_returns_404(client):
-    res = await client.post("/chat/sessions", json={"agent_slug": "no-such-agent"})
-    assert res.status_code == 404
+async def test_create_session_with_no_body_uses_front_door_default(client):
+    res = await client.post("/chat/sessions", json={})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["agent_slug"] == "revenue-ops"
+    assert body["title"] == "New chat"
+
+
+@pytest.mark.asyncio
+async def test_create_session_with_explicit_slug_honored(client):
+    res = await client.post("/chat/sessions", json={"agent_slug": "revenue-ops"})
+    assert res.status_code == 200
+    assert res.json()["agent_slug"] == "revenue-ops"
 
 
 @pytest.mark.asyncio
 async def test_session_crud_roundtrip(client):
-    create = await client.post(
-        "/chat/sessions", json={"agent_slug": "content-orchestrator"}
-    )
+    create = await client.post("/chat/sessions", json={})
     assert create.status_code == 200
-    session = create.json()
-    sid = session["id"]
-    assert session["agent_slug"] == "content-orchestrator"
-    assert session["title"] == "New chat"
+    sid = create.json()["id"]
 
-    listed = await client.get("/chat/sessions?agent_slug=content-orchestrator")
+    listed = await client.get("/chat/sessions")
     assert listed.status_code == 200
     assert any(s["id"] == sid for s in listed.json())
 
@@ -51,10 +60,8 @@ async def test_session_crud_roundtrip(client):
 
 
 @pytest.mark.asyncio
-async def test_post_chat_persists_user_message_and_streams(client):
-    create = await client.post(
-        "/chat/sessions", json={"agent_slug": "content-orchestrator"}
-    )
+async def test_post_message_persists_user_message_and_streams(client):
+    create = await client.post("/chat/sessions", json={})
     sid = create.json()["id"]
 
     events = [
@@ -63,14 +70,13 @@ async def test_post_chat_persists_user_message_and_streams(client):
         {"type": "done", "answer": "Hello, world", "tool_used": None},
     ]
     fake_gen = await _fake_stream(events)
-    with patch("app.services.chat_runtime.agent_chat_stream", new=fake_gen):
+    with patch("app.services.chat_turn._stream_llm_turn", new=fake_gen):
         res = await client.post(
-            "/chat/content-orchestrator",
-            json={"session_id": sid, "content": "hi"},
+            f"/chat/sessions/{sid}/messages",
+            json={"content": "hi"},
         )
         assert res.status_code == 200
         body = res.text
-        # SSE frames for each event type appear in order
         assert "event: delta" in body
         assert "event: done" in body
 
@@ -86,44 +92,31 @@ async def test_post_chat_persists_user_message_and_streams(client):
 
 
 @pytest.mark.asyncio
-async def test_post_chat_rejects_when_streaming_row_exists(client):
-    create = await client.post(
-        "/chat/sessions", json={"agent_slug": "content-orchestrator"}
-    )
+async def test_post_message_rejects_when_streaming_row_exists(client):
+    create = await client.post("/chat/sessions", json={})
     sid = create.json()["id"]
 
     # Seed a streaming row directly so the next POST should 409.
     pool = await get_pool()
-    from app.services import chat_sessions as cs
-    await cs.append_user_message_and_prepare_turn(pool, create.json()["id"], "first")
+    await pool.execute(
+        """
+        INSERT INTO chat_messages (session_id, role, content, status)
+        VALUES ($1, 'assistant', '', 'streaming')
+        """,
+        create.json()["id"],
+    )
 
     res = await client.post(
-        "/chat/content-orchestrator",
-        json={"session_id": sid, "content": "second"},
+        f"/chat/sessions/{sid}/messages",
+        json={"content": "second"},
     )
     assert res.status_code == 409
 
 
 @pytest.mark.asyncio
-async def test_post_chat_rejects_session_for_different_agent(client):
-    create = await client.post(
-        "/chat/sessions", json={"agent_slug": "content-orchestrator"}
-    )
-    sid = create.json()["id"]
+async def test_post_message_unknown_session_returns_404(client):
     res = await client.post(
-        "/chat/revenue-recognition",
-        json={"session_id": sid, "content": "hi"},
-    )
-    assert res.status_code == 400
-
-
-@pytest.mark.asyncio
-async def test_post_chat_unknown_session_returns_404(client):
-    res = await client.post(
-        "/chat/content-orchestrator",
-        json={
-            "session_id": "00000000-0000-0000-0000-000000000000",
-            "content": "hi",
-        },
+        "/chat/sessions/00000000-0000-0000-0000-000000000000/messages",
+        json={"content": "hi"},
     )
     assert res.status_code == 404

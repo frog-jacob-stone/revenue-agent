@@ -31,15 +31,21 @@ from uuid import UUID
 
 from langgraph.graph import END, StateGraph
 
-from app.agents.content import (
-    ContentStrategyAgent,
-    LinkedInWritingAgent,
-    PersonalVoiceAgent,
-)
 from app.db import get_pool
 from app.integrations.openai_client import call_openai_chat
 from app.lib.json_utils import parse_json
 from app.orchestrator.critique_loop import Critic, add_critique_loop
+from app.orchestrator.graphs._content_creation_prompts import (
+    CONTENT_STRATEGY_MODEL,
+    CONTENT_STRATEGY_SLUG,
+    CONTENT_STRATEGY_SYSTEM_PROMPT,
+    LINKEDIN_WRITER_MODEL,
+    LINKEDIN_WRITER_SLUG,
+    LINKEDIN_WRITER_SYSTEM_PROMPT,
+    PERSONAL_VOICE_MODEL,
+    PERSONAL_VOICE_SLUG,
+    build_personal_voice_system_prompt,
+)
 from app.orchestrator.runner import GraphSpec
 from app.orchestrator.state import BaseGraphState
 from app.services import social_posts
@@ -101,14 +107,14 @@ async def interpret_brief(state: ContentCreationState) -> ContentCreationState:
         user_msg += f"\nAdditional instructions: {instructions}"
 
     with with_llm_context(
-        agent_slug=ContentStrategyAgent.slug,
+        agent_slug=CONTENT_STRATEGY_SLUG,
         workflow_id=_wf_uuid(state),
-        purpose="interpret_brief",
+        purpose="content_creation.interpret_brief",
     ):
         completion = await call_openai_chat(
-            model=ContentStrategyAgent.model,
+            model=CONTENT_STRATEGY_MODEL,
             messages=[
-                {"role": "system", "content": ContentStrategyAgent.system_prompt},
+                {"role": "system", "content": CONTENT_STRATEGY_SYSTEM_PROMPT},
                 {"role": "user", "content": user_msg},
             ],
             response_format={"type": "json_object"},
@@ -162,14 +168,14 @@ async def draft_post(state: ContentCreationState) -> ContentCreationState:
         )
 
     with with_llm_context(
-        agent_slug=LinkedInWritingAgent.slug,
+        agent_slug=LINKEDIN_WRITER_SLUG,
         workflow_id=_wf_uuid(state),
-        purpose="draft_post",
+        purpose="content_creation.draft_post",
     ):
         completion = await call_openai_chat(
-            model=LinkedInWritingAgent.model,
+            model=LINKEDIN_WRITER_MODEL,
             messages=[
-                {"role": "system", "content": LinkedInWritingAgent.system_prompt},
+                {"role": "system", "content": LINKEDIN_WRITER_SYSTEM_PROMPT},
                 {"role": "user", "content": user_msg},
             ],
             response_format={"type": "json_object"},
@@ -229,14 +235,14 @@ async def run_voice_review(state: ContentCreationState) -> dict[str, Any]:
             post_text = (post or {}).get("post_text", "") or ""
 
     with with_llm_context(
-        agent_slug=PersonalVoiceAgent.slug,
+        agent_slug=PERSONAL_VOICE_SLUG,
         workflow_id=_wf_uuid(state),
-        purpose="voice_review",
+        purpose="content_creation.voice_review",
     ):
         completion = await call_openai_chat(
-            model=PersonalVoiceAgent.model,
+            model=PERSONAL_VOICE_MODEL,
             messages=[
-                {"role": "system", "content": PersonalVoiceAgent.get_system_prompt(channel)},
+                {"role": "system", "content": build_personal_voice_system_prompt(channel)},
                 {"role": "user", "content": f"Post to review:\n\n{post_text}"},
             ],
             response_format={"type": "json_object"},

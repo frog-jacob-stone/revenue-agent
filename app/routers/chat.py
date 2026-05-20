@@ -1,3 +1,10 @@
+"""Chat HTTP layer.
+
+Single front-door pattern: there is exactly one conversational agent
+(`chat_turn.FRONT_DOOR_SLUG`). The router doesn't take an agent slug —
+session creation defaults at the DB layer; sending a message goes through
+`chat_turn.start_turn`.
+"""
 import asyncio
 import json
 import logging
@@ -6,7 +13,6 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import StreamingResponse
 
-from app.agents.registry import AGENTS_BY_SLUG
 from app.db import get_pool
 from app.models.chat import (
     ChatMessageResponse,
@@ -15,7 +21,7 @@ from app.models.chat import (
     ChatSessionResponse,
 )
 from app.services import chat_sessions as sessions
-from app.services.chat_runtime import detach_turn
+from app.services.chat_turn import FRONT_DOOR_SLUG, start_turn
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -29,16 +35,19 @@ def _sse(event_type: str, data: dict) -> bytes:
 
 
 @router.post("/sessions", response_model=ChatSessionResponse)
-async def create_session(body: ChatSessionCreate):
-    if body.agent_slug not in AGENTS_BY_SLUG:
-        raise HTTPException(status_code=404, detail=f"Unknown agent '{body.agent_slug}'")
+async def create_session(body: ChatSessionCreate | None = None):
+    """Create a chat session. Body is optional — when omitted, the DB DEFAULT
+    (`'revenue-ops'`) is used for `agent_slug`. Callers may pass an explicit
+    slug to opt out of the default."""
     pool = await get_pool()
-    row = await sessions.create_session(pool, body.agent_slug)
+    slug = body.agent_slug if body else None
+    row = await sessions.create_session(pool, slug)
     return ChatSessionResponse.model_validate(row)
 
 
 @router.get("/sessions", response_model=list[ChatSessionResponse])
-async def list_sessions(agent_slug: str):
+async def list_sessions(agent_slug: str = FRONT_DOOR_SLUG):
+    """List sessions for an agent. Defaults to the front-door slug."""
     pool = await get_pool()
     rows = await sessions.list_sessions(pool, agent_slug)
     return [ChatSessionResponse.model_validate(r) for r in rows]
@@ -78,45 +87,26 @@ async def delete_session(session_id: UUID):
 # ── Send a message ──────────────────────────────────────────────────────────
 
 
-@router.post("/{agent_slug}")
-async def chat_with_agent(agent_slug: str, body: ChatSendRequest):
-    """Send a user message and stream the agent's response as SSE.
+@router.post("/sessions/{session_id}/messages")
+async def send_message(session_id: UUID, body: ChatSendRequest):
+    """Send a user message and stream the assistant's response as SSE.
 
-    The turn is detached into a background asyncio task — if the client
-    disconnects, the work continues and the final assistant message is
-    persisted. SSE events: delta, tool_call_started, workflow_started,
-    workflow_event, tool_call_completed, done, error.
+    The turn is detached into a background task — if the client disconnects,
+    work continues and the final assistant message is persisted. SSE events:
+    delta, tool_call_started, workflow_started, workflow_event,
+    tool_call_completed, done, error.
     """
-    if agent_slug not in AGENTS_BY_SLUG:
-        raise HTTPException(status_code=404, detail=f"Unknown agent '{agent_slug}'")
-
     pool = await get_pool()
-    session = await sessions.get_session(pool, body.session_id)
+    session = await sessions.get_session(pool, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    if session["agent_slug"] != agent_slug:
-        raise HTTPException(
-            status_code=400,
-            detail="Session belongs to a different agent",
-        )
-    if await sessions.has_streaming_message(pool, body.session_id):
+    if await sessions.has_streaming_message(pool, session_id):
         raise HTTPException(
             status_code=409,
             detail="A turn is already in progress for this session",
         )
 
-    turn_id, _placeholder_id = await sessions.append_user_message_and_prepare_turn(
-        pool, body.session_id, body.content
-    )
-    history = await sessions.load_history_for_llm(pool, body.session_id, limit=30)
-
-    runtime = detach_turn(
-        pool=pool,
-        session_id=body.session_id,
-        turn_id=turn_id,
-        agent_slug=agent_slug,
-        history=history,
-    )
+    runtime = await start_turn(pool, session_id, body.content)
     queue = runtime.subscribe()
     if queue is None:
         # Race: task completed before we could subscribe. Stream nothing — the

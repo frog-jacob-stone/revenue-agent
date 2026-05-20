@@ -306,7 +306,7 @@ export default function ChatWindow({ agentId, sessionId, agent }: Props) {
     };
 
     try {
-      await sendChatMessage(agentId, sessionId, text, { onEvent });
+      await sendChatMessage(sessionId, text, { onEvent });
       if (triggered) setTriggeredNotice(true);
     } catch (err) {
       pushLine({

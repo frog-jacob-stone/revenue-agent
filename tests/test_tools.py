@@ -1,8 +1,8 @@
 """Tests for the shared tool layer: registry integrity, dispatch, and the
 least-privilege `allowed_tools` enforcement on ConversationalAgent.
 
-Post-cleanup the only ConversationalAgent left with allowed_tools is
-RevenueRecognitionAgent. The structural coverage (registry integrity, dispatch
+After the single-front-door collapse the only ConversationalAgent is
+RevenueOpsAgent. The structural coverage (registry integrity, dispatch
 routing, allow/deny enforcement) stays the same; only the targeted agent
 changes.
 """
@@ -13,10 +13,14 @@ import pytest
 
 from app.agents.registry import AGENTS_BY_SLUG
 from app.agents.revenue import RevenueRecognitionAgent
+from app.agents.revenue_ops import RevenueOpsAgent
 from app.tools import TOOLS, ToolContext, execute_tool, get_tool_schemas
 
 
-IMPLEMENTED_AGENTS = (RevenueRecognitionAgent,)
+# RevenueRecognitionAgent is now a non-conversational BaseAgent — its tools
+# live in its class attribute but it can't be instantiated. RevenueOpsAgent is
+# the single ConversationalAgent that exercises the tool dispatch machinery.
+IMPLEMENTED_AGENTS = (RevenueOpsAgent, RevenueRecognitionAgent)
 
 
 # ── Registry integrity ──────────────────────────────────────────────────────
@@ -77,10 +81,10 @@ async def test_execute_tool_dispatches_to_service():
 
 @pytest.mark.asyncio
 async def test_agent_rejects_unregistered_tool():
-    agent = RevenueRecognitionAgent(
+    agent = RevenueOpsAgent(
         agent_id=uuid.UUID(int=0),
         config={},
-        allowed_tools=list(AGENTS_BY_SLUG["revenue-recognition"].allowed_tools),
+        allowed_tools=list(AGENTS_BY_SLUG["revenue-ops"].allowed_tools),
     )
     with pytest.raises(PermissionError, match="fake_tool"):
         await agent.execute_tool("fake_tool", {})
@@ -88,11 +92,11 @@ async def test_agent_rejects_unregistered_tool():
 
 @pytest.mark.asyncio
 async def test_agent_allows_registered_tool():
-    """Rev rec agent can call an allowed tool; dispatch reaches the service."""
-    agent = RevenueRecognitionAgent(
+    """Front-door agent can call an allowed tool; dispatch reaches the service."""
+    agent = RevenueOpsAgent(
         agent_id=uuid.UUID(int=0),
         config={},
-        allowed_tools=list(AGENTS_BY_SLUG["revenue-recognition"].allowed_tools),
+        allowed_tools=list(AGENTS_BY_SLUG["revenue-ops"].allowed_tools),
     )
     fake = {"records": [{"id": 42}]}
     with patch(
@@ -107,8 +111,8 @@ async def test_agent_allows_registered_tool():
 
 
 def test_agent_get_tools_matches_allowed_tools():
-    allowed = list(AGENTS_BY_SLUG["revenue-recognition"].allowed_tools)
-    agent = RevenueRecognitionAgent(
+    allowed = list(AGENTS_BY_SLUG["revenue-ops"].allowed_tools)
+    agent = RevenueOpsAgent(
         agent_id=uuid.UUID(int=0), config={}, allowed_tools=allowed
     )
     names = [s["function"]["name"] for s in agent.get_tools()]
@@ -118,7 +122,7 @@ def test_agent_get_tools_matches_allowed_tools():
 @pytest.mark.asyncio
 async def test_agent_with_explicit_empty_allowed_tools_rejects_everything():
     """Explicitly passing `[]` overrides the class default and locks the agent down."""
-    agent = RevenueRecognitionAgent(
+    agent = RevenueOpsAgent(
         agent_id=uuid.UUID(int=0), config={}, allowed_tools=[]
     )
     assert agent.get_tools() == []
@@ -128,6 +132,6 @@ async def test_agent_with_explicit_empty_allowed_tools_rejects_everything():
 
 def test_agent_defaults_to_class_allowed_tools():
     """Omitting allowed_tools picks up the class-declared default."""
-    agent = RevenueRecognitionAgent(agent_id=uuid.UUID(int=0), config={})
-    assert agent.allowed_tools == list(RevenueRecognitionAgent.allowed_tools)
+    agent = RevenueOpsAgent(agent_id=uuid.UUID(int=0), config={})
+    assert agent.allowed_tools == list(RevenueOpsAgent.allowed_tools)
     assert agent.allowed_tools, "class default should be non-empty for implemented agent"

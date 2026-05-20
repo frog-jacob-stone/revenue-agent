@@ -1,9 +1,14 @@
 """End-to-end tests for the outreach_chain graph.
 
-Stubs `call_openai_chat` so the graph can drive its three agents
-(outreach-agent, voice-critic, accuracy-critic) without network. The fake
-dispatches by prompt marker so each test scenario can declare what each
-role should return.
+Stubs `call_openai_chat` so the graph can drive its four LLM call sites
+(consolidate brief, compose email, voice critique, accuracy critique)
+without network. The fake dispatches by prompt marker so each test scenario
+can declare what each role should return.
+
+The graph now calls `call_openai_chat` directly inside the node bodies
+(see plan 12 — the prior `invoke_agent` indirection was removed for these
+single-turn, fixed-prompt calls). Approval attribution moved from
+`outreach-agent` to `bdr`.
 
 Five scenarios:
   - happy: voice + accuracy both pass on first try → pause at gmail_send
@@ -25,7 +30,7 @@ from app.db import get_pool
 from app.orchestrator import runner
 from app.orchestrator.graphs.outreach import (
     ACTION_TYPE_SEND,
-    OUTREACH_AGENT_SLUG,
+    BDR_SLUG,
     OUTREACH_KIND,
     build_graph,
 )
@@ -104,7 +109,7 @@ async def test_happy_path_voice_pass_accuracy_pass(client: AsyncClient):
     """Both critics pass on first try → graph pauses at the gmail_send gate
     with the draft as the proposed_payload."""
     fake = _make_fake_call(voice_results=[True], accuracy_results=[True])
-    with patch("app.orchestrator.agent_invoke.call_openai_chat", side_effect=fake):
+    with patch("app.orchestrator.graphs.outreach.call_openai_chat", side_effect=fake):
         wf_id = await runner.start(
             OUTREACH_KIND,
             initial_state={"hubspot_contact_id": "stub-001"},
@@ -119,7 +124,7 @@ async def test_happy_path_voice_pass_accuracy_pass(client: AsyncClient):
     )
     assert appr["status"] == "pending"
     assert appr["action_type"] == ACTION_TYPE_SEND
-    assert appr["agent_slug"] == OUTREACH_AGENT_SLUG
+    assert appr["agent_slug"] == BDR_SLUG  # outreach attribution moved to BDR
 
     payload = _payload(appr)
     assert payload["subject"] == "Quick question"
@@ -131,7 +136,7 @@ async def test_voice_loop_passes_after_one_retry(client: AsyncClient):
     """Voice fails once with budget remaining → redraft → voice passes →
     accuracy passes → pause at gmail_send. Voice attempts == 2 in final state."""
     fake = _make_fake_call(voice_results=[False, True], accuracy_results=[True])
-    with patch("app.orchestrator.agent_invoke.call_openai_chat", side_effect=fake):
+    with patch("app.orchestrator.graphs.outreach.call_openai_chat", side_effect=fake):
         wf_id = await runner.start(
             OUTREACH_KIND,
             initial_state={"hubspot_contact_id": "stub-002"},
@@ -154,7 +159,7 @@ async def test_voice_budget_exhausted_terminates(client: AsyncClient):
     fake = _make_fake_call(
         voice_results=[False, False, False], accuracy_results=[],
     )
-    with patch("app.orchestrator.agent_invoke.call_openai_chat", side_effect=fake):
+    with patch("app.orchestrator.graphs.outreach.call_openai_chat", side_effect=fake):
         wf_id = await runner.start(
             OUTREACH_KIND,
             initial_state={"hubspot_contact_id": "stub-003"},
@@ -182,7 +187,7 @@ async def test_accuracy_budget_exhausted_terminates(client: AsyncClient):
         voice_results=[True, True],
         accuracy_results=[False, False],
     )
-    with patch("app.orchestrator.agent_invoke.call_openai_chat", side_effect=fake):
+    with patch("app.orchestrator.graphs.outreach.call_openai_chat", side_effect=fake):
         wf_id = await runner.start(
             OUTREACH_KIND,
             initial_state={"hubspot_contact_id": "stub-004"},
@@ -201,7 +206,7 @@ async def test_accuracy_budget_exhausted_terminates(client: AsyncClient):
 async def test_reject_at_gmail_send_fails_workflow(client: AsyncClient):
     """Reject at the gmail_send gate → workflow failed."""
     fake = _make_fake_call(voice_results=[True], accuracy_results=[True])
-    with patch("app.orchestrator.agent_invoke.call_openai_chat", side_effect=fake):
+    with patch("app.orchestrator.graphs.outreach.call_openai_chat", side_effect=fake):
         wf_id = await runner.start(
             OUTREACH_KIND,
             initial_state={"hubspot_contact_id": "stub-005"},
