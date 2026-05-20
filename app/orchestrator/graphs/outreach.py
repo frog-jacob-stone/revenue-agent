@@ -40,7 +40,7 @@ from uuid import UUID
 
 from langgraph.graph import END, StateGraph
 
-from app.agents.bdr import BDRAgent
+from app.agents.bdr_agent import BDRAgent
 from app.config import settings
 from app.db import get_pool
 from app.integrations.llm import Attribution, dispatch

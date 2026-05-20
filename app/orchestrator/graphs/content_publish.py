@@ -20,7 +20,7 @@ from uuid import UUID
 
 from langgraph.graph import END, StateGraph
 
-from app.agents.content import ContentOrchestratorAgent
+from app.agents.content_orchestrator_agent import ContentOrchestratorAgent
 from app.db import get_pool
 from app.orchestrator.runner import GraphSpec
 from app.orchestrator.state import BaseGraphState

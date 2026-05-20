@@ -1,6 +1,6 @@
 """Smoke tests for the placeholder BDRAgent worker."""
 from app.agents.base import BaseAgent, ConversationalAgent
-from app.agents.bdr import BDRAgent
+from app.agents.bdr_agent import BDRAgent
 from app.agents.registry import AGENTS_BY_SLUG
 
 

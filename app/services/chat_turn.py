@@ -39,7 +39,7 @@ import asyncpg
 
 from app.agents.base import ConversationalAgent
 from app.agents.registry import AGENTS_BY_SLUG
-from app.agents.revenue_ops import RevenueOpsAgent
+from app.agents.revenue_ops_agent import RevenueOpsAgent
 from app.integrations.llm import Attribution, LlmResponse, StreamDelta, dispatch_stream
 from app.orchestrator import events
 from app.services import audit

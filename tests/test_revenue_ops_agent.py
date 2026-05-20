@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from app.agents.base import ConversationalAgent
 from app.agents.registry import AGENTS_BY_SLUG
-from app.agents.revenue_ops import RevenueOpsAgent
+from app.agents.revenue_ops_agent import RevenueOpsAgent
 
 
 def test_revenue_ops_registered():

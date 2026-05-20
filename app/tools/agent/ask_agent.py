@@ -32,7 +32,7 @@ async def _ask_agent(
 ) -> dict[str, Any]:
     # Lazy import: top-level import here would create a cycle through
     # app/orchestrator/__init__.py → agent_invoke → app.agents.registry →
-    # app.agents.revenue → app.tools (this module).
+    # app.agents.revenue_recognition_agent → app.tools (this module).
     from app.orchestrator.agent_invoke import NodeContext, invoke_agent
 
     pool = await get_pool()

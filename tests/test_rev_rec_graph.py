@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import AsyncClient
 
-from app.agents.revenue import RevenueRecognitionAgent
+from app.agents.revenue_recognition_agent import RevenueRecognitionAgent
 from app.db import get_pool
 from app.orchestrator import runner
 from app.orchestrator.graphs.rev_rec import (

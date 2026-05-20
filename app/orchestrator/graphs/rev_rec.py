@@ -32,7 +32,7 @@ from typing import Any, Literal, NotRequired
 
 from langgraph.graph import END, StateGraph
 
-from app.agents.revenue import RevenueRecognitionAgent
+from app.agents.revenue_recognition_agent import RevenueRecognitionAgent
 from app.config import settings
 from app.integrations import airtable, forecast, harvest
 from app.orchestrator.runner import GraphSpec

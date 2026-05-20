@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import AsyncClient
 
-from app.agents.content import ContentOrchestratorAgent
+from app.agents.content_orchestrator_agent import ContentOrchestratorAgent
 from app.db import get_pool
 from app.orchestrator import runner
 from app.orchestrator.graphs.content_publish import (

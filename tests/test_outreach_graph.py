@@ -19,7 +19,7 @@ import json
 import pytest
 from httpx import AsyncClient
 
-from app.agents.bdr import BDRAgent
+from app.agents.bdr_agent import BDRAgent
 from app.db import get_pool
 from app.integrations.llm import LlmResponse, use_provider
 from app.orchestrator import runner

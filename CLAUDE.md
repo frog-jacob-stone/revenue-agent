@@ -53,7 +53,7 @@ Reference docs:
 - Loop edges are a supported idiom (see `app/orchestrator/graphs/{rev_rec,outreach,content_creation}.py` and `_critique_poc.py`). Graph authors own loop-termination logic — the framework imposes no infinite-loop guard.
 - LangGraph treats node names and state-key names as a single namespace; pick distinct names (e.g., the outreach graph uses `compose_email` as the node and `draft_email` as the state field).
 - Production graphs: `content_publish`, `rev_rec_monthly`, `outreach_chain`, `content_creation`. Inbox UI sources solely from `/approvals`.
-- Agent-to-agent communication: `app/services/agent_messages.py` records turn-by-turn exchanges; `ask_agent` (in `app/tools/agent_tools.py`) is the canonical delegation tool. Both messages (outgoing prompt + incoming reply) are written under one `thread_id`. `ToolContext.workflow_id` links node-driven calls to their workflow. Demo graph: `app/orchestrator/graphs/_multi_agent_demo.py`.
+- Agent-to-agent communication: `app/services/agent_messages.py` records turn-by-turn exchanges; `ask_agent` (in `app/tools/agent/ask_agent.py`) is the canonical delegation tool. Both messages (outgoing prompt + incoming reply) are written under one `thread_id`. `ToolContext.workflow_id` links node-driven calls to their workflow. Demo graph: `app/orchestrator/graphs/_multi_agent_demo.py`.
 
 ## Progress
 Check PROGRESS.md for current module status. Update it as you complete tasks.

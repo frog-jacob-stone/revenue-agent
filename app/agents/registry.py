@@ -18,10 +18,10 @@ to free-form slug strings via `Attribution(agent_slug=..., purpose=...)` on the
 dispatcher.
 """
 from app.agents.base import BaseAgent
-from app.agents.bdr import BDRAgent
-from app.agents.content import ContentOrchestratorAgent
-from app.agents.revenue import RevenueRecognitionAgent
-from app.agents.revenue_ops import RevenueOpsAgent
+from app.agents.bdr_agent import BDRAgent
+from app.agents.content_orchestrator_agent import ContentOrchestratorAgent
+from app.agents.revenue_ops_agent import RevenueOpsAgent
+from app.agents.revenue_recognition_agent import RevenueRecognitionAgent
 
 AGENTS: tuple[type[BaseAgent], ...] = (
     RevenueOpsAgent,

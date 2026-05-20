@@ -4,8 +4,8 @@ invocable via `invoke_agent` (single-turn, no tools).
 import pytest
 
 from app.agents.base import BaseAgent, ConversationalAgent
-from app.agents.content import ContentOrchestratorAgent
-from app.agents.revenue import RevenueRecognitionAgent
+from app.agents.content_orchestrator_agent import ContentOrchestratorAgent
+from app.agents.revenue_recognition_agent import RevenueRecognitionAgent
 from app.integrations.llm import LlmResponse, use_provider
 from app.orchestrator.agent_invoke import invoke_agent
 from tests.fakes.llm import FakeProvider
