@@ -36,18 +36,17 @@ from __future__ import annotations
 
 import logging
 from typing import Any, NotRequired
-from uuid import UUID
 
 from langgraph.graph import END, StateGraph
 
 from app.agents.bdr_agent import BDRAgent
 from app.config import settings
 from app.db import get_pool
-from app.integrations.llm import Attribution, dispatch
+from app.integrations.llm import dispatch
 from app.lib.json_utils import parse_json
 from app.orchestrator.critique_loop import Critic, add_critique_loop
 from app.orchestrator.runner import GraphSpec
-from app.orchestrator.state import BaseGraphState
+from app.orchestrator.state import BaseGraphState, make_attribution
 
 logger = logging.getLogger(__name__)
 
@@ -106,25 +105,6 @@ class OutreachState(BaseGraphState, total=False):
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-
-def _wf_uuid(state: OutreachState) -> UUID | None:
-    wf_id = state.get("workflow_id")
-    return UUID(wf_id) if wf_id else None  # type: ignore[arg-type]
-
-
-def _attribution(state: OutreachState, purpose: str) -> Attribution:
-    """Build an Attribution for a dispatch from this graph.
-
-    `agent_slug` comes from the workflow's owning agent (seeded by the runner
-    from the GraphSpec default or an invoker override); `purpose` discriminates
-    the sub-step.
-    """
-    return Attribution(
-        agent_slug=state.get("_owning_agent_slug"),
-        purpose=purpose,
-        workflow_id=_wf_uuid(state),
-    )
 
 
 async def _load_voice_profile() -> str:
@@ -239,7 +219,7 @@ async def consolidate(state: OutreachState) -> OutreachState:
     response = await dispatch(
         model=BDRAgent.model,
         messages=[{"role": "user", "content": prompt}],
-        attribution=_attribution(state, "outreach.consolidate"),
+        attribution=make_attribution(state, "outreach.consolidate"),
         max_tokens=400,
     )
     return {"brief": response.text.strip()}
@@ -296,7 +276,7 @@ async def compose_email(state: OutreachState) -> OutreachState:
     response = await dispatch(
         model=BDRAgent.model,
         messages=[{"role": "user", "content": prompt}],
-        attribution=_attribution(state, "outreach.compose_email"),
+        attribution=make_attribution(state, "outreach.compose_email"),
         max_tokens=600,
     )
     subject, body = _parse_email(response.text)
@@ -336,7 +316,7 @@ async def run_voice_critic(state: OutreachState) -> dict[str, Any]:
     response = await dispatch(
         model=BDRAgent.model,
         messages=[{"role": "user", "content": prompt}],
-        attribution=_attribution(state, "outreach.voice_critique"),
+        attribution=make_attribution(state, "outreach.voice_critique"),
         max_tokens=400,
     )
     return _parse_critique(response.text)
@@ -367,7 +347,7 @@ async def run_accuracy_critic(state: OutreachState) -> dict[str, Any]:
     response = await dispatch(
         model=BDRAgent.model,
         messages=[{"role": "user", "content": prompt}],
-        attribution=_attribution(state, "outreach.accuracy_critique"),
+        attribution=make_attribution(state, "outreach.accuracy_critique"),
         max_tokens=400,
     )
     return _parse_critique(response.text)

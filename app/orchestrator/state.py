@@ -12,6 +12,9 @@ strips it from the persisted state before yielding.
 from __future__ import annotations
 
 from typing import Any, NotRequired, TypedDict
+from uuid import UUID
+
+from app.integrations.llm import Attribution
 
 
 class ProposeApproval(TypedDict, total=False):
@@ -36,3 +39,18 @@ class BaseGraphState(TypedDict):
     # uses this for `Attribution.agent_slug`. None when no owning agent is
     # declared and no override is supplied.
     _owning_agent_slug: NotRequired[str | None]
+
+
+def make_attribution(state: BaseGraphState, purpose: str) -> Attribution:
+    """Build an Attribution for a dispatch from a graph node.
+
+    `agent_slug` comes from the workflow's owning agent (seeded by the runner
+    from the GraphSpec default or an invoker override); `purpose` discriminates
+    the sub-step.
+    """
+    wf_id = state.get("workflow_id")
+    return Attribution(
+        agent_slug=state.get("_owning_agent_slug"),
+        purpose=purpose,
+        workflow_id=UUID(wf_id) if wf_id else None,
+    )

@@ -30,7 +30,7 @@ from langgraph.graph import END, StateGraph
 
 from app.agents.content_orchestrator_agent import ContentOrchestratorAgent
 from app.db import get_pool
-from app.integrations.llm import Attribution, dispatch
+from app.integrations.llm import dispatch
 from app.lib.json_utils import parse_json
 from app.orchestrator.critique_loop import Critic, add_critique_loop
 from app.orchestrator.graphs._content_creation_prompts import (
@@ -39,7 +39,7 @@ from app.orchestrator.graphs._content_creation_prompts import (
     build_personal_voice_system_prompt,
 )
 from app.orchestrator.runner import GraphSpec
-from app.orchestrator.state import BaseGraphState
+from app.orchestrator.state import BaseGraphState, make_attribution
 from app.services import social_posts
 
 logger = logging.getLogger(__name__)
@@ -53,25 +53,6 @@ CONTENT_CREATION_KIND = "content_creation"
 OWNING_AGENT = ContentOrchestratorAgent
 
 DEFAULT_VOICE_MAX_ATTEMPTS = 3
-
-
-def _wf_uuid(state: "ContentCreationState") -> UUID | None:
-    wf_id = state.get("workflow_id")
-    return UUID(wf_id) if wf_id else None
-
-
-def _attribution(state: "ContentCreationState", purpose: str) -> Attribution:
-    """Build an Attribution for a dispatch from this graph.
-
-    `agent_slug` comes from the workflow's owning agent (seeded by the runner
-    from the GraphSpec default or an invoker override); `purpose` discriminates
-    the sub-step.
-    """
-    return Attribution(
-        agent_slug=state.get("_owning_agent_slug"),
-        purpose=purpose,
-        workflow_id=_wf_uuid(state),
-    )
 
 
 # ── State ────────────────────────────────────────────────────────────────────
@@ -121,7 +102,7 @@ async def interpret_brief(state: ContentCreationState) -> ContentCreationState:
             {"role": "system", "content": CONTENT_STRATEGY_SYSTEM_PROMPT},
             {"role": "user", "content": user_msg},
         ],
-        attribution=_attribution(state, "content_creation.interpret_brief"),
+        attribution=make_attribution(state, "content_creation.interpret_brief"),
         response_format={"type": "json_object"},
     )
     idea = parse_json(response.text or "{}")
@@ -177,7 +158,7 @@ async def draft_post(state: ContentCreationState) -> ContentCreationState:
             {"role": "system", "content": LINKEDIN_WRITER_SYSTEM_PROMPT},
             {"role": "user", "content": user_msg},
         ],
-        attribution=_attribution(state, "content_creation.draft_post"),
+        attribution=make_attribution(state, "content_creation.draft_post"),
         response_format={"type": "json_object"},
         max_tokens=1000,
     )
@@ -239,7 +220,7 @@ async def run_voice_review(state: ContentCreationState) -> dict[str, Any]:
             {"role": "system", "content": build_personal_voice_system_prompt(channel)},
             {"role": "user", "content": f"Post to review:\n\n{post_text}"},
         ],
-        attribution=_attribution(state, "content_creation.voice_review"),
+        attribution=make_attribution(state, "content_creation.voice_review"),
         response_format={"type": "json_object"},
         max_tokens=600,
     )
