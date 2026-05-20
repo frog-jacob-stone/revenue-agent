@@ -39,7 +39,7 @@ def test_allowed_tools_include_mandatory_set():
         "publish_post",
         "export_posts",
     }
-    assert mandatory.issubset(set(inst.allowed_tools))
+    assert mandatory.issubset({t.name for t in inst.allowed_tools})
 
 
 def test_get_tools_returns_schemas_for_allowed_tools():

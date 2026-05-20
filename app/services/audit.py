@@ -4,12 +4,14 @@ from uuid import UUID
 
 import asyncpg
 
+from app.orchestrator.events import AuditEvent
+
 logger = logging.getLogger(__name__)
 
 
 async def write_audit_event(
     conn: asyncpg.Connection,
-    event_type: str,
+    event_type: AuditEvent,
     *,
     agent_id: UUID | None = None,
     workflow_id: UUID | None = None,

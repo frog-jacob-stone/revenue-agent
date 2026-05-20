@@ -12,6 +12,17 @@ from datetime import date
 from typing import ClassVar
 
 from app.agents.base import ConversationalAgent
+from app.tools.agent.ask_agent import ASK_AGENT
+from app.tools.base import ToolDefinition
+from app.tools.content import (
+    CREATE_POST,
+    EXPORT_POSTS,
+    GET_POSTS,
+    PUBLISH_POST,
+    REJECT_POST,
+    REWRITE_POST,
+)
+from app.tools.revenue import GET_REVENUE_DATA, TRIGGER_REVENUE_RECOGNITION
 
 
 class RevenueOpsAgent(ConversationalAgent):
@@ -25,18 +36,18 @@ class RevenueOpsAgent(ConversationalAgent):
     requires_approval = False
     model = "gpt-4o"
 
-    allowed_tools: ClassVar[tuple[str, ...]] = (
-        "ask_agent",
+    allowed_tools: ClassVar[tuple[ToolDefinition, ...]] = (
+        ASK_AGENT,
         # Revenue
-        "trigger_revenue_recognition",
-        "get_revenue_data",
+        TRIGGER_REVENUE_RECOGNITION,
+        GET_REVENUE_DATA,
         # Content
-        "create_post",
-        "get_posts",
-        "rewrite_post",
-        "reject_post",
-        "publish_post",
-        "export_posts",
+        CREATE_POST,
+        GET_POSTS,
+        REWRITE_POST,
+        REJECT_POST,
+        PUBLISH_POST,
+        EXPORT_POSTS,
     )
 
     def get_system_prompt(self) -> str:

@@ -7,7 +7,6 @@ from app.agents.base import ConversationalAgent
 from app.agents.registry import AGENTS_BY_SLUG
 from app.db import get_pool
 from app.models.agents import Agent
-from app.tools import TOOLS
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -58,7 +57,6 @@ async def get_agent_tools(slug: str) -> list[dict[str, Any]]:
     if not cls:
         raise HTTPException(status_code=404, detail=f"Agent '{slug}' not found")
     return [
-        {"name": TOOLS[n].name, "description": TOOLS[n].description, "input_schema": TOOLS[n].input_schema}
-        for n in cls.allowed_tools
-        if n in TOOLS
+        {"name": t.name, "description": t.description, "input_schema": t.input_schema}
+        for t in cls.allowed_tools
     ]
