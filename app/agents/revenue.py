@@ -3,6 +3,7 @@ from datetime import date
 from typing import ClassVar
 
 from app.agents.base import ConversationalAgent
+from app.tools.revenue_tools import GET_REVENUE_DATA, TRIGGER_REVENUE_RECOGNITION
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +16,8 @@ class RevenueRecognitionAgent(ConversationalAgent):
     )
     requires_approval = True
     allowed_tools: ClassVar[tuple[str, ...]] = (
-        "get_revenue_data",
-        "trigger_revenue_recognition",
+        GET_REVENUE_DATA.name,
+        TRIGGER_REVENUE_RECOGNITION.name,
     )
 
     # ── Conversational identity ──────────────────────────────────────────────
