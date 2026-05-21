@@ -24,6 +24,7 @@ def test_system_prompt_non_empty():
     # Must reference the slugs it knows how to delegate to.
     assert "revenue-recognition" in prompt
     assert "content-orchestrator" in prompt
+    assert "bdr" in prompt
 
 
 def test_allowed_tools_include_mandatory_set():

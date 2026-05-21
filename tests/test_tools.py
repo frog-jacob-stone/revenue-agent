@@ -1,10 +1,10 @@
-"""Tests for the shared tool layer: registry integrity, dispatch, and the
-least-privilege `allowed_tools` enforcement on ConversationalAgent.
+"""Tests for the agent-level tool layer: typed `allowed_tools` enforcement
+and dispatch on ConversationalAgent.
 
 After the single-front-door collapse the only ConversationalAgent is
-RevenueOpsAgent. The structural coverage (registry integrity, dispatch
-routing, allow/deny enforcement) stays the same; only the targeted agent
-changes.
+RevenueOpsAgent. Tool definitions are now imported as references on the
+agent class, so registry-completeness is enforced by the import system
+itself — no separate "is this tool registered?" test is needed.
 """
 import uuid
 from unittest.mock import AsyncMock, patch
@@ -13,58 +13,6 @@ import pytest
 
 from app.agents.registry import AGENTS_BY_SLUG
 from app.agents.revenue_ops_agent import RevenueOpsAgent
-from app.agents.revenue_recognition_agent import RevenueRecognitionAgent
-from app.tools import TOOLS, ToolContext, execute_tool, get_tool_schemas
-
-
-# RevenueRecognitionAgent is now a non-conversational BaseAgent — its tools
-# live in its class attribute but it can't be instantiated. RevenueOpsAgent is
-# the single ConversationalAgent that exercises the tool dispatch machinery.
-IMPLEMENTED_AGENTS = (RevenueOpsAgent, RevenueRecognitionAgent)
-
-
-# ── Registry integrity ──────────────────────────────────────────────────────
-
-
-def test_tool_schemas_have_openai_shape():
-    for name, tool in TOOLS.items():
-        schema = tool.as_openai_schema()
-        assert schema["type"] == "function"
-        assert schema["function"]["name"] == name
-        assert "parameters" in schema["function"]
-
-
-def test_get_tool_schemas_filters_by_name():
-    schemas = get_tool_schemas(["get_revenue_data", "bogus_tool_name"])
-    names = [s["function"]["name"] for s in schemas]
-    assert names == ["get_revenue_data"]
-
-
-# ── Dispatch ────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_execute_tool_unknown_raises():
-    ctx = ToolContext(agent_id=uuid.UUID(int=0), agent_slug="revenue-recognition")
-    with pytest.raises(ValueError, match="Unknown tool"):
-        await execute_tool("not_a_real_tool", {}, ctx)
-
-
-@pytest.mark.asyncio
-async def test_execute_tool_dispatches_to_service():
-    """Calling an allowed tool flows through to the service layer."""
-    ctx = ToolContext(agent_id=uuid.UUID(int=0), agent_slug="revenue-recognition")
-    fake = {"records": []}
-    with patch(
-        "app.services.revenue.get_revenue_data_slim",
-        new=AsyncMock(return_value=fake),
-    ):
-        result = await execute_tool(
-            "get_revenue_data",
-            {"date_from": "2026-01-01", "date_to": "2026-01-31"},
-            ctx,
-        )
-    assert result == fake
 
 
 # ── Agent-level least-privilege enforcement ─────────────────────────────────

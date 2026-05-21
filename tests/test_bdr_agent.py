@@ -1,4 +1,4 @@
-"""Smoke tests for the placeholder BDRAgent worker."""
+"""Tests for BDRAgent — domain agent with autonomous tool execution."""
 from app.agents.base import BaseAgent, ConversationalAgent
 from app.agents.bdr_agent import BDRAgent
 from app.agents.registry import AGENTS_BY_SLUG
@@ -10,7 +10,7 @@ def test_bdr_registered():
 
 
 def test_bdr_is_worker_not_conversational():
-    """BDR is a worker invoked via ask_agent / invoke_agent — NOT a chat agent."""
+    """BDR is a domain agent invoked via ask_agent — NOT a chat agent."""
     assert issubclass(BDRAgent, BaseAgent)
     assert not issubclass(BDRAgent, ConversationalAgent)
 
@@ -19,11 +19,22 @@ def test_bdr_has_identity_level_system_prompt():
     prompt = BDRAgent.system_prompt
     assert isinstance(prompt, str)
     assert len(prompt) > 200
-    # Identity, not task. Should describe who the BDR is, not a specific task.
     assert "Frogslayer" in prompt
     assert "Business Development Representative" in prompt or "BDR" in prompt
 
 
-def test_bdr_no_allowed_tools():
-    """Workers don't use tools. Tool use lives on the front-door agent."""
-    assert not getattr(BDRAgent, "allowed_tools", ())
+def test_bdr_has_crm_tools():
+    tool_names = {t.name for t in BDRAgent.allowed_tools}
+    assert {
+        "get_contact_by_email",
+        "get_company_by_id",
+        "get_form_submission",
+    }.issubset(tool_names)
+
+
+def test_bdr_tool_schemas_have_openai_shape():
+    for tool in BDRAgent.allowed_tools:
+        schema = tool.as_openai_schema()
+        assert schema["type"] == "function"
+        assert "name" in schema["function"]
+        assert "parameters" in schema["function"]

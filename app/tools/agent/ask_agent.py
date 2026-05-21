@@ -1,16 +1,13 @@
 """Agent-to-agent delegation tool.
 
-`ask_agent` lets one agent delegate a question to another and receive a
-single-turn answer. Both the outgoing prompt and the incoming reply are
-recorded in `agent_messages` under a shared `thread_id`.
+`ask_agent` lets one agent delegate a task to another and receive its answer.
+Both the outgoing prompt and the incoming reply are recorded in `agent_messages`
+under a shared `thread_id`.
 
-The tool wraps `invoke_agent` (single-turn OpenAI call). Native OpenAI
-tool-use loops are not implemented here; receivers see only the current
-question, not prior turns.
-
-Loop safety: callers that want multi-step delegation must bound their own
-iterations. There is no framework-level guard against an unbounded
-ask_agent → ask_agent → ... chain.
+Routing: if the target agent has `allowed_tools`, the call drives a ReAct loop
+via `run_agent_task` — the agent decides which tools to call and returns a
+final answer. If the target has no tools, falls back to a single-turn
+`invoke_agent` call.
 """
 from __future__ import annotations
 
@@ -30,10 +27,11 @@ async def _ask_agent(
     thread_id: str | None = None,
     **_: Any,
 ) -> dict[str, Any]:
-    # Lazy import: top-level import here would create a cycle through
+    # Lazy imports avoid a cycle:
     # app/orchestrator/__init__.py → agent_invoke → app.agents.registry →
-    # app.agents.revenue_recognition_agent → app.tools (this module).
-    from app.orchestrator.agent_invoke import NodeContext, invoke_agent
+    # app.agents.revenue_ops_agent → app.tools.agent.ask_agent (this module).
+    from app.agents.registry import AGENTS_BY_SLUG
+    from app.orchestrator.agent_invoke import NodeContext, invoke_agent, run_agent_task
 
     pool = await get_pool()
     thread_uuid = UUID(thread_id) if thread_id else uuid4()
@@ -49,13 +47,19 @@ async def _ask_agent(
         workflow_id=workflow_id,
     )
 
-    # 2. Get the answer (single-turn).
+    # 2. Dispatch: ReAct loop for agents with tools, single-turn otherwise.
     node_ctx = NodeContext(workflow_id=workflow_id) if workflow_id else None
-    response = await invoke_agent(
-        target_slug,
-        {"prompt": prompt, "max_tokens": 800},
-        node_ctx,
-    )
+    agent_cls = AGENTS_BY_SLUG.get(target_slug)
+    if agent_cls and getattr(agent_cls, "allowed_tools", ()):
+        response = await run_agent_task(
+            target_slug, prompt, node_ctx, progress=ctx.progress
+        )
+    else:
+        response = await invoke_agent(
+            target_slug,
+            {"prompt": prompt, "max_tokens": 800},
+            node_ctx,
+        )
     answer = response["text"]
 
     # 3. Record the answer.

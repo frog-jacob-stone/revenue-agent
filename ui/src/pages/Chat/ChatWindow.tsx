@@ -150,6 +150,7 @@ export default function ChatWindow({ agentId, sessionId, agent }: Props) {
     let currentNodeLineId: string | null = null;
     let pendingAgentByLineId: string | null = null;
     let pendingAgentSlug: string | null = null;
+    let agentTaskToolLineId: string | null = null;
 
     const updateAssistant = (mut: (m: DisplayMessage) => DisplayMessage) =>
       setMessages((prev) => prev.map((m) => (m.id === assistantId ? mut(m) : m)));
@@ -172,11 +173,15 @@ export default function ChatWindow({ agentId, sessionId, agent }: Props) {
           break;
         case 'tool_call_started': {
           toolLineId = `tl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          const label =
+            evt.name === 'ask_agent' && evt.args?.target_slug
+              ? `Asking ${evt.args.target_slug}`
+              : `Calling ${evt.name}`;
           pushLine({
             id: toolLineId,
             kind: 'tool',
             parentId: null,
-            label: `Calling ${evt.name}`,
+            label,
             status: 'running',
           });
           if (evt.name === 'trigger_revenue_recognition') triggered = true;
@@ -278,6 +283,25 @@ export default function ChatWindow({ agentId, sessionId, agent }: Props) {
           }
           break;
         }
+        case 'agent_task_tool_started': {
+          agentTaskToolLineId = `at-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          pushLine({
+            id: agentTaskToolLineId,
+            kind: 'tool',
+            parentId: toolLineId,
+            label: `${evt.agent_slug} → ${evt.name}`,
+            status: 'running',
+          });
+          break;
+        }
+        case 'agent_task_tool_completed':
+          if (agentTaskToolLineId)
+            patchLine(agentTaskToolLineId, {
+              status: evt.ok ? 'ok' : 'fail',
+              detail: evt.result_summary,
+            });
+          agentTaskToolLineId = null;
+          break;
         case 'tool_call_completed':
           if (toolLineId)
             patchLine(toolLineId, {
@@ -287,6 +311,7 @@ export default function ChatWindow({ agentId, sessionId, agent }: Props) {
           toolLineId = null;
           workflowLineId = null;
           currentNodeLineId = null;
+          agentTaskToolLineId = null;
           break;
         case 'done':
           updateAssistant((m) => ({ ...m, status: 'complete' }));

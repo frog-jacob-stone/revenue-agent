@@ -7,7 +7,7 @@ Public surface:
   spawn_workflow               — sub-workflow primitive
 """
 from app.orchestrator import events
-from app.orchestrator.agent_invoke import NodeContext, invoke_agent
+from app.orchestrator.agent_invoke import NodeContext, invoke_agent, run_agent_task
 from app.orchestrator.runner import GraphSpec, Runner, runner
 from app.orchestrator.spawn import spawn_workflow
 
@@ -17,6 +17,7 @@ __all__ = [
     "Runner",
     "events",
     "invoke_agent",
+    "run_agent_task",
     "runner",
     "spawn_workflow",
 ]

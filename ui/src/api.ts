@@ -174,6 +174,8 @@ export type ChatStreamEvent =
       payload: Record<string, unknown>;
     }
   | { type: 'tool_call_completed'; name: string; ok: boolean; result_summary: string }
+  | { type: 'agent_task_tool_started'; agent_slug: string; name: string; args: Record<string, unknown> }
+  | { type: 'agent_task_tool_completed'; agent_slug: string; name: string; ok: boolean; result_summary: string }
   | { type: 'done'; answer: string; tool_used: string | null }
   | { type: 'error'; message: string; status?: number };
 

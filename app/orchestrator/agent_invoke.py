@@ -1,15 +1,21 @@
 """Uniform entry point for invoking an agent from anywhere.
 
-Same surface from a graph node, a sub-agent, or the chat layer. Looks up the
-agent class, builds a single-turn prompt, dispatches via the LLM dispatcher
-(`app.integrations.llm`), and wraps the call with audit events.
+Two invocation modes:
+
+`invoke_agent` — single-turn LLM call. Used from graph nodes where the step
+    sequence is prescribed and no tool loop is needed.
+
+`run_agent_task` — ReAct loop. Used when a domain agent should autonomously
+    decide which tools to call and in what order. Drives the loop until the
+    model returns a final answer or `max_iterations` is exhausted.
 """
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import asyncpg
 
@@ -19,6 +25,7 @@ from app.db import get_pool
 from app.integrations.llm import Attribution, dispatch
 from app.orchestrator import events
 from app.services import audit
+from app.tools.base import ProgressEmitter, ToolContext
 
 logger = logging.getLogger(__name__)
 
@@ -134,4 +141,174 @@ async def invoke_agent(
             actor=f"orchestrator:{slug}",
             payload={"slug": slug, "chars": len(text)},
         )
+    return {"text": text}
+
+
+def _summarize(result: Any) -> str:
+    if isinstance(result, dict):
+        if "error" in result:
+            return f"error: {result['error']}"
+        keys = list(result.keys())[:4]
+        return "{" + ", ".join(keys) + ("…}" if len(result) > 4 else "}")
+    s = str(result)
+    return s if len(s) <= 80 else s[:77] + "…"
+
+
+async def run_agent_task(
+    slug: str,
+    task: str,
+    ctx: NodeContext | None = None,
+    *,
+    max_iterations: int = 10,
+    progress: ProgressEmitter | None = None,
+) -> dict[str, Any]:
+    """Run a domain agent autonomously using a ReAct tool-use loop.
+
+    Drives tool calls until the model returns a final answer (finish_reason
+    stop with no tool_calls) or `max_iterations` is exhausted. Writes
+    AGENT_INVOKED, AGENT_COMPLETED, and AGENT_FAILED audit events bracketing
+    the entire task (not per iteration).
+
+    Falls back to a single-turn dispatch when the agent has no allowed_tools.
+    """
+    agent_cls = _agent_class_for_slug(slug)
+    allowed_tools = list(getattr(agent_cls, "allowed_tools", ()) or ())
+
+    if not allowed_tools:
+        return await invoke_agent(slug, {"prompt": task}, ctx)
+
+    pool = (ctx.pool if ctx else None) or await get_pool()
+    agent_id = await _agent_id_for_slug(pool, slug)
+    workflow_id = ctx.workflow_id if ctx else None
+
+    system_prompt: str = ""
+    if issubclass(agent_cls, ConversationalAgent):
+        try:
+            instance = agent_cls(agent_id=agent_id)  # type: ignore[arg-type]
+            system_prompt = instance.get_system_prompt()
+        except Exception:
+            system_prompt = getattr(agent_cls, "system_prompt", "") or ""
+    else:
+        system_prompt = getattr(agent_cls, "system_prompt", "") or ""
+
+    tool_schemas = [t.as_openai_schema() for t in allowed_tools]
+    tool_by_name = {t.name: t for t in allowed_tools}
+    tool_ctx = ToolContext(
+        agent_id=agent_id or uuid4(),
+        agent_slug=slug,
+        workflow_id=workflow_id,
+    )
+
+    messages: list[dict[str, Any]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": task})
+
+    async with pool.acquire() as conn:
+        await audit.write_audit_event(
+            conn,
+            events.AGENT_INVOKED,
+            workflow_id=workflow_id,
+            agent_id=agent_id,
+            actor=f"orchestrator:{slug}",
+            payload={"slug": slug, "task_chars": len(task)},
+        )
+
+    text = ""
+    try:
+        for _ in range(max_iterations):
+            response = await dispatch(
+                model=agent_cls.model,
+                messages=messages,
+                attribution=Attribution(
+                    agent_slug=slug,
+                    purpose=f"agent:{slug}",
+                    workflow_id=workflow_id,
+                ),
+                tools=tool_schemas,
+            )
+
+            if not response.tool_calls:
+                text = response.text
+                break
+
+            # Append the assistant turn with its tool calls.
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": response.text or None,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": tc.arguments,
+                            },
+                        }
+                        for tc in response.tool_calls
+                    ],
+                }
+            )
+
+            # Execute each tool call and append results.
+            for tc in response.tool_calls:
+                tool = tool_by_name.get(tc.name)
+                if tool is None:
+                    result: Any = {"error": f"Unknown tool '{tc.name}'."}
+                    args: dict[str, Any] = {}
+                else:
+                    try:
+                        args = json.loads(tc.arguments) if tc.arguments else {}
+                    except json.JSONDecodeError:
+                        args = {}
+                    if progress:
+                        progress.emit({
+                            "type": "agent_task_tool_started",
+                            "agent_slug": slug,
+                            "name": tc.name,
+                            "args": args,
+                        })
+                    result = await tool.execute(tool_ctx, **args)
+                if progress:
+                    progress.emit({
+                        "type": "agent_task_tool_completed",
+                        "agent_slug": slug,
+                        "name": tc.name,
+                        "ok": not (isinstance(result, dict) and "error" in result),
+                        "result_summary": _summarize(result),
+                    })
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": json.dumps(result),
+                    }
+                )
+        else:
+            raise RuntimeError(
+                f"Agent '{slug}' exceeded maximum iterations ({max_iterations})."
+            )
+    except Exception as exc:
+        async with pool.acquire() as conn:
+            await audit.write_audit_event(
+                conn,
+                events.AGENT_FAILED,
+                workflow_id=workflow_id,
+                agent_id=agent_id,
+                actor=f"orchestrator:{slug}",
+                payload={"error": str(exc)},
+            )
+        raise
+
+    async with pool.acquire() as conn:
+        await audit.write_audit_event(
+            conn,
+            events.AGENT_COMPLETED,
+            workflow_id=workflow_id,
+            agent_id=agent_id,
+            actor=f"orchestrator:{slug}",
+            payload={"slug": slug, "chars": len(text)},
+        )
+
     return {"text": text}

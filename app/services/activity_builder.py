@@ -99,6 +99,7 @@ class ActivityState:
         "current_node_line_id",
         "pending_agent_line_id",
         "pending_agent_slug",
+        "agent_task_tool_line_id",
     )
 
     def __init__(self) -> None:
@@ -108,6 +109,7 @@ class ActivityState:
         self.current_node_line_id: str | None = None
         self.pending_agent_line_id: str | None = None
         self.pending_agent_slug: str | None = None
+        self.agent_task_tool_line_id: str | None = None
 
 
 def _push(activity: list[dict[str, Any]], line: dict[str, Any]) -> None:
@@ -254,6 +256,29 @@ def apply_event(
                 _patch(activity, state.workflow_line_id, patch)
         return activity
 
+    if etype == "agent_task_tool_started":
+        state.agent_task_tool_line_id = _new_id("at")
+        agent = event.get("agent_slug") or "agent"
+        name = event.get("name") or "?"
+        _push(activity, {
+            "id": state.agent_task_tool_line_id,
+            "kind": "tool",
+            "parentId": state.tool_line_id,
+            "label": f"{agent} → {name}",
+            "status": "running",
+        })
+        return activity
+
+    if etype == "agent_task_tool_completed":
+        if state.agent_task_tool_line_id:
+            patch = {"status": "ok" if event.get("ok") else "fail"}
+            summary = event.get("result_summary")
+            if isinstance(summary, str):
+                patch["detail"] = summary
+            _patch(activity, state.agent_task_tool_line_id, patch)
+        state.agent_task_tool_line_id = None
+        return activity
+
     if etype == "tool_call_completed":
         if state.tool_line_id:
             patch = {"status": "ok" if event.get("ok") else "fail"}
@@ -264,6 +289,7 @@ def apply_event(
         state.tool_line_id = None
         state.workflow_line_id = None
         state.current_node_line_id = None
+        state.agent_task_tool_line_id = None
         return activity
 
     if etype == "error":

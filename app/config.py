@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     supabase_jwt_secret: str = ""
     openai_api_key: str = ""
     hubspot_token: str = ""
+    hubspot_form_id: str = ""
     apollo_api_key: str = ""
     log_level: str = "INFO"
 
