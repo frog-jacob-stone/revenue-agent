@@ -31,13 +31,6 @@ _NODE_LABELS: dict[str, str] = {
     "outreach_chain:propose_send": "Proposing send",
     "outreach_chain:gmail_send": "Sending via Gmail",
     "outreach_chain:failed_terminal": "Critique attempts exhausted",
-    # rev_rec_monthly
-    "rev_rec_monthly:validate_and_sync": "Validating and syncing",
-    "rev_rec_monthly:propose_configure": "Proposing configuration",
-    "rev_rec_monthly:apply_configure_or_loop": "Applying configuration",
-    "rev_rec_monthly:compute_entries": "Computing entries",
-    "rev_rec_monthly:propose_write_entries": "Proposing entries",
-    "rev_rec_monthly:write_entries": "Writing entries",
 }
 
 # Tool-step labels (ADR-0002). Used when a tool emits `tool_step_started` /
@@ -47,11 +40,12 @@ _TOOL_STEP_LABELS: dict[str, str] = {
     "create_post:interpret_brief": "Interpreting brief",
     "create_post:draft_post": "Drafting post",
     "create_post:voice_review": "Reviewing voice",
+    "trigger_revenue_recognition:validate_and_sync": "Validating and syncing",
+    "trigger_revenue_recognition:compute_entries": "Computing entries",
 }
 
 _WORKFLOW_LABELS: dict[str, str] = {
     "outreach_chain": "Outreach",
-    "rev_rec_monthly": "Revenue recognition",
 }
 
 

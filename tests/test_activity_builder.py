@@ -21,7 +21,7 @@ def _build(events):
 
 
 def test_label_for_node_uses_known_label():
-    assert label_for_node("rev_rec_monthly", "compute_entries") == "Computing entries"
+    assert label_for_node("outreach_chain", "compose_email") == "Composing email"
 
 
 def test_label_for_node_falls_back_to_title_case():
@@ -29,7 +29,7 @@ def test_label_for_node_falls_back_to_title_case():
 
 
 def test_label_for_kind_uses_known_label():
-    assert label_for_kind("rev_rec_monthly") == "Revenue recognition"
+    assert label_for_kind("outreach_chain") == "Outreach"
 
 
 def test_label_for_kind_falls_back_to_title_case():
@@ -84,12 +84,12 @@ def test_full_workflow_sequence_nests_correctly():
         {
             "type": "workflow_started",
             "workflow_id": "abc-123",
-            "kind": "rev_rec_monthly",
+            "kind": "outreach_chain",
         },
         {
             "type": "workflow_event",
             "event_type": "node.entered",
-            "payload": {"node": "compute_entries"},
+            "payload": {"node": "compose_email"},
         },
         {
             "type": "workflow_event",
@@ -106,7 +106,7 @@ def test_full_workflow_sequence_nests_correctly():
         {
             "type": "workflow_event",
             "event_type": "node.exited",
-            "payload": {"node": "compute_entries"},
+            "payload": {"node": "compose_email"},
         },
         {
             "type": "workflow_event",
@@ -128,7 +128,7 @@ def test_full_workflow_sequence_nests_correctly():
     assert activity[0]["status"] == "ok"  # patched by tool_call_completed
     assert activity[1]["kind"] == "workflow"
     assert activity[1]["parentId"] == activity[0]["id"]
-    assert activity[1]["label"] == "Workflow: Revenue recognition"
+    assert activity[1]["label"] == "Workflow: Outreach"
     assert activity[1]["status"] == "ok"  # workflow.completed patched it
 
     # The "node.entered" line followed by "node.exited" line — both pushed.
@@ -137,7 +137,7 @@ def test_full_workflow_sequence_nests_correctly():
     assert all(line["parentId"] == activity[1]["id"] for line in node_lines)
     assert node_lines[0]["status"] == "running"
     assert node_lines[1]["status"] == "ok"
-    assert node_lines[0]["label"] == "Computing entries"
+    assert node_lines[0]["label"] == "Composing email"
 
     subagent = next(line for line in activity if line["kind"] == "subagent")
     # nested under the FIRST node line (the one open at time of agent.invoked)
@@ -150,11 +150,11 @@ def test_full_workflow_sequence_nests_correctly():
 def test_compact_tokens_under_1000():
     activity = _build([
         {"type": "tool_call_started", "name": "x", "args": {}},
-        {"type": "workflow_started", "workflow_id": "w", "kind": "rev_rec_monthly"},
+        {"type": "workflow_started", "workflow_id": "w", "kind": "outreach_chain"},
         {
             "type": "workflow_event",
             "event_type": "node.entered",
-            "payload": {"node": "compute_entries"},
+            "payload": {"node": "compose_email"},
         },
         {
             "type": "workflow_event",
@@ -174,7 +174,7 @@ def test_compact_tokens_under_1000():
 def test_workflow_failed_sets_fail_with_error_detail():
     activity = _build([
         {"type": "tool_call_started", "name": "trigger", "args": {}},
-        {"type": "workflow_started", "workflow_id": "w", "kind": "rev_rec_monthly"},
+        {"type": "workflow_started", "workflow_id": "w", "kind": "outreach_chain"},
         {
             "type": "workflow_event",
             "event_type": "workflow.failed",

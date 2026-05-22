@@ -60,90 +60,9 @@ async def test_stream_emits_deltas_and_done_for_text_only_response():
     assert final["tool_used"] is None
 
 
-@pytest.mark.asyncio
-async def test_stream_emits_tool_lifecycle_and_workflow_events():
-    """A tool call that spawns a workflow produces the full event sequence,
-    including workflow_started + workflow_event lines tailed from audit_log."""
-
-    args_json = json.dumps({"date_recognized": "2026-05-01"})
-    provider = FakeProvider(
-        streams=[
-            # First round-trip: model emits a tool_call.
-            [
-                StreamDelta(
-                    tool_call_index=0,
-                    tool_call_id="call_1",
-                    tool_call_name_delta="trigger_revenue_recognition",
-                ),
-                StreamDelta(tool_call_index=0, tool_call_args_delta=args_json),
-                LlmResponse(
-                    text="",
-                    tool_calls=[
-                        ToolCall(
-                            id="call_1",
-                            name="trigger_revenue_recognition",
-                            arguments=args_json,
-                        )
-                    ],
-                    finish_reason="tool_calls",
-                ),
-            ],
-            # Second round-trip: model responds with text.
-            [
-                StreamDelta(text="Triggered."),
-                LlmResponse(text="Triggered.", finish_reason="stop"),
-            ],
-        ]
-    )
-
-    wf_id = uuid.uuid4()
-
-    async def fake_runner_start_bg(*_args, **_kwargs):
-        async def _noop():
-            return None
-        return wf_id, asyncio.create_task(_noop())
-
-    import datetime as _dt
-    fake_events = [
-        TraceEvent(id=1, event_type=evt_const.NODE_ENTERED, occurred_at=_dt.datetime.now(),
-                   actor="orchestrator", payload={"node": "compute_entries"}),
-        TraceEvent(id=2, event_type=evt_const.AGENT_INVOKED, occurred_at=_dt.datetime.now(),
-                   actor="orchestrator", payload={"agent_slug": "revenue-recognition"}),
-        TraceEvent(id=3, event_type=evt_const.AGENT_COMPLETED, occurred_at=_dt.datetime.now(),
-                   actor="orchestrator", payload={"agent_slug": "revenue-recognition", "total_tokens": 1234}),
-        TraceEvent(id=4, event_type=evt_const.NODE_EXITED, occurred_at=_dt.datetime.now(),
-                   actor="orchestrator", payload={"node": "compute_entries"}),
-        TraceEvent(id=5, event_type=evt_const.WORKFLOW_COMPLETED, occurred_at=_dt.datetime.now(),
-                   actor="orchestrator", payload={}),
-    ]
-
-    async def fake_tail(_pool, _wf_id, **kwargs):
-        include = kwargs.get("include_subagents", True)
-        for ev in fake_events:
-            if not include and ev.event_type in {
-                evt_const.AGENT_INVOKED, evt_const.AGENT_COMPLETED, evt_const.AGENT_FAILED,
-            }:
-                continue
-            yield ev
-
-    with use_provider(provider), \
-         patch("app.orchestrator.runner.runner.start_in_background",
-               new=AsyncMock(side_effect=fake_runner_start_bg)), \
-         patch("app.services.audit_tail.tail_workflow_events", new=fake_tail), \
-         patch("app.db.get_pool", new=AsyncMock(return_value=None)):
-        out: list[dict[str, Any]] = []
-        async for ev in _stream_llm_turn([{"role": "user", "content": "run rev rec"}]):
-            out.append(ev)
-
-    types = [e["type"] for e in out]
-    assert types[0] == "tool_call_started"
-    assert "workflow_started" in types
-    assert types.count("workflow_event") >= 3
-    assert types[-1] == "done"
-
-    final = out[-1]
-    assert final["answer"] == "Triggered."
-    assert final["tool_used"] == "trigger_revenue_recognition"
+# test_stream_emits_tool_lifecycle_and_workflow_events deleted in plan 18 —
+# no production tool spawns a workflow anymore (rev_rec was the last). Phase 4
+# removes the workflow-forwarding mechanism entirely.
 
 
 # ── start_turn + TurnRuntime (detached + persistence) ───────────────────────
