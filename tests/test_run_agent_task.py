@@ -167,17 +167,15 @@ async def test_max_iterations_guard_raises():
 
 
 async def test_emits_invoked_and_completed_on_success():
+    from uuid import uuid4
+
     from app.db import get_pool
 
     pool = await get_pool()
-    wf_id = await pool.fetchval(
-        """
-        INSERT INTO workflows (kind, status, trigger_source, trigger_payload, initiated_by)
-        VALUES ('_task_test', 'running', 'manual', '{}'::jsonb, 'tester')
-        RETURNING id
-        """,
-    )
-    # Provider returns a final answer immediately — no tool calls, no HubSpot.
+    # Post-0022 the workflows table is gone. The workflow_id column on
+    # audit_log is a plain UUID kept for historical lookups; pass a fresh
+    # UUID so we can filter audit_log rows by it.
+    wf_id = uuid4()
     provider = FakeProvider(completions=[_final("Draft email.")])
 
     with use_provider(provider):
@@ -194,16 +192,12 @@ async def test_emits_invoked_and_completed_on_success():
 
 
 async def test_emits_agent_failed_on_exception():
+    from uuid import uuid4
+
     from app.db import get_pool
 
     pool = await get_pool()
-    wf_id = await pool.fetchval(
-        """
-        INSERT INTO workflows (kind, status, trigger_source, trigger_payload, initiated_by)
-        VALUES ('_task_test_fail', 'running', 'manual', '{}'::jsonb, 'tester')
-        RETURNING id
-        """,
-    )
+    wf_id = uuid4()
     provider = FakeProvider(completions=[RuntimeError("llm exploded")])
 
     with use_provider(provider):

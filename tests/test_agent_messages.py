@@ -12,16 +12,10 @@ from app.services import agent_messages
 
 
 async def _seed_workflow_row(kind: str = "_agent_messages_test"):
-    pool = await get_pool()
-    return await pool.fetchval(
-        """
-        INSERT INTO workflows
-            (kind, status, trigger_source, trigger_payload, initiated_by)
-        VALUES ($1, 'running', 'manual', '{}'::jsonb, 'tester')
-        RETURNING id
-        """,
-        kind,
-    )
+    # Post-0022 the workflows table is gone and workflow_id is a plain UUID
+    # column kept only for historical lookups. Mint a fresh UUID per call so
+    # the filter tests can still discriminate.
+    return uuid4()
 
 
 async def test_send_message_with_new_thread():

@@ -7,10 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.auth import get_current_user
 from app.config import settings
 from app.db import close_pool, get_pool
-from app.db_security import lock_down_langgraph_tables
-from app.orchestrator.graphs import register_all as register_graphs
-from app.orchestrator.runner import runner
-from app.services.chat_sessions import mark_orphaned_streaming_failed
 from app.routers import (
     agents,
     analytics,
@@ -19,9 +15,9 @@ from app.routers import (
     chat,
     llm_calls,
     memories,
-    workflows,
 )
 from app.seed import seed_agents, seed_voice_profile
+from app.services.chat_sessions import mark_orphaned_streaming_failed
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 
@@ -36,9 +32,6 @@ async def lifespan(app: FastAPI):
         )
     await seed_agents()
     await seed_voice_profile()
-    await runner.init()
-    register_graphs(runner)
-    await lock_down_langgraph_tables(pool)
     yield
     await close_pool()
 
@@ -59,7 +52,6 @@ app.add_middleware(
 
 _auth = [Depends(get_current_user)]
 
-app.include_router(workflows.router, dependencies=_auth)
 app.include_router(analytics.router, dependencies=_auth)
 app.include_router(agents.router, dependencies=_auth)
 app.include_router(audit_log.router, dependencies=_auth)

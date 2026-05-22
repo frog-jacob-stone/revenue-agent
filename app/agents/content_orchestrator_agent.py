@@ -4,9 +4,9 @@ from app.agents.base import BaseAgent
 
 
 class ContentOrchestratorAgent(BaseAgent):
-    """Worker agent — invoked single-turn via `invoke_agent` for content
-    domain reasoning (brainstorming angles, critiquing drafts, etc.). The
-    front-door `revenue-ops` agent owns the conversation and the action
+    """Worker agent — invoked single-turn via `run_agent_task` (no tools) for
+    content domain reasoning (brainstorming angles, critiquing drafts, etc.).
+    The front-door `revenue-ops` agent owns the conversation and the action
     tools (`create_post`, `publish_post`, etc.).
     """
 

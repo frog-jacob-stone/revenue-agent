@@ -1,23 +1,17 @@
-"""orchestrator — LangGraph-based orchestration runtime.
+"""Orchestrator runtime: dispatch tools, invoke agents, audit events.
 
-Public surface:
-  runner: Runner               — the singleton; exposes start/resume/register
+Post-ADR-0002 contents:
+  dispatch_tool                — tool runtime (Done | AwaitingApproval | Blocked)
+  run_agent_task, NodeContext  — agent invocation (ReAct loop or single-turn)
   events                       — canonical audit event constants
-  invoke_agent, NodeContext    — agent invocation primitive
-  spawn_workflow               — sub-workflow primitive
 """
 from app.orchestrator import events
-from app.orchestrator.agent_invoke import NodeContext, invoke_agent, run_agent_task
-from app.orchestrator.runner import GraphSpec, Runner, runner
-from app.orchestrator.spawn import spawn_workflow
+from app.orchestrator.agent_invoke import NodeContext, run_agent_task
+from app.orchestrator.dispatch import dispatch_tool
 
 __all__ = [
-    "GraphSpec",
     "NodeContext",
-    "Runner",
+    "dispatch_tool",
     "events",
-    "invoke_agent",
     "run_agent_task",
-    "runner",
-    "spawn_workflow",
 ]

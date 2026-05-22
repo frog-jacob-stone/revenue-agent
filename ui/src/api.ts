@@ -5,8 +5,6 @@ import type {
   ChatPersistedMessage,
   ChatSession,
   TriggerResult,
-  WorkflowRecord,
-  WorkflowTrace,
 } from './types';
 import { supabase } from './lib/supabase';
 
@@ -67,24 +65,6 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<T>;
-}
-
-export function getWorkflowTrace(workflowId: string): Promise<WorkflowTrace> {
-  return apiFetch<WorkflowTrace>(`/workflows/${workflowId}/trace`);
-}
-
-export interface OutreachTriggerResponse {
-  workflow_id: string;
-  kind: string;
-  status: string;
-}
-
-export function triggerOutreach(hubspotContactId: string): Promise<OutreachTriggerResponse> {
-  return apiFetch<OutreachTriggerResponse>('/workflows/outreach', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ hubspot_contact_id: hubspotContactId, initiated_by: 'system' }),
-  });
 }
 
 export interface ApprovalFilters {
@@ -154,10 +134,6 @@ export function getAgentApprovals(slug: string, status = 'all'): Promise<Approva
   );
 }
 
-export function getAgentWorkflows(slug: string): Promise<WorkflowRecord[]> {
-  return apiFetch<WorkflowRecord[]>(`/workflows?kind=${encodeURIComponent(slug)}`);
-}
-
 export function getAgentTools(slug: string): Promise<AgentTool[]> {
   return apiFetch<AgentTool[]>(`/agents/${encodeURIComponent(slug)}/tools`);
 }
@@ -165,14 +141,6 @@ export function getAgentTools(slug: string): Promise<AgentTool[]> {
 export type ChatStreamEvent =
   | { type: 'delta'; text: string }
   | { type: 'tool_call_started'; name: string; args: Record<string, unknown> }
-  | { type: 'workflow_started'; workflow_id: string; kind: string }
-  | {
-      type: 'workflow_event';
-      workflow_id: string;
-      event_type: string;
-      actor: string | null;
-      payload: Record<string, unknown>;
-    }
   | { type: 'tool_call_completed'; name: string; ok: boolean; result_summary: string }
   | { type: 'tool_step_started'; tool: string; step: string; attempt?: number }
   | {

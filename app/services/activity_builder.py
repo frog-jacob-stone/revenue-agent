@@ -1,6 +1,6 @@
 """Server-side mirror of `ChatWindow.tsx::onEvent` activity-tree building.
 
-The chat UI builds an `ActivityLine[]` tree (tool → workflow → node → subagent
+The chat UI builds an `ActivityLine[]` tree (tool → tool-step / sub-agent
 nesting) from the SSE event stream as it arrives. When the user reloads or
 returns to a chat that was started while they were watching, the frontend
 renders the persisted tree from `chat_messages.activity` instead of rebuilding
@@ -19,23 +19,8 @@ from typing import Any
 
 # Mirror of ui/src/pages/Chat/nodeLabels.ts. Keep in sync.
 
-_NODE_LABELS: dict[str, str] = {
-    # outreach_chain
-    "outreach_chain:pull_hubspot": "Pulling HubSpot contact",
-    "outreach_chain:web_search": "Searching the web",
-    "outreach_chain:consolidate": "Consolidating research",
-    "outreach_chain:retrieve_kb": "Retrieving knowledge base",
-    "outreach_chain:compose_email": "Composing email",
-    "outreach_chain:voice_critique": "Voice critique",
-    "outreach_chain:accuracy_critique": "Accuracy critique",
-    "outreach_chain:propose_send": "Proposing send",
-    "outreach_chain:gmail_send": "Sending via Gmail",
-    "outreach_chain:failed_terminal": "Critique attempts exhausted",
-}
-
 # Tool-step labels (ADR-0002). Used when a tool emits `tool_step_started` /
-# `tool_step_completed` events on its ProgressEmitter rather than going through
-# a LangGraph workflow.
+# `tool_step_completed` events on its ProgressEmitter.
 _TOOL_STEP_LABELS: dict[str, str] = {
     "create_post:interpret_brief": "Interpreting brief",
     "create_post:draft_post": "Drafting post",
@@ -44,26 +29,14 @@ _TOOL_STEP_LABELS: dict[str, str] = {
     "trigger_revenue_recognition:compute_entries": "Computing entries",
 }
 
-_WORKFLOW_LABELS: dict[str, str] = {
-    "outreach_chain": "Outreach",
-}
-
 
 def _title_case(node: str) -> str:
     return " ".join(part.capitalize() for part in node.replace("_", " ").split())
 
 
-def label_for_node(kind: str, node: str) -> str:
-    return _NODE_LABELS.get(f"{kind}:{node}", _title_case(node))
-
-
 def label_for_tool_step(tool: str, step: str) -> str:
     """Label for a `tool_step_*` event (ADR-0002)."""
     return _TOOL_STEP_LABELS.get(f"{tool}:{step}", _title_case(step))
-
-
-def label_for_kind(kind: str) -> str:
-    return _WORKFLOW_LABELS.get(kind, _title_case(kind))
 
 
 def _compact_tokens(payload: dict[str, Any]) -> str | None:
@@ -82,32 +55,20 @@ def _new_id(prefix: str) -> str:
 
 
 class ActivityState:
-    """Mutable cursor used by `apply_event` to thread parent-IDs across events.
-
-    The frontend keeps these as closure variables (`toolLineId`,
-    `workflowLineId`, `currentNodeLineId`, `pendingAgentByLineId`,
-    `pendingAgentSlug`, `workflowKind`). Here they live on a small dataclass-
-    style object so the pure function can read/write them.
-    """
+    """Mutable cursor used by `apply_event` to thread parent-IDs across events."""
 
     __slots__ = (
         "tool_line_id",
-        "workflow_line_id",
-        "workflow_kind",
-        "current_node_line_id",
-        "pending_agent_line_id",
-        "pending_agent_slug",
+        "tool_name",
         "agent_task_tool_line_id",
+        "tool_step_line_ids",
     )
 
     def __init__(self) -> None:
         self.tool_line_id: str | None = None
-        self.workflow_line_id: str | None = None
-        self.workflow_kind: str = ""
-        self.current_node_line_id: str | None = None
-        self.pending_agent_line_id: str | None = None
-        self.pending_agent_slug: str | None = None
+        self.tool_name: str | None = None
         self.agent_task_tool_line_id: str | None = None
+        self.tool_step_line_ids: dict[str, str] = {}
 
 
 def _push(activity: list[dict[str, Any]], line: dict[str, Any]) -> None:
@@ -136,122 +97,42 @@ def apply_event(
         return activity
 
     if etype == "tool_call_started":
+        name = event.get("name") or "?"
         state.tool_line_id = _new_id("tl")
+        state.tool_name = name if isinstance(name, str) else "?"
+        state.tool_step_line_ids = {}
         _push(activity, {
             "id": state.tool_line_id,
             "kind": "tool",
             "parentId": None,
-            "label": f"Calling {event.get('name', '?')}",
+            "label": f"Calling {name}",
             "status": "running",
         })
         return activity
 
-    if etype == "workflow_started":
-        workflow_id = event.get("workflow_id") or ""
-        kind = event.get("kind") or ""
-        state.workflow_line_id = f"wf-{workflow_id}"
-        state.workflow_kind = kind
+    if etype == "tool_step_started":
+        step = event.get("name") or "?"
+        tool = state.tool_name or ""
+        line_id = _new_id("ts")
+        state.tool_step_line_ids[str(step)] = line_id
         _push(activity, {
-            "id": state.workflow_line_id,
-            "kind": "workflow",
+            "id": line_id,
+            "kind": "node",
             "parentId": state.tool_line_id,
-            "label": f"Workflow: {label_for_kind(kind)}",
+            "label": label_for_tool_step(tool, str(step)),
             "status": "running",
         })
         return activity
 
-    if etype == "workflow_event":
-        et = event.get("event_type")
-        payload = event.get("payload") or {}
-
-        if et == "node.entered":
-            node = payload.get("node") or "?"
-            state.current_node_line_id = _new_id("nd")
-            _push(activity, {
-                "id": state.current_node_line_id,
-                "kind": "node",
-                "parentId": state.workflow_line_id,
-                "label": label_for_node(state.workflow_kind, node),
-                "status": "running",
-            })
-        elif et == "node.exited":
-            node = payload.get("node") or "?"
-            state.current_node_line_id = _new_id("nd")
-            _push(activity, {
-                "id": state.current_node_line_id,
-                "kind": "node",
-                "parentId": state.workflow_line_id,
-                "label": label_for_node(state.workflow_kind, node),
-                "status": "ok",
-            })
-        elif et == "node.failed":
-            node = payload.get("node") or "?"
-            state.current_node_line_id = _new_id("nd")
-            line: dict[str, Any] = {
-                "id": state.current_node_line_id,
-                "kind": "node",
-                "parentId": state.workflow_line_id,
-                "label": label_for_node(state.workflow_kind, node),
-                "status": "fail",
-            }
-            error = payload.get("error")
-            if isinstance(error, str):
-                line["detail"] = error
-            _push(activity, line)
-        elif et == "agent.invoked":
-            slug = payload.get("agent_slug") or event.get("actor") or "agent"
-            state.pending_agent_slug = slug
-            state.pending_agent_line_id = _new_id("ag")
-            _push(activity, {
-                "id": state.pending_agent_line_id,
-                "kind": "subagent",
-                "parentId": state.current_node_line_id,
-                "label": slug,
-                "status": "running",
-            })
-        elif et in ("agent.completed", "agent.failed"):
-            tokens = _compact_tokens(payload)
-            status = "ok" if et == "agent.completed" else "fail"
-            if state.pending_agent_line_id:
-                patch: dict[str, Any] = {
-                    "status": status,
-                    "label": state.pending_agent_slug or "agent",
-                }
-                if tokens:
-                    patch["detail"] = tokens
-                _patch(activity, state.pending_agent_line_id, patch)
-            else:
-                slug = payload.get("agent_slug") or event.get("actor") or "agent"
-                line = {
-                    "id": _new_id("ag"),
-                    "kind": "subagent",
-                    "parentId": state.current_node_line_id,
-                    "label": slug,
-                    "status": status,
-                }
-                if tokens:
-                    line["detail"] = tokens
-                _push(activity, line)
-            state.pending_agent_line_id = None
-            state.pending_agent_slug = None
-        elif et == "workflow.paused":
-            _push(activity, {
-                "id": _new_id("pa"),
-                "kind": "pause",
-                "parentId": state.workflow_line_id,
-                "label": "Awaiting approval",
-                "status": "ok",
-            })
-        elif et == "workflow.completed":
-            if state.workflow_line_id:
-                _patch(activity, state.workflow_line_id, {"status": "ok"})
-        elif et == "workflow.failed":
-            if state.workflow_line_id:
-                patch = {"status": "fail"}
-                error = payload.get("error")
-                if isinstance(error, str):
-                    patch["detail"] = error
-                _patch(activity, state.workflow_line_id, patch)
+    if etype == "tool_step_completed":
+        step = event.get("name") or "?"
+        line_id = state.tool_step_line_ids.get(str(step))
+        if line_id:
+            patch: dict[str, Any] = {"status": "ok" if event.get("ok", True) else "fail"}
+            detail = event.get("detail")
+            if isinstance(detail, str):
+                patch["detail"] = detail
+            _patch(activity, line_id, patch)
         return activity
 
     if etype == "agent_task_tool_started":
@@ -285,9 +166,9 @@ def apply_event(
                 patch["detail"] = summary
             _patch(activity, state.tool_line_id, patch)
         state.tool_line_id = None
-        state.workflow_line_id = None
-        state.current_node_line_id = None
+        state.tool_name = None
         state.agent_task_tool_line_id = None
+        state.tool_step_line_ids = {}
         return activity
 
     if etype == "error":

@@ -7,8 +7,8 @@ logger = logging.getLogger(__name__)
 
 
 class RevenueRecognitionAgent(BaseAgent):
-    """Worker agent — invoked single-turn via `invoke_agent` for revenue
-    explanations and analysis prompts. Not user-facing; the front-door
+    """Worker agent — invoked single-turn via `run_agent_task` (no tools) for
+    revenue explanations and analysis prompts. Not user-facing; the front-door
     `revenue-ops` agent owns the conversation and the action tools.
     """
 

@@ -7,8 +7,7 @@ renders live from ChatWindow.tsx::onEvent.
 from app.services.activity_builder import (
     ActivityState,
     apply_event,
-    label_for_kind,
-    label_for_node,
+    label_for_tool_step,
 )
 
 
@@ -20,20 +19,12 @@ def _build(events):
     return activity
 
 
-def test_label_for_node_uses_known_label():
-    assert label_for_node("outreach_chain", "compose_email") == "Composing email"
+def test_label_for_tool_step_uses_known_label():
+    assert label_for_tool_step("create_post", "interpret_brief") == "Interpreting brief"
 
 
-def test_label_for_node_falls_back_to_title_case():
-    assert label_for_node("unknown_kind", "do_a_thing") == "Do A Thing"
-
-
-def test_label_for_kind_uses_known_label():
-    assert label_for_kind("outreach_chain") == "Outreach"
-
-
-def test_label_for_kind_falls_back_to_title_case():
-    assert label_for_kind("brand_new_thing") == "Brand New Thing"
+def test_label_for_tool_step_falls_back_to_title_case():
+    assert label_for_tool_step("unknown_tool", "do_a_thing") == "Do A Thing"
 
 
 def test_delta_events_dont_touch_activity():
@@ -77,113 +68,72 @@ def test_tool_call_completed_failure_marks_status_fail():
     assert activity[0]["detail"] == "error: boom"
 
 
-def test_full_workflow_sequence_nests_correctly():
-    """End-to-end: tool -> workflow -> nodes (with sub-agent) -> completion."""
+def test_tool_step_events_nest_under_tool():
     activity = _build([
-        {"type": "tool_call_started", "name": "trigger_revenue_recognition", "args": {}},
-        {
-            "type": "workflow_started",
-            "workflow_id": "abc-123",
-            "kind": "outreach_chain",
-        },
-        {
-            "type": "workflow_event",
-            "event_type": "node.entered",
-            "payload": {"node": "compose_email"},
-        },
-        {
-            "type": "workflow_event",
-            "event_type": "agent.invoked",
-            "actor": "orchestrator",
-            "payload": {"agent_slug": "revenue-recognition"},
-        },
-        {
-            "type": "workflow_event",
-            "event_type": "agent.completed",
-            "actor": "orchestrator",
-            "payload": {"agent_slug": "revenue-recognition", "total_tokens": 1234},
-        },
-        {
-            "type": "workflow_event",
-            "event_type": "node.exited",
-            "payload": {"node": "compose_email"},
-        },
-        {
-            "type": "workflow_event",
-            "event_type": "workflow.completed",
-            "payload": {},
-        },
+        {"type": "tool_call_started", "name": "create_post", "args": {}},
+        {"type": "tool_step_started", "name": "interpret_brief"},
+        {"type": "tool_step_completed", "name": "interpret_brief", "ok": True},
+        {"type": "tool_step_started", "name": "draft_post"},
+        {"type": "tool_step_completed", "name": "draft_post", "ok": True},
         {
             "type": "tool_call_completed",
-            "name": "trigger_revenue_recognition",
+            "name": "create_post",
             "ok": True,
-            "result_summary": "{workflow_id…}",
+            "result_summary": "{post_id…}",
         },
-        {"type": "done", "answer": "Triggered.", "tool_used": "trigger_revenue_recognition"},
     ])
 
     kinds = [line["kind"] for line in activity]
-    assert kinds == ["tool", "workflow", "node", "subagent", "node"]
-    assert activity[0]["kind"] == "tool"
-    assert activity[0]["status"] == "ok"  # patched by tool_call_completed
-    assert activity[1]["kind"] == "workflow"
-    assert activity[1]["parentId"] == activity[0]["id"]
-    assert activity[1]["label"] == "Workflow: Outreach"
-    assert activity[1]["status"] == "ok"  # workflow.completed patched it
-
-    # The "node.entered" line followed by "node.exited" line — both pushed.
-    node_lines = [line for line in activity if line["kind"] == "node"]
-    assert len(node_lines) == 2  # entered + exited (frontend behaviour preserved)
-    assert all(line["parentId"] == activity[1]["id"] for line in node_lines)
-    assert node_lines[0]["status"] == "running"
-    assert node_lines[1]["status"] == "ok"
-    assert node_lines[0]["label"] == "Composing email"
-
-    subagent = next(line for line in activity if line["kind"] == "subagent")
-    # nested under the FIRST node line (the one open at time of agent.invoked)
-    assert subagent["parentId"] == node_lines[0]["id"]
-    assert subagent["label"] == "revenue-recognition"
-    assert subagent["status"] == "ok"
-    assert subagent["detail"] == "1.2k tokens"
+    assert kinds == ["tool", "node", "node"]
+    tool_line, step1, step2 = activity
+    assert step1["parentId"] == tool_line["id"]
+    assert step2["parentId"] == tool_line["id"]
+    assert step1["label"] == "Interpreting brief"
+    assert step1["status"] == "ok"
+    assert step2["label"] == "Drafting post"
+    assert step2["status"] == "ok"
+    assert tool_line["status"] == "ok"
 
 
-def test_compact_tokens_under_1000():
+def test_tool_step_completed_with_ok_false_marks_fail():
     activity = _build([
-        {"type": "tool_call_started", "name": "x", "args": {}},
-        {"type": "workflow_started", "workflow_id": "w", "kind": "outreach_chain"},
+        {"type": "tool_call_started", "name": "create_post", "args": {}},
+        {"type": "tool_step_started", "name": "voice_review"},
+        {"type": "tool_step_completed", "name": "voice_review", "ok": False},
+    ])
+    step = next(line for line in activity if line["kind"] == "node")
+    assert step["status"] == "fail"
+
+
+def test_agent_task_tool_events_nest_under_parent_tool():
+    activity = _build([
+        {"type": "tool_call_started", "name": "ask_agent", "args": {}},
         {
-            "type": "workflow_event",
-            "event_type": "node.entered",
-            "payload": {"node": "compose_email"},
+            "type": "agent_task_tool_started",
+            "agent_slug": "revenue-recognition",
+            "name": "get_revenue_data",
+            "args": {},
         },
         {
-            "type": "workflow_event",
-            "event_type": "agent.invoked",
-            "payload": {"agent_slug": "x"},
+            "type": "agent_task_tool_completed",
+            "agent_slug": "revenue-recognition",
+            "name": "get_revenue_data",
+            "ok": True,
+            "result_summary": "{records…}",
         },
         {
-            "type": "workflow_event",
-            "event_type": "agent.completed",
-            "payload": {"agent_slug": "x", "total_tokens": 500},
+            "type": "tool_call_completed",
+            "name": "ask_agent",
+            "ok": True,
+            "result_summary": "{answer…}",
         },
     ])
-    subagent = next(line for line in activity if line["kind"] == "subagent")
-    assert subagent["detail"] == "500 tokens"
-
-
-def test_workflow_failed_sets_fail_with_error_detail():
-    activity = _build([
-        {"type": "tool_call_started", "name": "trigger", "args": {}},
-        {"type": "workflow_started", "workflow_id": "w", "kind": "outreach_chain"},
-        {
-            "type": "workflow_event",
-            "event_type": "workflow.failed",
-            "payload": {"error": "Airtable timeout"},
-        },
-    ])
-    wf_line = next(line for line in activity if line["kind"] == "workflow")
-    assert wf_line["status"] == "fail"
-    assert wf_line["detail"] == "Airtable timeout"
+    nested = next(line for line in activity if line["kind"] == "tool" and line["parentId"])
+    parent = next(line for line in activity if line["parentId"] is None)
+    assert nested["parentId"] == parent["id"]
+    assert nested["label"] == "revenue-recognition → get_revenue_data"
+    assert nested["status"] == "ok"
+    assert nested["detail"] == "{records…}"
 
 
 def test_error_event_pushes_top_level_error_line():
@@ -195,18 +145,3 @@ def test_error_event_pushes_top_level_error_line():
     assert activity[0]["status"] == "fail"
     assert activity[0]["parentId"] is None
     assert activity[0]["label"] == "Something broke"
-
-
-def test_workflow_paused_pushes_pause_line():
-    activity = _build([
-        {"type": "tool_call_started", "name": "trigger", "args": {}},
-        {"type": "workflow_started", "workflow_id": "w", "kind": "outreach_chain"},
-        {
-            "type": "workflow_event",
-            "event_type": "workflow.paused",
-            "payload": {},
-        },
-    ])
-    pause = next(line for line in activity if line["kind"] == "pause")
-    assert pause["label"] == "Awaiting approval"
-    assert pause["status"] == "ok"

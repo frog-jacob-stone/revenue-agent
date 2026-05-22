@@ -3,7 +3,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { ArrowLeft, CheckCircle2, XCircle, Loader2, Pencil } from 'lucide-react';
 import ActionTypeChip from '../../components/shared/ActionTypeChip';
-import WorkflowTrace from '../../components/WorkflowTrace';
 import EditBodyModal from '../../components/EditBodyModal';
 import {
   approveApproval,
@@ -32,7 +31,6 @@ function ActionDetail({ action }: { action: InboxItem }) {
 
   const refetch = () => {
     queryClient.invalidateQueries({ queryKey: ['inbox-item', action.id] });
-    queryClient.invalidateQueries({ queryKey: ['workflow-trace', action.workflow_id] });
     queryClient.invalidateQueries({ queryKey: ['inbox'] });
     queryClient.invalidateQueries({ queryKey: ['inbox-pending-count'] });
   };
@@ -80,9 +78,11 @@ function ActionDetail({ action }: { action: InboxItem }) {
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
           <ActionTypeChip type={action.action_type} />
-          <span className="text-xs text-slate-500">
-            node {action.node_name}
-          </span>
+          {action.executor && (
+            <span className="text-xs text-slate-500">
+              executor {action.executor}
+            </span>
+          )}
           <span
             className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${
               isPending
@@ -105,8 +105,6 @@ function ActionDetail({ action }: { action: InboxItem }) {
         )}
         <p className="text-xs text-slate-600">{fmt(action.created_at)}</p>
       </div>
-
-      <WorkflowTrace workflowId={action.workflow_id} />
 
       {/* Payload */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">

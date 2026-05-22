@@ -123,8 +123,10 @@ async def _stream_llm_turn(
     deltas, decide whether to call tools, thread tool results back into the
     message list, loop.
 
-    Events yielded: delta, tool_call_started, workflow_started, workflow_event,
-    tool_call_completed, done.
+    Events yielded: delta, tool_call_started, tool_step_started,
+    tool_step_completed, tool_call_completed, done. (Tools may also emit
+    `agent_task_tool_started` / `agent_task_tool_completed` from nested
+    `run_agent_task` calls; those pass through unchanged.)
     """
     agent = _get_front_door()
 

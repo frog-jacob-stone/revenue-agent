@@ -27,32 +27,6 @@ export interface TriggerResult {
   proposals: number;
 }
 
-export interface WorkflowRecord {
-  id: string;
-  kind: string;
-  status: string;
-  trigger_source: string | null;
-  initiated_by: string | null;
-  started_at: string | null;
-  completed_at: string | null;
-  error: string | null;
-}
-
-export interface TraceEvent {
-  id: string;
-  event_type: string;
-  occurred_at: string;
-  actor: string | null;
-  payload: Record<string, unknown>;
-}
-
-export interface WorkflowTrace {
-  workflow_id: string;
-  kind: string;
-  status: string;
-  events: TraceEvent[];
-}
-
 export type ApprovalStatus =
   | 'pending'
   | 'approved'
@@ -62,8 +36,9 @@ export type ApprovalStatus =
 
 export interface Approval {
   id: string;
-  workflow_id: string;
-  node_name: string;
+  workflow_id: string | null;
+  node_name: string | null;
+  executor: string | null;
   agent_slug: string | null;
   action_type: string;
   status: ApprovalStatus;
@@ -88,10 +63,8 @@ export type InboxItem = Approval;
 
 export type ActivityKind =
   | 'tool'
-  | 'workflow'
   | 'node'
   | 'subagent'
-  | 'pause'
   | 'error';
 
 export interface ActivityLine {

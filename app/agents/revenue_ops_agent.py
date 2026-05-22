@@ -1,8 +1,9 @@
 """Front-door conversational agent.
 
 `RevenueOpsAgent` is the single conversational agent users chat with.
-All other agents in the system are workers — invoked single-turn via
-`invoke_agent` from graph nodes or via `ask_agent` from this agent.
+All other agents in the system are workers — invoked via `ask_agent` from
+this agent, which routes through `run_agent_task` (ReAct loop when the
+target has tools, single-turn otherwise).
 
 The front door owns the action tools (workflow triggers, table writes).
 Use `ask_agent` to delegate explainer-style questions to specialist agents

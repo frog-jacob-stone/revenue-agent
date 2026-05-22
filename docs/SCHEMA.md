@@ -1,16 +1,15 @@
 # Supabase Schema — Revenue Agent System
 
 > Source of truth for the database. Update this file when the schema changes.
-> Matches migrations: `supabase/migrations/0001_initial_schema.sql` through `0018_enable_rls_gaps.sql`
+> Matches migrations: `supabase/migrations/0001_initial_schema.sql` through `0022_drop_langgraph_artifacts.sql`
 
 ## Overview
 
-Ten core tables plus pgvector and LangGraph's checkpoint tables. Every table has RLS enabled from day one so policies can be added without a migration later.
+Nine core tables plus pgvector. Every table has RLS enabled from day one so policies can be added without a migration later.
 
 ```
 agents           → registry of agent definitions (slug-keyed identity rows; metadata lives on the Python class)
-workflows        → a business process instance (e.g. "outbound to Acme")
-approvals        → human-in-the-loop queue for graph nodes that pause for review
+approvals        → human-in-the-loop queue for tool-proposed actions
 memories         → unified agent memory (facts, summaries, embeddings)
 audit_log        → append-only record of everything that happened
 knowledge_base   → vector-searchable reference content (playbooks, past deals)
@@ -24,10 +23,10 @@ chat_messages    → turn-by-turn log of human chat with assistant placeholders
 ## Design Principles
 
 1. **Nothing executes without an approved approval row.** Every CUD operation against HubSpot, Gmail, etc. flows through `approvals` with a `pending → approved → executed | failed` lifecycle.
-2. **Workflows are graphs.** A single business process is one workflow whose progress lives in LangGraph's checkpoint tables. A workflow groups its approvals (one row per human gate) and audit-log events.
+2. **Prescribed workflows are tools.** Per [ADR-0002](adr/0002-tools-not-graphs.md), a prescribed workflow is a tool that returns one of `Done | AwaitingApproval | Blocked`. `AwaitingApproval` carries an executor name that runs after human grant. There is no graph engine — conditional branches and retry loops are inline Python inside the tool.
 3. **Audit log is append-only.** Enforced at the database role level, not in application code.
 4. **Memory and knowledge are separate.** Memory is what agents learned (emergent). Knowledge base is what we gave them (curated).
-5. **RLS on from day one.** Every `public` table has RLS enabled with a `service_role`-only policy. The FastAPI backend uses asyncpg as `service_role` (RLS-bypassing), so backend access is unaffected; the policies exist to block accidental anon/PostgREST exposure. Migration `0018` patched two gaps (`approvals`, `agent_messages`) that were created without RLS. The four LangGraph checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`) are created by `AsyncPostgresSaver.setup()` at app startup, so they're locked down by `app/db_security.py::lock_down_langgraph_tables`, called from the FastAPI lifespan. User-scoped policies are deferred until multi-user.
+5. **RLS on from day one.** Every `public` table has RLS enabled with a `service_role`-only policy. The FastAPI backend uses asyncpg as `service_role` (RLS-bypassing), so backend access is unaffected; the policies exist to block accidental anon/PostgREST exposure. Migration `0018` patched two gaps (`approvals`, `agent_messages`) that were created without RLS. User-scoped policies are deferred until multi-user.
 
 ## Tables
 
@@ -42,60 +41,36 @@ Stores only runtime-mutable state. Static metadata (`name`, `description`, `requ
 | `is_active` | boolean | Soft disable |
 | `created_at` / `updated_at` | timestamptz | |
 
-### `workflows`
-
-One row per business process instance.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid | PK |
-| `kind` | text | `outreach_chain`, `rev_rec_monthly` (chains are the source of truth — extend as new chains land) |
-| `status` | enum | `pending`, `running`, `awaiting_approval`, `completed`, `failed`, `cancelled` |
-| `trigger_source` | text | `hubspot_webhook`, `manual`, `schedule` |
-| `trigger_payload` | jsonb | Raw event that started it |
-| `subject_type` | text | `company`, `deal`, `contact`, `period` |
-| `subject_id` | text | External ID (HubSpot company id, etc.) |
-| `subject_ref` | jsonb | **Denormalized snapshot** of the subject at workflow start |
-| `initiated_by` | text | `system` or user id later |
-| `started_at` / `completed_at` | timestamptz | |
-| `error` | text | Populated on failure |
-| `metadata` | jsonb | |
-| `parent_workflow_id` | uuid | FK → `workflows.id`, on delete set null. Set when this workflow was spawned from another workflow's node (`spawn_workflow` primitive). Used to render nested traces. Added in migration `0011`. |
-
-**Why `subject_ref` is denormalized:** When you look at a workflow three weeks later, the HubSpot record may have changed. Keep the snapshot of what the agent was looking at.
-
 ### `approvals`
 
-Lifecycle-only queue for human-in-the-loop pauses. Originally added (migration `0010`) for LangGraph node-driven pauses; extended in migration `0021` for tool-driven approvals (per [ADR-0002](adr/0002-tools-not-graphs.md)).
+Lifecycle-only queue for human-in-the-loop pauses. Originally added (migration `0010`) for LangGraph node-driven pauses; reshaped in migration `0021` for tool-driven approvals (per [ADR-0002](adr/0002-tools-not-graphs.md)) and finalized in `0022` (graph machinery removed).
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid | PK |
-| `workflow_id` | uuid | FK → `workflows.id`, cascade delete. **Nullable since `0021`** — NULL for tool-driven approvals; non-NULL for legacy graph-driven approvals. |
-| `node_name` | text | Which graph node requested approval. **Nullable since `0021`** — NULL for tool-driven approvals. |
-| `executor` | text | **Added in `0021`.** Registered executor name (per `app/executors/registry.py`) the approval-grant handler invokes on grant. NULL for legacy graph-driven approvals — becomes NOT NULL after all graphs migrate (ADR-0002, plan 19). |
+| `workflow_id` | uuid | **Historical only since `0022`** — FK dropped; column kept as plain UUID for legacy audit lookups. NULL for all approvals created post-ADR-0002. |
+| `node_name` | text | Historical only since `0022`. NULL for all new approvals. |
+| `executor` | text | Registered executor name (per `app/executors/registry.py`) the approval-grant handler invokes on grant. **NOT NULL since `0022`.** |
 | `agent_slug` | text | The agent acting (display + future ACL) |
-| `action_type` | text | Free text — same vocabulary as `actions.action_type` for now |
+| `action_type` | text | Free text describing the proposed action (e.g. `post_to_linkedin`, `write_rev_rec`) |
 | `status` | text | One of `pending`, `approved`, `rejected`, `executed`, `failed` (CHECK constraint enforces) |
 | `risk_level` | text | `low`, `medium`, `high` |
 | `summary` | text | Human-readable description |
 | `reasoning` | text | Agent's explanation |
-| `proposed_payload` | jsonb | What the tool or node proposed |
+| `proposed_payload` | jsonb | What the tool proposed |
 | `executed_payload` | jsonb | What actually ran (may differ if human edited) |
 | `assigned_to` | text | Reserved for multi-user routing; ignored today |
 | `approved_by` / `approved_at` | — | Set on approval |
 | `rejected_by` / `rejection_reason` | — | Set on rejection |
-| `executed_at` | timestamptz | Set when the executor (or, for legacy graphs, the gated node) completes |
-| `error` | text | Set if the executor (or gated node) fails after approval |
+| `executed_at` | timestamptz | Set when the executor completes |
+| `error` | text | Set if the executor fails after approval |
 | `created_at` | timestamptz | |
 
 **Lifecycle:** `pending → approved → executed | failed`, or `pending → rejected`. Audit events emitted at every transition (see "Event Types" below).
 
 **Two payload columns by design:** `proposed_payload` preserves the agent's draft; `executed_payload` captures what actually went out the door. If a human edits the payload before approving, both are preserved for the audit trail.
 
-**Two grant paths today (transitional):**
-- `executor IS NOT NULL` → tool-driven: `POST /approvals/{id}/approve` invokes the named executor with the payload.
-- `executor IS NULL` AND `workflow_id IS NOT NULL` → legacy graph-driven: the grant handler resumes the LangGraph workflow via `runner.resume()`. Removed in plan 19 once all graphs are migrated.
+**Grant path:** `POST /approvals/{id}/approve` looks up `executor` in `app/executors/registry.py` and invokes it with `executed_payload ?? proposed_payload`. Executors live in their own registry and are never callable by an LLM — that's the structural enforcement of [Unbreakable Rule #3](../CLAUDE.md).
 
 ### `memories`
 
@@ -109,7 +84,7 @@ Single table, typed by kind. pgvector enabled for embedding rows.
 | `scope` | text | `company:123`, `deal:456`, `global` — convention-based |
 | `content` | text | The memory itself |
 | `embedding` | vector(1536) | Null for non-embedding kinds |
-| `source_workflow_id` | uuid | FK, nullable |
+| `source_workflow_id` | uuid | Historical only — FK dropped in `0022`. Nullable. |
 | `source_action_id` | uuid | FK, nullable |
 | `metadata` | jsonb | |
 | `expires_at` | timestamptz | Optional TTL for short-term context |
@@ -127,7 +102,7 @@ Append-only. INSERT-only at the database role level.
 | `occurred_at` | timestamptz | |
 | `event_type` | text | `action.proposed`, `action.approved`, `memory.written`, etc. |
 | `agent_id` | uuid | FK, nullable |
-| `workflow_id` | uuid | FK, nullable |
+| `workflow_id` | uuid | Historical only — FK dropped in `0022`. Nullable. |
 | `action_id` | uuid | FK, nullable |
 | `actor` | text | `system:sdr_researcher` or user id |
 | `payload` | jsonb | |
@@ -181,13 +156,13 @@ The `rewrite_post` tool accepts posts in any status and resets to `draft`. User 
 
 ### `agent_messages`
 
-Turn-by-turn record of every agent-to-agent exchange. Powers the `ask_agent` tool and the multi-agent demo graph. Migration `0013`.
+Turn-by-turn record of every agent-to-agent exchange. Powers the `ask_agent` tool. Migration `0013`.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | bigserial | PK; monotonic insert order |
 | `thread_id` | uuid | Correlates messages within one delegation; sender generates a fresh UUID for the first turn |
-| `workflow_id` | uuid \| null | FK to `workflows.id` (CASCADE); set when the call originated from a graph node, NULL when from chat |
+| `workflow_id` | uuid \| null | Historical only — FK dropped in `0022`. Plain UUID; NULL for all new messages. |
 | `from_agent_slug` | text | Sender's slug |
 | `to_agent_slug` | text | Recipient's slug (may equal sender for supervisor self-talk) |
 | `content` | text | The message body |
@@ -230,7 +205,7 @@ Turn-by-turn log of one chat session. User messages are inserted complete; assis
 | `turn_id` | uuid \| null | Shared with the runtime; addresses an in-flight assistant turn |
 | `role` | text | `user` \| `assistant` |
 | `content` | text | Final answer text (empty until the turn completes for assistant rows) |
-| `activity` | jsonb | `ActivityLine[]` tree (tool / workflow / node / subagent / pause / error), built by `app/services/activity_builder.py` and the frontend mirror in `ChatWindow.tsx::onEvent` |
+| `activity` | jsonb | `ActivityLine[]` tree (tool / node (= tool-step) / subagent / error), built by `app/services/activity_builder.py` and the frontend mirror in `ChatWindow.tsx::onEvent` |
 | `status` | text | `streaming` \| `complete` \| `failed` |
 | `tool_used` | text \| null | Top-level tool the agent called this turn |
 | `error` | text \| null | Failure reason |
@@ -243,32 +218,25 @@ Indexes: `(session_id, id)`, partial `(session_id) where status = 'streaming'` (
 
 ## Agent Types
 
-**Write-proposing agents** — use the full workflow → actions → approval lifecycle. Every operation creates a `workflow` row and one or more `action` rows. Examples: Outreach, Revenue Recognition.
+**Front-door agent** — `revenue-ops`. The only conversational agent users chat with. Owns the action tools (`create_post`, `publish_post`, `trigger_revenue_recognition`, etc.). Drives an OpenAI tool-call loop inside one chat turn via `app/services/chat_turn.py`.
 
-**Read-only agents (analytics, Q&A)** — produce no `workflow` or `action` rows. Their activity is logged to `audit_log` with event type `agent.queried`. Chat history is stored separately per agent session. (None currently in the system; Invoice Analytics was retired alongside Invoice Operations and may return.)
-
-**Router agents** — propose no actions. Their output is a handoff decision referencing which specialist agent should handle the request. Audit logged as `agent.routed`. The router never creates a workflow row — the specialist it hands off to does.
+**Domain worker agents** — invoked single-turn via `run_agent_task` (no `allowed_tools`) or as ReAct loops (with tools). Examples: `revenue-recognition`, `content-orchestrator`, `bdr`. Reached via the `ask_agent` tool; record exchanges in `agent_messages`.
 
 ## Event Types (Audit Log Vocabulary)
 
 Keep this list stable; it becomes grep-able forensics. Constants live in `app/orchestrator/events.py` — call sites must import and use them, never string literals.
 
-**Workflow lifecycle:**
-- `workflow.started`, `workflow.completed`, `workflow.failed`, `workflow.paused`, `workflow.resumed`, `workflow.cancelled`
-
-**Graph execution:**
-- `node.entered`, `node.exited`, `node.failed`
+**Tool lifecycle (ADR-0002):**
+- `tool.called`, `tool.completed`, `tool.failed`, `tool.blocked`
 
 **Approval lifecycle:**
 - `approval.requested`, `approval.granted`, `approval.rejected`, `approval.executed`, `approval.failed`
 
 **Agent invocation:**
 - `agent.invoked`, `agent.completed`, `agent.failed`
-- `agent.queried` (read-only agents answering questions)
-- `agent.routed` (router handing off to a specialist)
 
-**Sub-workflows:**
-- `subworkflow.spawned`, `subworkflow.completed`
+**Chat turn lifecycle:**
+- `chat.turn.started`, `chat.turn.completed`, `chat.turn.failed`
 
 **Memory and knowledge:**
 - `memory.written`, `memory.expired`
@@ -277,20 +245,20 @@ Keep this list stable; it becomes grep-able forensics. Constants live in `app/or
 **Content workflows:**
 - `content.post_created`, `content.post_drafted`, `content.post_approved`, `content.post_rejected`, `content.post_updated`
 
-Historical audit_log rows may carry pre-migration vocabulary (`action.proposed/approved/rejected/executed/failed` and older actor strings); these remain queryable. New code emits only the constants listed above.
+Historical audit_log rows may carry retired vocabulary (`workflow.*`, `node.*`, `subworkflow.*`, `agent.queried`, `agent.routed`, plus pre-migration `action.*` strings); these remain queryable. New code emits only the constants listed above.
 
 ## API Surface (Maps to FastAPI)
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /workflows` | trigger creates a workflow |
-| `GET /workflows/{id}` | Workflow detail |
-| `GET /workflows/{id}/trace` | Audit-log event timeline for the workflow |
 | `GET /approvals?status=pending` | The approval inbox query |
-| `POST /approvals/{id}/approve` | Human approves → writes audit_log, resumes the graph |
+| `GET /approvals/{id}` | Approval detail |
+| `POST /approvals/{id}/approve` | Human approves → grant handler invokes the registered executor in a background task |
 | `POST /approvals/{id}/reject` | Human rejects with reason |
-| `POST /memories` | Agent writes to memory (requires approval if `write` in approval_scope) |
-| `GET /memories/search` | Vector + scope filter |
+| `POST /chat/sessions` | Create a chat session (auto-targets the front-door agent) |
+| `POST /chat/sessions/{id}/messages` | Post user message; streams the assistant turn over SSE |
+| `GET /audit-log` | Filterable audit timeline |
+| `GET /llm-calls` | LLM telemetry |
 
 ## RLS Status
 
@@ -327,6 +295,7 @@ Migrations run in filename order; each is idempotent.
 19. `0019_chat_sessions_default_slug.sql` — gives `chat_sessions.agent_slug` a `DEFAULT 'revenue-ops'`. Single front-door pattern means new sessions always target the same conversational agent; this lets the router create sessions with no body
 20. `0020_drop_agents_config.sql` — drops `agents.config`. The column was a free-form jsonb knob that no app code ever read; per-agent LLM selection lives on the Python class `model` attribute. Follows the precedent of `0006_simplify_agents.sql`
 21. `0021_approvals_for_tools.sql` — adds `approvals.executor` and makes `workflow_id` / `node_name` nullable. First step in the [ADR-0002](adr/0002-tools-not-graphs.md) migration from LangGraph graphs to tool-driven approvals. Both grant paths coexist until plan 19
+22. `0022_drop_langgraph_artifacts.sql` — drops LangGraph checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`), drops the `workflows` table, drops the workflow_id FKs on `approvals` / `audit_log` / `memories.source_workflow_id` / `llm_calls` / `agent_messages` (columns stay as plain UUIDs for historical audit lookups), and flips `approvals.executor` to NOT NULL. Final step of the ADR-0002 cutover (plan 19)
 
 ## Open Questions
 

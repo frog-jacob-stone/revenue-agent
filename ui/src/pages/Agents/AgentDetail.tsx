@@ -6,12 +6,11 @@ import {
   listAgents,
   getAgent,
   getAgentApprovals,
-  getAgentWorkflows,
   getAgentTools,
   setAgentActive,
   triggerAgent,
 } from '../../api';
-import type { AgentRecord, AgentTool, WorkflowRecord, Approval } from '../../types';
+import type { AgentRecord, AgentTool, Approval } from '../../types';
 import StatusChip from '../../components/shared/StatusChip';
 import SDRResearcherConfig from './config-panels/SDRResearcher';
 import OutreachAgentConfig from './config-panels/OutreachAgent';
@@ -98,7 +97,6 @@ export default function AgentDetail() {
   const [sidebarAgents, setSidebarAgents] = useState<AgentRecord[]>([]);
   const [agentRecord, setAgentRecord] = useState<AgentRecord | null>(null);
   const [actions, setActions] = useState<Approval[]>([]);
-  const [workflows, setWorkflows] = useState<WorkflowRecord[]>([]);
   const [tools, setTools] = useState<AgentTool[]>([]);
   const [toggling, setToggling] = useState(false);
   const [triggering, setTriggering] = useState(false);
@@ -112,12 +110,10 @@ export default function AgentDetail() {
     if (!agentId) return;
     setAgentRecord(null);
     setActions([]);
-    setWorkflows([]);
     setTools([]);
     Promise.all([
       getAgent(agentId).then(setAgentRecord),
       getAgentApprovals(agentId, 'all').then(setActions),
-      getAgentWorkflows(agentId).then(setWorkflows),
       getAgentTools(agentId).then(setTools).catch(() => {}),
     ]).catch(() => {});
   }, [agentId]);
@@ -129,7 +125,11 @@ export default function AgentDetail() {
       (a.status === 'executed' || a.status === 'failed') &&
       isToday(a.executed_at ?? a.created_at),
   ).length;
-  const lastRun = workflows[0]?.started_at ?? null;
+  const lastAction = actions
+    .map((a) => a.approved_at ?? a.executed_at ?? a.created_at)
+    .filter((v): v is string => !!v)
+    .sort()
+    .reverse()[0] ?? null;
 
   async function handleTrigger() {
     if (!agentId || triggering) return;
@@ -218,10 +218,10 @@ export default function AgentDetail() {
         {/* Stats row */}
         <div className="grid grid-cols-3 gap-4">
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-            <p className="text-xs text-slate-500 mb-1">Last run</p>
+            <p className="text-xs text-slate-500 mb-1">Last action</p>
             <div className="flex items-center gap-1.5 text-slate-200 text-sm font-medium">
               <Clock className="w-3.5 h-3.5 text-slate-500" />
-              {lastRun ? fmt(lastRun) : <span className="text-slate-500">Never</span>}
+              {lastAction ? fmt(lastAction) : <span className="text-slate-500">Never</span>}
             </div>
           </div>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">

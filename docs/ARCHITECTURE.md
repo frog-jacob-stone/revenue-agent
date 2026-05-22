@@ -7,58 +7,58 @@ The durable shape of the system. Update this when boundaries, layering, or integ
 | Layer | Tool |
 |---|---|
 | API / agent logic | FastAPI + Python 3.12 + OpenAI |
-| Memory & state | Supabase (Postgres + pgvector) — agent memory, action queue, audit log |
+| Memory & state | Supabase (Postgres + pgvector) — agent memory, approval queue, audit log |
 | UI | React + TypeScript + Vite (`ui/`) |
-| Integration bus | triggers and third-party calls only, no business logic |
 | Secrets | Doppler (local and cloud, same config) |
 | Runtime | Docker Compose locally → Railway/Render later |
 
 ## Authentication
 
-- The FastAPI app sits behind a single auth gate: `app/auth.py::get_current_user` is wired as a `dependencies=[…]` on every router in `app/main.py`. The only public endpoint is `/healthz`. Anything that can't produce a valid bearer token gets a 401.
+- The FastAPI app sits behind a single auth gate: `app/auth.py::get_current_user` is wired as `dependencies=[…]` on every router in `app/main.py`. The only public endpoint is `/healthz`. Anything that can't produce a valid bearer token gets a 401.
 - Tokens are Supabase-issued JWTs. Verification uses the project's JWKS (`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`) with `ES256`/`RS256`. A legacy `SUPABASE_JWT_SECRET` HS256 fallback exists for older projects and for tests.
 - The UI (`ui/src/`) uses `@supabase/supabase-js` for sign-in (email + password). Every API call goes through `authedFetch` in `ui/src/api.ts`, which attaches `Authorization: Bearer <access_token>`. A 401 response signs the user out and bounces them to `/login`.
 - DB access from FastAPI stays on the asyncpg service-role connection — no per-request user switching at the DB layer. RLS is on for every `public` table with a `service_role`-only policy. Defense-in-depth against accidental anon-key exposure; user-scoped policies are deferred until multi-user.
-- Same code path works locally and in cloud Supabase — only `SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, and (if needed) `SUPABASE_JWT_SECRET` change.
 
 ## The Propose / Approve / Execute Pattern
 
-No agent may execute a create, update, or delete without a prior approved action row.
+No agent may execute a create, update, or delete without a prior approved approval row. Per [ADR-0002](adr/0002-tools-not-graphs.md):
 
 ```
-agent proposes → action (proposed) → human approves → system executes → completed | failed
+tool returns AwaitingApproval(executor, payload, …)
+  → approvals row (pending, executor set)
+  → human approves (UI inbox only)
+  → grant handler invokes the named executor in a background task
+  → approvals row → executed | failed
 ```
 
-- The `actions` table is the queue of pending and historical work.
+- The `approvals` table is the queue of pending and historical work.
 - The `audit_log` table receives a row at every state transition.
-- The approval inbox in the UI is the canonical surface for review; Slack is a fallback notifier.
-- Agents never call HubSpot, Gmail, Harvest, etc. directly. They emit a proposed action; the framework executes after approval.
+- The approval inbox in the UI is the canonical (and only) surface for grant.
+- Agents and tools never call HubSpot, Gmail, Harvest, etc. directly. The boundary is enforced structurally — executors live in their own registry and are **never** added to any agent's `allowed_tools`. This is [Unbreakable Rule #3](../CLAUDE.md): approvals are human-only.
 
 ## Layering
 
 ```
 router  →  service  →  (agent | integration client | db)
-                  ↘  orchestrator  →  chain → step (per-step agent or integration)
+                   ↘  tool (Done | AwaitingApproval | Blocked)
+                   ↘  executor (post-approval side effects only)
 ```
 
 - **Routers** validate input and call services. No business logic.
 - **Services** hold business logic. Never call routers. Every state-changing service function calls `write_audit_event()`.
-- **Agents** are services that propose actions. They never reach out to third-party systems on their own.
-- **Integration clients** (HubSpot, Gmail, Harvest) are called only by services executing approved actions.
-- **Orchestrator** drives multi-step chains for workflows whose `pattern` is set. See "Prompt Chain Orchestrator" below.
+- **Agents** are services that drive LLM tool-call loops. They propose actions by returning `AwaitingApproval` from a tool. They never call third-party systems on their own.
+- **Tools** (`app/tools/`) are the unit of agent capability. A tool returns one of `Done | AwaitingApproval | Blocked`. The runtime — `app/orchestrator/dispatch.py::dispatch_tool` — pattern-matches the return shape, writes audit + (for `AwaitingApproval`) approval rows, and hands a status dict back to the LLM.
+- **Executors** (`app/executors/`) are the post-approval side-effect performers. They live in a registry separate from tools, indexed by name, and are invoked only by the approval grant handler. Never added to any agent's `allowed_tools`.
+- **Integration clients** (HubSpot, Gmail, Harvest, Airtable) are called only by executors and by read-only services that an agent legitimately needs.
 - All DB, HTTP, and agent calls are async.
 
 ## LLM dispatch
 
 Every LLM call in the system flows through the dispatcher at `app/integrations/llm.py`. Callers reach for `dispatch()` (non-streaming) or `dispatch_stream()` (streaming with `StreamDelta` chunks + a terminal `LlmResponse`). Provider details, the OpenAI SDK types, request snapshotting, latency timing, and the `llm_calls` row write all live inside the dispatcher. Nothing outside `app/integrations/` imports from the `openai` package.
 
-Attribution is structural, not ambient: every call passes `Attribution(agent_slug, purpose, workflow_id?, thread_id?)` as a required argument. `purpose` is a dotted free-form label that lands on `llm_calls.purpose` and is how telemetry gets sliced (`"chat"`, `"agent:bdr"`, `"outreach.compose_email"`, `"content_creation.voice_review"`, etc.). There is no contextvar form — forgetting attribution is a type error, not a silent NULL.
-
-**Owning agent.** Each workflow attributes its LLM calls to a single agent identity — its *owning agent*. Domain-owned graphs declare their default at the schema level: `GraphSpec(graph=g, owning_agent=BDRAgent)`. The runner reads it (or an explicit override on `runner.start(owning_agent=...)`) and seeds `_owning_agent_slug` into graph state; every graph node's `_attribution(state, purpose)` helper reads it back and stamps it on the dispatch. Sub-step LLM calls (voice critique, accuracy critique, brief interpretation, draft writing) all share the owning agent's slug; their distinct role is the `purpose` field, not a separate slug. Shared / tool-like graphs leave `owning_agent=None` in `GraphSpec` and require the invoker to specify per call.
+Attribution is structural, not ambient: every call passes `Attribution(agent_slug, purpose, workflow_id?, thread_id?)` as a required argument. `purpose` is a dotted free-form label that lands on `llm_calls.purpose` and is how telemetry gets sliced (`"chat"`, `"agent:bdr"`, `"create_post.voice_review"`, etc.). There is no contextvar form — forgetting attribution is a type error, not a silent NULL.
 
 Tests scope a fake provider with `use_provider(FakeProvider(...))` from `tests/fakes/llm.py`. The `LlmProvider` Protocol is the internal seam — production adapter is `_OpenAiProvider` (`app/integrations/_openai_provider.py`). A second provider lands as another adapter behind the same seam; no caller changes.
-
-The multi-round tool-use loop in `chat_turn._stream_llm_turn` is intentionally still in chat_turn — only one caller has a tool loop today. When a second caller appears, the wide tool-loop dispatcher becomes a real seam worth extracting.
 
 ## Agent Scoping Principles
 
@@ -71,47 +71,57 @@ An agent has a single coherent identity: one job, one audit trail, one approval 
 
 **Read-only vs. write-proposing is a hard split.** An analytics agent and an operations agent for the same domain are distinct agents — different audit trails, different inbox behavior, different UI presentation.
 
-**Agents vs. inline LLM calls.** Classes in `app/agents/` represent identity-bearing things: the conversational front door (`RevenueOpsAgent`) or worker personas meant to be invoked via `ask_agent` / `invoke_agent` and accountable in the audit trail (`BDRAgent`, `RevenueRecognitionAgent`, `ContentOrchestratorAgent`). Single-turn, fixed-prompt LLM calls made by graph nodes are NOT agents — they live inline in the graph file (or a sibling `_prompts.py`) as `MODEL` + `SYSTEM_PROMPT` constants, attributed via `with_llm_context(agent_slug=..., purpose=...)`. The slug is a free-form audit tag; no class lookup is required. Rule of thumb: if a "thing" has no identity, no autonomy, and one caller, it's a prompt, not an agent.
+**Agents vs. inline LLM calls.** Classes in `app/agents/` represent identity-bearing things: the conversational front door (`RevenueOpsAgent`) or worker personas meant to be invoked via `ask_agent` / `run_agent_task` and accountable in the audit trail (`BDRAgent`, `RevenueRecognitionAgent`, `ContentOrchestratorAgent`). Single-turn, fixed-prompt LLM calls made inline inside a tool are NOT agents — they live in the tool file (or a sibling `_prompts.py`) as `MODEL` + `SYSTEM_PROMPT` constants, attributed via `Attribution(agent_slug=..., purpose=...)` on the dispatch call. Rule of thumb: if a "thing" has no identity, no autonomy, and one caller, it's a prompt, not an agent.
 
 **Chat is an interface, not an agent type.** Chat is one of several trigger sources (webhook, schedule, chat). All paths that propose writes flow through the approval inbox.
 
-**Single front-door pattern.** Exactly one agent is conversational: `RevenueOpsAgent` (slug `revenue-ops`), defined in `app/agents/revenue_ops.py`. The user only ever chats with this agent. Specialist agents (`revenue-recognition`, `content-orchestrator`, etc.) are plain `BaseAgent` workers invoked single-turn via `invoke_agent` from graph nodes, or via `ask_agent` from the front door. The front-door slug is hardcoded as `FRONT_DOOR_SLUG` in `app/services/chat_turn.py` — there is no agent picker.
+**Single front-door pattern.** Exactly one agent is conversational: `RevenueOpsAgent` (slug `revenue-ops`), defined in `app/agents/revenue_ops_agent.py`. The user only ever chats with this agent. Specialist agents (`revenue-recognition`, `content-orchestrator`, etc.) are plain `BaseAgent` workers invoked via `ask_agent` from the front door, which routes through `run_agent_task`. The front-door slug is hardcoded as `FRONT_DOOR_SLUG` in `app/services/chat_turn.py` — there is no agent picker.
 
-## Orchestrator (LangGraph)
+## Orchestrator runtime (`app/orchestrator/`)
 
-Lives in `app/orchestrator/`. Workflows are LangGraph `StateGraph`s; checkpoint state is persisted by `AsyncPostgresSaver`. The `actions` table and the prompt-chain `Step` hierarchy are gone — graph state replaces them.
+Post-ADR-0002 the orchestrator is small. Its surface:
 
-- **Graphs.** Each workflow kind is a `StateGraph` in `app/orchestrator/graphs/{kind}.py` exporting `build_graph() -> GraphSpec`. Approval gates are declared via `interrupt_before=("node_name",)` on the GraphSpec. The central registry at `app/orchestrator/graphs/__init__.py::register_all` calls `runner.register(...)` for each. App startup runs `await runner.init()` then `register_all(runner)`.
-- **Approval bridge.** Nodes that need human review return `{"_propose": ProposeApproval(...)}` in their state. The runner reads `_propose` on pause, writes a row to the `approvals` table, and sets the workflow to `awaiting_approval`. The router (`POST /approvals/{id}/approve`) schedules `runner.resume(workflow_id)` via `BackgroundTasks`. On approve, the (possibly edited) `executed_payload` is pushed onto graph state via `aupdate_state` so the next node reads it. On reject, the workflow is marked `failed`.
-- **Audit-event taxonomy.** Constants in `app/orchestrator/events.py` cover workflow lifecycle, node entry/exit, approval transitions, agent invocations, and sub-workflow spawn/complete. Call sites must import these constants — no string literals.
-- **Persistence.** `AsyncPostgresSaver` (langgraph-checkpoint-postgres) runs against `settings.database_url` via its own psycopg pool, separate from the app's asyncpg pool. Its tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`) are created idempotently by `setup()` on first `runner.init()`. Migration 0012 is a marker only.
-- **Multi-agent primitives.** `invoke_agent(slug, input, ctx)` in `app/orchestrator/agent_invoke.py` is the uniform agent entry point usable from any node, chat, or sub-agent. `spawn_workflow(kind, input, parent_workflow_id=...)` in `app/orchestrator/spawn.py` starts a child workflow linked to the parent for nested traces.
-- **Loop pattern (iterate on human input).** A node may have an outgoing edge that points back to an earlier node, with an interrupt gate sitting on the loop edge. The canonical example is `rev_rec_monthly`: `validate_and_sync` → (incomplete) → `propose_configure` → [interrupt_before `apply_configure_or_loop`] → human approves → `apply_configure_or_loop` → loops back to `validate_and_sync`. One workflow_id covers the full iteration cycle. The graph author owns loop-termination logic; the framework imposes no infinite-loop guard.
-- **Critique loop.** Encapsulated in `app/orchestrator/critique_loop.py`. Hosts declare critics (`Critic(name, run, max_attempts)`) and attach via `add_critique_loop(g, draft_node=..., critics=[...], pass_target=...)`. The helper owns counter increments, the shared `last_critique_feedback` slot (which the draft node clears after consumption), the conditional routing (pass / fail-with-budget / fail-exhausted), the `failure_reason` write on the exhausting attempt, and a shared `failed_terminal` node (registered once per graph; subsequent calls reuse it for chained-loop topologies). Counters accumulate monotonically across critics — voice's count keeps ticking when accuracy triggers the loop. Callers: `outreach_chain` (voice + accuracy) and `content_creation` (voice only). Node names must not collide with state field names.
-- **Production graphs.** `content_publish`, `rev_rec_monthly`, `outreach_chain`, `content_creation`. The `_multi_agent_demo` and `_critique_poc` graphs are not registered at startup — tests register them explicitly.
-- **Provider dispatch.** `invoke_agent` is currently OpenAI-only (dispatches via `call_openai_chat`). The outreach graph uses it. The content_creation graph calls `call_openai_chat` directly, bypassing `invoke_agent` (and its audit wrapping); a provider-aware refactor is on the backlog. The critique-loop helper is provider-agnostic — it accepts any async callable as a critic.
-- **Multi-agent messaging.** `app/services/agent_messages.py` (backed by the `agent_messages` table) records every agent-to-agent turn with a `thread_id` correlation key and an optional `workflow_id` link. The `ask_agent` tool (`app/tools/agent/ask_agent.py`) is the canonical primitive: it writes the outbound prompt, invokes the target agent via `invoke_agent` (single-turn), writes the inbound reply, and returns `{answer, thread_id}`. `ToolContext` carries `workflow_id` so node-driven `ask_agent` calls automatically link their messages to the workflow. Threads are recorded but not yet *used* as conversational context — receivers see only the current question. The `_multi_agent_demo` graph is the canonical end-to-end example.
+- **`dispatch_tool(tool, ctx, args)` — `app/orchestrator/dispatch.py`.** The runtime that pattern-matches a tool's return value. On `Done(payload)` it writes a `tool.completed` audit row and hands `payload` back to the LLM. On `AwaitingApproval(executor, payload, summary, action_type, risk_level)` it creates the approval row (status `pending`, `executor` populated) and hands `{"status": "awaiting_approval", "approval_id", "summary"}` back to the LLM. On `Blocked(reason, hint)` it writes a `tool.blocked` audit row and tells the LLM what's missing so the next assistant turn can explain to the user.
+- **`run_agent_task(slug, task, ctx, *, progress=None)` — `app/orchestrator/agent_invoke.py`.** The single agent-invocation primitive. Brackets the call with `agent.invoked` / `agent.completed` / `agent.failed` audit events. Drives a ReAct loop when the target has `allowed_tools` (re-entering `dispatch_tool` for each tool call) and falls back to a single-turn dispatch when it doesn't. `ask_agent` is the canonical caller; tests also use it directly.
+- **`events` — `app/orchestrator/events.py`.** Audit-event constants. Imported everywhere; never written as string literals.
+
+What's intentionally *not* here:
+- **No graph engine.** Conditional branches, retry loops, and critique-and-rewrite live as inline Python (`for`, `if`, `while`) inside the tool that owns the workflow. The old LangGraph runner / state / spawn / critique_loop machinery was removed in plan 19. See [ADR-0002](adr/0002-tools-not-graphs.md).
+- **No multi-gate approvals.** Every production workflow today is single-gate (or zero-gate). If a future workflow needs more than one approval, revisit; do not pre-build the abstraction.
+- **No persistent workflow state.** Audit log + approvals carry enough state to reconstruct what happened. The `workflows` table was dropped in migration `0022`.
+
+## Tools (`app/tools/`)
+
+A tool exports a `ToolDefinition` constant — name, description, OpenAI input schema, async `execute` callable. The `execute` returns `Done | AwaitingApproval | Blocked` (the `ToolReturn` union, defined in `app/tools/base.py`). Helpers:
+
+- **`ProgressEmitter`** — tools may emit `tool_step_started` / `tool_step_completed` events for in-tool observability. These bubble up to the chat UI and appear as nested activity lines under the tool's call.
+- **`ToolContext`** — carries `agent_id`, `agent_slug`, optional `workflow_id`, and the optional `ProgressEmitter`. Passed by `dispatch_tool`.
+
+Today's production tools include: read-only HubSpot lookups (`get_contact_by_email`, `get_company_by_id`, `get_form_submission`), social-content tools (`create_post`, `publish_post`), revenue tools (`trigger_revenue_recognition`, `get_revenue_data`, `get_revenue_data_slim`), and the agent-delegation tool (`ask_agent`).
+
+## Executors (`app/executors/`)
+
+Executors are the only code path that performs side effects against external systems on behalf of an approval. Each executor has a name (matching the `executor` column on its approval rows), a description, and an async `execute(ctx, payload)` callable. They are registered in `app/executors/registry.py::EXECUTORS_BY_NAME`. Today: `post_to_linkedin`, `write_rev_rec_entries`. They are **never** exposed to an LLM — that's the structural enforcement of Unbreakable Rule #3.
 
 ## Approval Inbox
 
-The inbox UI sources from `/approvals` only. `Approval` rows discriminate by status: `pending` is the inbox queue; `approved/rejected/executed/failed` are history. Workflow trace renders the `audit_log` event timeline for the workflow.
+The inbox UI sources from `/approvals` only. `Approval` rows discriminate by status: `pending` is the queue; `approved/rejected/executed/failed` are history. Editing the `executed_payload` before approving is supported — the executor runs with the edited shape if present.
 
 ## Multi-Agent Orchestration
 
-The system is a **single front door + specialist workers**. There is one conversational agent (`revenue-ops`); every other agent is a worker invoked single-turn.
+The system is a **single front door + specialist workers**. There is one conversational agent (`revenue-ops`); every other agent is a worker.
 
 Dispatch shape:
 
 - **User → front door (chat).** `app/services/chat_turn.py::start_turn` drives the OpenAI tool-call loop against `RevenueOpsAgent`. The front door has the action tools (`trigger_revenue_recognition`, `create_post`, `publish_post`, etc.) directly.
-- **Front door → specialist (LLM delegation).** The front door calls `ask_agent(target_slug, prompt)` for domain-specific explanation or reasoning. Single-turn, no tool use on the receiver — the specialist's `system_prompt` is what's load-bearing.
-- **Graph node → specialist (workflow context).** Nodes call `invoke_agent(slug, input, ctx)` directly when they need a specialist mid-workflow. Same single-turn shape.
-- **Graph node → graph node (sub-workflow).** `spawn_workflow(kind, ...)` for nested traces linked by `parent_workflow_id`.
+- **Front door → specialist (LLM delegation).** The front door calls `ask_agent(target_slug, prompt)` for domain-specific explanation or reasoning. `ask_agent` writes the outbound prompt to `agent_messages`, calls `run_agent_task` (which is either single-turn or a ReAct loop depending on whether the target has `allowed_tools`), writes the inbound reply, and returns `{answer, thread_id}`. The specialist's `system_prompt` is what's load-bearing.
 
-Specialists never appear in the chat surface. To iterate on a specialist's prompt, drive `invoke_agent` from a test or shell — there is intentionally no admin chat endpoint for them.
+Specialists never appear in the chat surface. To iterate on a specialist's prompt, drive `run_agent_task` from a test or shell — there is intentionally no admin chat endpoint for them.
 
 ## Anti-Patterns
 
-- Agents executing CUD actions without an approved action row
-- Secrets anywhere outside Doppler
-- Agent-specific UI before the shared approval inbox exists
-- Direct integration calls from agents (must route through services)
+- Agents or tools mutating an approval's status (calling `approve()` / `reject()` / `mark_executed`). Approvals are human-only — Unbreakable Rule #3.
+- Adding an executor to any agent's `allowed_tools`. This collapses the trust boundary.
+- Calling integration clients (HubSpot, Gmail, Airtable, etc.) from a tool. Reads are fine; writes belong in an executor that runs after approval.
+- Secrets anywhere outside Doppler.
+- Re-introducing a graph engine for what could be a `for` loop. See [ADR-0002](adr/0002-tools-not-graphs.md).

@@ -17,7 +17,7 @@ import type {
   ChatPersistedMessage,
   ChatMessageStatus,
 } from '../../types';
-import { labelForKind, labelForNode, labelForToolStep } from './nodeLabels';
+import { labelForToolStep } from './nodeLabels';
 
 const AGENT_COLORS: Record<string, string> = {
   'sdr-researcher': '#6366f1',
@@ -47,16 +47,6 @@ interface DisplayMessage {
 
 function fmt(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-}
-
-function compactTokens(payload: Record<string, unknown>): string | undefined {
-  const total =
-    (typeof payload?.total_tokens === 'number' && payload.total_tokens) ||
-    (typeof (payload?.usage as { total_tokens?: number })?.total_tokens === 'number' &&
-      (payload.usage as { total_tokens: number }).total_tokens) ||
-    null;
-  if (!total) return undefined;
-  return total >= 1000 ? `${(total / 1000).toFixed(1)}k tokens` : `${total} tokens`;
 }
 
 function hydrate(msg: ChatPersistedMessage): DisplayMessage {
@@ -145,11 +135,6 @@ export default function ChatWindow({ agentId, sessionId, agent }: Props) {
 
     // Activity-builder cursor state — matches app/services/activity_builder.py
     let toolLineId: string | null = null;
-    let workflowLineId: string | null = null;
-    let workflowKind = '';
-    let currentNodeLineId: string | null = null;
-    let pendingAgentByLineId: string | null = null;
-    let pendingAgentSlug: string | null = null;
     let agentTaskToolLineId: string | null = null;
     // Tracks the most recent in-flight tool_step line so tool_step_completed
     // can patch it to ok/fail (ADR-0002, plan 16).
@@ -188,102 +173,6 @@ export default function ChatWindow({ agentId, sessionId, agent }: Props) {
             status: 'running',
           });
           if (evt.name === 'trigger_revenue_recognition') triggered = true;
-          break;
-        }
-        case 'workflow_started': {
-          workflowLineId = `wf-${evt.workflow_id}`;
-          workflowKind = evt.kind;
-          pushLine({
-            id: workflowLineId,
-            kind: 'workflow',
-            parentId: toolLineId,
-            label: `Workflow: ${labelForKind(evt.kind)}`,
-            status: 'running',
-          });
-          break;
-        }
-        case 'workflow_event': {
-          const et = evt.event_type;
-          if (et === 'node.entered') {
-            const node = (evt.payload?.node as string | undefined) ?? '?';
-            currentNodeLineId = `nd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-            pushLine({
-              id: currentNodeLineId,
-              kind: 'node',
-              parentId: workflowLineId,
-              label: labelForNode(workflowKind, node),
-              status: 'running',
-            });
-          } else if (et === 'node.exited') {
-            const node = (evt.payload?.node as string | undefined) ?? '?';
-            currentNodeLineId = `nd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-            pushLine({
-              id: currentNodeLineId,
-              kind: 'node',
-              parentId: workflowLineId,
-              label: labelForNode(workflowKind, node),
-              status: 'ok',
-            });
-          } else if (et === 'node.failed') {
-            const node = (evt.payload?.node as string | undefined) ?? '?';
-            currentNodeLineId = `nd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-            pushLine({
-              id: currentNodeLineId,
-              kind: 'node',
-              parentId: workflowLineId,
-              label: labelForNode(workflowKind, node),
-              status: 'fail',
-              detail: (evt.payload?.error as string) ?? undefined,
-            });
-          } else if (et === 'agent.invoked') {
-            const slug = (evt.payload?.agent_slug as string) ?? evt.actor ?? 'agent';
-            pendingAgentSlug = slug;
-            pendingAgentByLineId = `ag-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-            pushLine({
-              id: pendingAgentByLineId,
-              kind: 'subagent',
-              parentId: currentNodeLineId,
-              label: slug,
-              status: 'running',
-            });
-          } else if (et === 'agent.completed' || et === 'agent.failed') {
-            const tokens = compactTokens(evt.payload ?? {});
-            if (pendingAgentByLineId) {
-              patchLine(pendingAgentByLineId, {
-                status: et === 'agent.completed' ? 'ok' : 'fail',
-                label: pendingAgentSlug ?? 'agent',
-                detail: tokens,
-              });
-            } else {
-              const slug = (evt.payload?.agent_slug as string) ?? evt.actor ?? 'agent';
-              pushLine({
-                id: `ag-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                kind: 'subagent',
-                parentId: currentNodeLineId,
-                label: slug,
-                status: et === 'agent.completed' ? 'ok' : 'fail',
-                detail: tokens,
-              });
-            }
-            pendingAgentByLineId = null;
-            pendingAgentSlug = null;
-          } else if (et === 'workflow.paused') {
-            pushLine({
-              id: `pa-${Date.now()}`,
-              kind: 'pause',
-              parentId: workflowLineId,
-              label: 'Awaiting approval',
-              status: 'ok',
-            });
-          } else if (et === 'workflow.completed') {
-            if (workflowLineId) patchLine(workflowLineId, { status: 'ok' });
-          } else if (et === 'workflow.failed') {
-            if (workflowLineId)
-              patchLine(workflowLineId, {
-                status: 'fail',
-                detail: (evt.payload?.error as string) ?? undefined,
-              });
-          }
           break;
         }
         case 'agent_task_tool_started': {
@@ -340,8 +229,6 @@ export default function ChatWindow({ agentId, sessionId, agent }: Props) {
               detail: evt.result_summary,
             });
           toolLineId = null;
-          workflowLineId = null;
-          currentNodeLineId = null;
           agentTaskToolLineId = null;
           break;
         case 'done':

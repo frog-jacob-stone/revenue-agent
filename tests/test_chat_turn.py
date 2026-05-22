@@ -19,7 +19,6 @@ import pytest
 
 from app.db import get_pool
 from app.integrations.llm import LlmResponse, StreamDelta, ToolCall, use_provider
-from app.models.workflows import TraceEvent
 from app.orchestrator import events as evt_const
 from app.services import chat_sessions as cs
 from app.services.chat_turn import (

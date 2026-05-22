@@ -188,22 +188,27 @@ async def test_ask_agent_bdr_uses_bdr_system_prompt():
     assert BDRAgent.system_prompt in system_msg["content"]
 
 
-async def test_ask_agent_no_workflow_started():
-    """Agentic task must not spawn a workflow."""
+async def test_ask_agent_records_both_message_directions():
+    """Happy-path ask_agent records the outbound prompt and the inbound reply
+    in agent_messages under one thread_id."""
+    from app.db import get_pool
+    from app.services import agent_messages
+
     provider = FakeProvider(completions=[LlmResponse(text="Draft.", finish_reason="stop")])
     ctx = ToolContext(agent_id=uuid.UUID(int=0), agent_slug="revenue-ops")
 
     p1, p2, p3, p4, p5 = _hubspot_patches(
         contact=None, company=None, form_match=None
     )
-    with p1, p2, p3, p4, p5, patch(
-        "app.orchestrator.runner.runner.start",
-        new=AsyncMock(),
-    ) as mock_start, use_provider(provider):
-        await _ask_agent(
+    with p1, p2, p3, p4, p5, use_provider(provider):
+        result = await _ask_agent(
             ctx,
             target_slug="bdr",
             prompt="Draft a reply for lead@example.com.",
         )
 
-    mock_start.assert_not_awaited()
+    pool = await get_pool()
+    thread_id = uuid.UUID(result.payload["thread_id"])
+    messages = await agent_messages.read_thread(pool, thread_id)
+    senders = [m["from_agent_slug"] for m in messages]
+    assert senders == ["revenue-ops", "bdr"]
