@@ -6,16 +6,6 @@
  * Unknown nodes fall back to a title-cased version of the node name.
  */
 const LABELS: Record<string, string> = {
-  // content_creation
-  'content_creation:interpret_brief': 'Interpreting brief',
-  'content_creation:draft_post': 'Drafting post',
-  'content_creation:voice_review': 'Reviewing voice',
-  'content_creation:failed_terminal': 'Voice attempts exhausted',
-
-  // content_publish
-  'content_publish:propose_post': 'Proposing post',
-  'content_publish:post_to_linkedin': 'Posting to LinkedIn',
-
   // outreach_chain
   'outreach_chain:pull_hubspot': 'Pulling HubSpot contact',
   'outreach_chain:web_search': 'Searching the web',
@@ -37,6 +27,17 @@ const LABELS: Record<string, string> = {
   'rev_rec_monthly:write_entries': 'Writing entries',
 };
 
+/**
+ * Labels for `tool_step_*` events emitted by tools that run inline (ADR-0002,
+ * plan 16). Keyed by `${tool_name}:${step}`. Replaces the workflow-event
+ * labels for content_creation as it migrated to a tool.
+ */
+const TOOL_STEP_LABELS: Record<string, string> = {
+  'create_post:interpret_brief': 'Interpreting brief',
+  'create_post:draft_post': 'Drafting post',
+  'create_post:voice_review': 'Reviewing voice',
+};
+
 function titleCase(node: string): string {
   return node
     .replace(/_/g, ' ')
@@ -47,9 +48,11 @@ export function labelForNode(kind: string, node: string): string {
   return LABELS[`${kind}:${node}`] ?? titleCase(node);
 }
 
+export function labelForToolStep(tool: string, step: string): string {
+  return TOOL_STEP_LABELS[`${tool}:${step}`] ?? titleCase(step);
+}
+
 const WORKFLOW_LABELS: Record<string, string> = {
-  content_creation: 'Content creation',
-  content_publish: 'Publish post',
   outreach_chain: 'Outreach',
   rev_rec_monthly: 'Revenue recognition',
 };

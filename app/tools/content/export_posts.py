@@ -1,12 +1,12 @@
 from typing import Any
 
-from app.tools.base import ToolContext, ToolDefinition
+from app.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
 
 
 async def _export_posts(
     ctx: ToolContext,
     **_: Any,
-) -> dict[str, Any]:
+) -> ToolReturn:
     from app.db import get_pool
 
     pool = await get_pool()
@@ -19,7 +19,7 @@ async def _export_posts(
         posts = [dict(r) for r in rows]
 
     if not posts:
-        return {"count": 0, "export": "No ready or published posts found."}
+        return Done({"count": 0, "export": "No ready or published posts found."})
 
     lines: list[str] = []
     for i, post in enumerate(posts, 1):
@@ -29,11 +29,11 @@ async def _export_posts(
         lines.append(post.get("post_text") or "(no text)")
         lines.append("")
 
-    return {
+    return Done({
         "count": len(posts),
         "export": "\n".join(lines).strip(),
         "post_ids": [str(p["id"]) for p in posts],
-    }
+    })
 
 
 EXPORT_POSTS = ToolDefinition(

@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import UUID
 
-from app.tools.base import ToolContext, ToolDefinition
+from app.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
 
 
 async def _reject_post(
@@ -9,13 +9,13 @@ async def _reject_post(
     *,
     post_id: str,
     **_: Any,
-) -> dict[str, Any]:
+) -> ToolReturn:
     from app.db import get_pool
     from app.services import social_posts as svc
 
     pool = await get_pool()
     updated = await svc.update_post_status(pool, UUID(post_id), "rejected")
-    return {"id": str(updated["id"]), "status": updated["status"]}
+    return Done({"id": str(updated["id"]), "status": updated["status"]})
 
 
 REJECT_POST = ToolDefinition(

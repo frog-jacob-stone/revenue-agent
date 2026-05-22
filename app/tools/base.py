@@ -3,7 +3,43 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from uuid import UUID
 
-ToolExecutor = Callable[..., Awaitable[Any]]
+
+# ── Tool return shapes (ADR-0002) ──────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Done:
+    """Terminal-success return. `payload` is what the LLM sees as the tool result."""
+    payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class AwaitingApproval:
+    """Tool computed a proposed change; write is gated on human approval.
+
+    The runtime writes an `approvals` row with `executor` and `payload`,
+    and surfaces a status dict to the LLM. The LLM cannot act on the
+    approval — only the human, via the inbox UI, can grant it.
+    """
+    executor: str
+    payload: dict[str, Any]
+    summary: str
+    action_type: str = "other"
+    reasoning: str | None = None
+    risk_level: str | None = None
+
+
+@dataclass(frozen=True)
+class Blocked:
+    """Precondition not met. The LLM tells the user what to fix and re-trigger."""
+    reason: str
+    hint: dict[str, Any] | None = None
+
+
+ToolReturn = Done | AwaitingApproval | Blocked
+
+
+ToolExecutor = Callable[..., Awaitable[ToolReturn]]
 
 
 @dataclass(frozen=True)

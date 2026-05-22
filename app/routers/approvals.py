@@ -1,16 +1,28 @@
-"""Approvals router — LangGraph human-in-the-loop queue."""
+"""Approvals router — human-in-the-loop queue.
+
+Two grant paths today (transitional, per ADR-0002):
+  - tool-driven (`executor IS NOT NULL`): the named executor runs in the
+    background after the row is marked approved.
+  - legacy graph-driven (`workflow_id IS NOT NULL`): `runner.resume` drives
+    the graph forward. Removed in plan 19.
+"""
 from __future__ import annotations
 
-from typing import Optional
+import logging
+from typing import Any, Optional
 from uuid import UUID
 
 import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.db import get_pool
+from app.executors.base import ExecutorContext, ExecutorDefinition
+from app.executors.registry import EXECUTORS_BY_NAME
 from app.models.approvals import ApprovalApprove, ApprovalReject, ApprovalResponse
 from app.orchestrator import runner
 from app.services import approvals as approvals_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
 
@@ -62,9 +74,60 @@ async def approve_approval(
         )
     except approvals_service.ApprovalStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    # Drive the graph forward off-request so this response returns immediately.
-    background_tasks.add_task(runner.resume, updated["workflow_id"])
+
+    executor_name = updated.get("executor")
+    workflow_id = updated.get("workflow_id")
+
+    if executor_name:
+        # Tool-driven approval (ADR-0002). Run the executor in the background
+        # so the API responds immediately, matching the legacy resume pattern.
+        executor = EXECUTORS_BY_NAME.get(executor_name)
+        if executor is None:
+            await approvals_service.mark_failed(
+                pool,
+                approval_id,
+                error=f"executor '{executor_name}' is not registered",
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Executor '{executor_name}' is not registered",
+            )
+        ctx = ExecutorContext(
+            approval_id=approval_id,
+            approved_by=approved_by,
+            pool=pool,
+        )
+        payload = updated.get("executed_payload") or updated["proposed_payload"]
+        background_tasks.add_task(_run_executor, executor, ctx, payload, approval_id)
+    elif workflow_id:
+        # Legacy graph-driven approval. Resume the LangGraph workflow.
+        background_tasks.add_task(runner.resume, workflow_id)
+    else:
+        logger.warning(
+            "Approval %s has neither executor nor workflow_id; nothing to do",
+            approval_id,
+        )
+
     return _to_response(updated)
+
+
+async def _run_executor(
+    executor: ExecutorDefinition,
+    ctx: ExecutorContext,
+    payload: dict[str, Any],
+    approval_id: UUID,
+) -> None:
+    """Background-task wrapper that invokes the executor and marks the approval."""
+    try:
+        result = await executor.execute(ctx, payload)
+        await approvals_service.mark_executed(
+            ctx.pool,
+            approval_id,
+            executed_payload=result if isinstance(result, dict) else None,
+        )
+    except Exception as exc:
+        logger.exception("Executor %s failed for approval %s", executor.name, approval_id)
+        await approvals_service.mark_failed(ctx.pool, approval_id, error=str(exc))
 
 
 @router.post("/{approval_id}/reject", response_model=ApprovalResponse)

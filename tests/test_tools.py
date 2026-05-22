@@ -35,16 +35,17 @@ async def test_agent_allows_registered_tool():
         agent_id=uuid.UUID(int=0),
         allowed_tools=list(AGENTS_BY_SLUG["revenue-ops"].allowed_tools),
     )
-    fake = {"records": [{"id": 42}]}
+    fake_records = [{"id": 42}]
     with patch(
         "app.services.revenue.get_revenue_data_slim",
-        new=AsyncMock(return_value=fake),
+        new=AsyncMock(return_value=fake_records),
     ):
         result = await agent.execute_tool(
             "get_revenue_data",
             {"date_from": "2026-01-01", "date_to": "2026-01-31"},
         )
-    assert result == fake
+    # Tool now wraps the service's list output as {"records": [...]} (ADR-0002).
+    assert result == {"records": fake_records}
 
 
 def test_agent_get_tools_matches_allowed_tools():

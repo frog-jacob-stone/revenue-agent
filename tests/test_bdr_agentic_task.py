@@ -154,11 +154,11 @@ async def test_ask_agent_bdr_chains_crm_tools_to_draft():
 
     p1, p2, p3, p4, p5 = _hubspot_patches()
     with p1, p2, p3, p4, p5, use_provider(provider):
-        result = await _ask_agent(
+        result = (await _ask_agent(
             ctx,
             target_slug="bdr",
             prompt="Draft a reply for the form submission from lead@example.com.",
-        )
+        )).payload
 
     assert result["answer"]
     assert "Lee" in result["answer"]

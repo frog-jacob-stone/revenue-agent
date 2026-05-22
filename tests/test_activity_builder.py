@@ -29,7 +29,7 @@ def test_label_for_node_falls_back_to_title_case():
 
 
 def test_label_for_kind_uses_known_label():
-    assert label_for_kind("content_creation") == "Content creation"
+    assert label_for_kind("rev_rec_monthly") == "Revenue recognition"
 
 
 def test_label_for_kind_falls_back_to_title_case():

@@ -14,18 +14,14 @@ _Avoid_: front-door agent, chat agent, assistant.
 A specialist agent that owns tools for a specific business domain and runs autonomously when delegated a task. Has a slug, a row in `agents`, and an `allowed_tools` set. When invoked via `ask_agent`, drives a ReAct loop — decides which tools to call, in what order — and returns a final answer. Examples: `bdr`, `content-orchestrator`, `revenue-recognition`.
 _Avoid_: sub-agent, worker agent, helper agent.
 
-**Prescribed worker**:
-A single-turn agent invoked from inside a LangGraph graph node. No tool loop, no autonomy — the graph node owns the reasoning about what to call and when. Used when the process is fixed and changes require explicit code changes. Examples: `voice-critic`, `accuracy-critic`.
-_Avoid_: specialist agent (too broad — use domain agent or prescribed worker).
-
 **Inline prompt**:
-A single-turn LLM call made by a graph node with a fixed `SYSTEM_PROMPT` constant, attributed via `Attribution` but with no agent class. Not an agent — has no identity, no autonomy, one caller. Lives in `app/orchestrator/graphs/{kind}.py` or a sibling `_prompts.py`.
-_Avoid_: anonymous agent, prompt-only agent.
+A single-turn LLM call made from a tool function with a fixed `SYSTEM_PROMPT` constant, attributed via `Attribution` but with no agent class. Not an agent — has no identity, no autonomy, one caller. Lives in the tool's module or a sibling `_prompts.py`. This is the right shape for sub-steps like voice critique or accuracy critique inside a tool.
+_Avoid_: anonymous agent, prompt-only agent, prescribed worker (retired term — see [ADR-0002](adr/0002-tools-not-graphs.md)).
 
 ### Approval flow
 
 **Propose-Approve-Execute**:
-The unbreakable rule: every create/update/delete flows through `agent proposes → approval (pending) → human approves → executed | failed`. No write without an approved approval row.
+The unbreakable rule: every create/update/delete flows through `tool returns AwaitingApproval → approval (pending) → human approves → executor runs → executed | failed`. No write without an approved approval row. See [ADR-0002](adr/0002-tools-not-graphs.md).
 _Avoid_: approval pattern, action queue, hitl flow.
 
 **Approval**:
@@ -43,22 +39,28 @@ A task delegated to a domain agent via `ask_agent` where the agent decides the a
 _Avoid_: autonomous workflow, agent run.
 
 **Prescribed workflow**:
-A LangGraph graph with explicit nodes defining every step. Used when the process is deterministic and should only change through deliberate code changes. Examples: revenue recognition, content critique loop.
-_Avoid_: workflow (too broad — qualify as prescribed or agentic).
+A tool that runs a fixed sequence of steps and returns one of `Done`, `AwaitingApproval`, or `Blocked`. Used when the process is deterministic and should only change through deliberate code changes. Examples: `trigger_revenue_recognition`, `create_post`, `publish_post`. See [ADR-0002](adr/0002-tools-not-graphs.md). Loops, retries, and conditional branches are inline Python — there is no graph engine.
+_Avoid_: workflow (too broad — qualify as prescribed or agentic), graph, chain, pipeline.
 
-### Orchestrator
+### Tool return shapes
 
-**Graph**:
-A LangGraph `StateGraph` defined in `app/orchestrator/graphs/{kind}.py`, exporting `build_graph() -> GraphSpec`. The static definition.
-_Avoid_: workflow definition, chain, pipeline.
+**Done**:
+A tool's terminal-success return. Carries the payload the LLM sees as the tool result. No approval gate.
+_Avoid_: success, ok, completed.
 
-**Workflow**:
-A runtime instance of a graph. Has a `workflow_id`, a checkpoint state, and rows in `workflows` + `audit_log`.
-_Avoid_: run, execution.
+**AwaitingApproval**:
+A tool's "I've computed a proposed change but the write is gated" return. Carries the registered **executor** name, the payload the executor will receive after approval, and human-facing fields (`summary`, `reasoning`, `risk_level`). The runtime writes an `approvals` row; the LLM sees `{"status": "awaiting_approval", "approval_id": "…", "summary": "…"}` and surfaces it to the user. The LLM cannot act further on the approval.
+_Avoid_: pending, paused, gated.
 
-**Critique loop**:
-The reusable draft → critic → loop/fail pattern in `app/orchestrator/critique_loop.py`. Attached via `add_critique_loop(...)`.
-_Avoid_: review loop, validation loop.
+**Blocked**:
+A tool's "precondition not met" return. Carries a human-readable `reason` and an optional structured `hint` (e.g., which rows need configuration). The LLM sees `{"status": "blocked", "reason": "…", "hint": {…}}` and tells the user what to fix. Used when no approval is meaningful — the user must do work elsewhere and re-trigger.
+_Avoid_: failed, error, halted.
+
+### Executors
+
+**Executor**:
+A function the approval-grant handler invokes after a human approves an `AwaitingApproval`. Lives in a registry separate from tools and is **never** in any agent's `allowed_tools` — the LLM has no path to call an executor. Receives the (possibly edited) payload from the inbox; returns success or marks the approval failed. This is the structural enforcement of [Unbreakable Rule #3](../CLAUDE.md): approvals are human-only.
+_Avoid_: writer, action, callback, post-approval tool.
 
 ### LLM dispatch
 
@@ -75,11 +77,11 @@ A Protocol/port implemented by adapters that know one model API. OpenAI is the p
 _Avoid_: LLM backend, model client.
 
 **Owning agent**:
-The agent identity a workflow's work attributes to. Declared as `GraphSpec.owning_agent` (the default) and overridable per invocation via `runner.start(owning_agent=...)`. The runner seeds it into graph state as `_owning_agent_slug`; every LLM call inside the workflow inherits it via the graph's `_attribution(state, purpose)` helper, so `llm_calls.agent_slug` reflects the work's owner — not a per-node persona. Voice/accuracy critics and other sub-step LLM calls share the owning agent's slug; their distinct role is captured by `purpose`.
+The agent identity a tool's work attributes to. Declared as a class attribute on the tool (or its module), defaulting to the caller's `ToolContext.agent_slug` when not set. Every LLM call made from inside the tool — including inline prompts for sub-steps like voice or accuracy critique — uses this slug for `Attribution.agent_slug`, so `llm_calls.agent_slug` reflects the work's owner, not a per-step persona. The sub-step's distinct role is captured by `purpose` (e.g., `"outreach.compose_email"` vs `"outreach.voice_critique"`).
 _Avoid_: workflow agent, runner agent.
 
 **Invoking agent**:
-The agent that triggered a workflow to start (a chat tool call, an `ask_agent`, a cron job — though cron has no agent). Distinct from the **owning agent**. The relationship is captured by the workflow's spawn link (`parent_workflow_id`) and audit trail, not by `agent_slug` on `llm_calls` rows. Example: when `revenue-ops` calls `create_post`, the spawned `content_creation` workflow's owning agent is `content-orchestrator`; the invoking agent is `revenue-ops`.
+The agent that called a tool (typically `revenue-ops` from a chat turn, or another agent via `ask_agent`; cron-triggered tools have no invoking agent). Distinct from the **owning agent**: when `revenue-ops` calls `create_post`, the invoking agent is `revenue-ops` and the owning agent is `content-orchestrator` (the tool's declared owner). The relationship lives in the audit trail and `agent_messages` thread, not on `llm_calls` rows.
 _Avoid_: caller agent, triggering agent.
 
 ## Example dialogue
@@ -88,12 +90,14 @@ _Avoid_: caller agent, triggering agent.
 > **Domain:** BDR — it's an agentic task. Revenue-ops calls `ask_agent("bdr", "draft a reply for lead@example.com")`. BDR decides to call its HubSpot tool, gets the context, drafts the reply, returns it. Revenue-ops surfaces it in chat.
 > **Dev:** Why not just add a `draft_reply` tool to revenue-ops?
 > **Domain:** Because that's how you end up with 100 tools on the orchestrator. BDR owns the outreach domain — the tools, the voice, the logic. Revenue-ops just routes.
-> **Dev:** What if I need to score a lead inside a node in the outreach graph?
-> **Domain:** That's a prescribed worker, not a domain agent. Single-turn inline prompt, `SYSTEM_PROMPT` constant in the graph file, `Attribution` with purpose `"outreach.score_lead"`. The graph owns the step sequence.
-> **Dev:** When does the outreach graph exist at all vs. just using the BDR agentic task?
-> **Domain:** Prescribed workflow when the process is fixed and the steps should never change without a code change. Agentic task when the agent should decide the approach. Multi-step outreach sequences (compose → send → follow-up on schedule) belong in a graph. "Draft a reply right now" is an agentic task.
+> **Dev:** What if I need to score a lead as a sub-step inside an outreach tool?
+> **Domain:** Inline prompt. Fixed `SYSTEM_PROMPT` constant in the tool's module, `Attribution` with purpose `"outreach.score_lead"`. The tool owns the step sequence; the inline prompt has no agent identity.
+> **Dev:** When is something a prescribed workflow vs. an agentic task?
+> **Domain:** Prescribed workflow when the process is fixed and the steps should never change without a code change — that's a tool returning `Done | AwaitingApproval | Blocked`. Agentic task when the agent should decide the approach. "Compose this email and propose sending it" is a prescribed workflow. "Draft a reply right now" is an agentic task.
 > **Dev:** BDR drafts an email — does it go through propose-approve-execute?
-> **Domain:** Only if it's being sent. A draft surfaced in chat is not a write — it's ephemeral. The moment it would touch an external system (Gmail, HubSpot) or persist to the DB, it becomes a proposed action and needs an approval row.
+> **Domain:** Only if it's being sent. A draft surfaced in chat is not a write — it's ephemeral. The moment it would touch an external system (Gmail, HubSpot) or persist to the DB, it becomes a proposed action: the tool returns `AwaitingApproval` and an executor runs after a human approves.
+> **Dev:** Why can't the LLM just call the Gmail-send tool directly once the user said yes in chat?
+> **Domain:** Trust boundary — Rule #3. The LLM never holds the write capability. It proposes by returning `AwaitingApproval`; the executor that actually sends lives in a registry the LLM cannot reach. The user approves via the inbox UI, not by talking to the agent.
 
 ## Flagged ambiguities
 

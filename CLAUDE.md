@@ -10,11 +10,13 @@ Reference docs:
 
 1. **No write without an approved approval row.** Every create/update/delete flows through:
    ```
-   graph node proposes → approval (pending) → human approves → graph resumes → executed | failed
+   tool returns AwaitingApproval → approval (pending) → human approves → executor runs → executed | failed
    ```
    Every state transition writes a row to `audit_log`.
 
 2. **Every endpoint requires auth except `/healthz`.** Routers are registered in `app/main.py` with `dependencies=[Depends(get_current_user)]`. When you add a new router, register it the same way. JWT is verified by `app/auth.py` against the Supabase JWKS; tests stub `get_current_user` via `app.dependency_overrides`.
+
+3. **Approvals are human-only.** Agents and tools may propose approvals (by returning `AwaitingApproval`); they may not call `approve()`, `reject()`, or otherwise mutate an approval's status. The inbox UI is the only path to approval action. Executors (the functions that run *after* approval) are registered in a separate registry and are never added to any agent's `allowed_tools` — the trust boundary is structural, not conventional. See [ADR-0002](docs/adr/0002-tools-not-graphs.md).
 
 ## Planning
 - Save all plans to `.agent/plans/` folder
@@ -43,17 +45,15 @@ Reference docs:
 - Tests use a separate test DB (default: `postgres_test` on port 54322); the conftest drops/creates it each session. Do not point `TEST_DATABASE_URL` at the live `postgres` DB.
 - Run tests with plain `pytest` (or `python3 -m pytest`). `TEST_DATABASE_URL` is set automatically by `pytest-env` in `pyproject.toml` — do **not** prefix commands with `TEST_DATABASE_URL=...`.
 
-### Orchestrator (LangGraph)
-- Graphs live in `app/orchestrator/graphs/{kind}.py`. Each file exports a `build_graph() -> GraphSpec` factory; the central registry at `app/orchestrator/graphs/__init__.py::register_all` calls `runner.register(...)` for each. App startup runs `await runner.init()` then `register_all(runner)`.
+### Orchestrator
+- Prescribed workflows are **tools**, not LangGraph graphs (see [ADR-0002](docs/adr/0002-tools-not-graphs.md)). A tool returns one of `Done(payload)`, `AwaitingApproval(executor, payload, …)`, or `Blocked(reason, hint)`. The runtime writes the approval row, surfaces the result to the LLM as a status dict, and — on human approval — invokes the registered executor with the (possibly edited) payload.
 - Use the audit event constants in `app/orchestrator/events.py` for any new audit calls — no string literals.
-- Agent invocation from a node: `await invoke_agent(slug, input, ctx)`. Never instantiate agent classes inside nodes.
-- Sub-workflows: `await spawn_workflow(kind, input, parent_workflow_id=ctx.workflow_id)`.
-- Graph state TypedDicts must declare `_propose: NotRequired[dict]` (or extend `BaseGraphState` from `app/orchestrator/state.py`) for any node that requests human approval — LangGraph drops undeclared keys.
-- Checkpointer is `AsyncPostgresSaver` against `settings.database_url` via its own psycopg pool (separate from the app's asyncpg pool). LangGraph's checkpoint tables are created idempotently by `setup()` at startup; migration 0012 is a marker only.
-- Loop edges are a supported idiom (see `app/orchestrator/graphs/{rev_rec,outreach,content_creation}.py` and `_critique_poc.py`). Graph authors own loop-termination logic — the framework imposes no infinite-loop guard.
-- LangGraph treats node names and state-key names as a single namespace; pick distinct names (e.g., the outreach graph uses `compose_email` as the node and `draft_email` as the state field).
-- Production graphs: `content_publish`, `rev_rec_monthly`, `outreach_chain`, `content_creation`. Inbox UI sources solely from `/approvals`.
-- Agent-to-agent communication: `app/services/agent_messages.py` records turn-by-turn exchanges; `ask_agent` (in `app/tools/agent/ask_agent.py`) is the canonical delegation tool. Both messages (outgoing prompt + incoming reply) are written under one `thread_id`. `ToolContext.workflow_id` links node-driven calls to their workflow. Demo graph: `app/orchestrator/graphs/_multi_agent_demo.py`.
+- Domain agent delegation: `await run_agent_task(slug, prompt, ctx)`. Drives the ReAct loop for agents with `allowed_tools`. Never instantiate agent classes outside the registry.
+- Tools may emit progress events via `ProgressEmitter` for in-tool observability (e.g., `{"type": "step_started", "name": "compose_email"}`).
+- Critique loops, retries, and conditional branches are inline Python (`for`, `while`, `if`) — there is no graph helper. Extract a shared helper only when at least two tools need the same pattern.
+- Executors live in their own registry and are **never** added to any agent's `allowed_tools`. They are invoked by the approval-grant handler, not by the LLM.
+- Production tools (workflow-shaped): `trigger_revenue_recognition`, `create_post`, `publish_post`. Inbox UI sources solely from `/approvals`.
+- Agent-to-agent communication: `app/services/agent_messages.py` records turn-by-turn exchanges; `ask_agent` (in `app/tools/agent/ask_agent.py`) is the canonical delegation tool. Both messages (outgoing prompt + incoming reply) are written under one `thread_id`.
 
 ## Progress
 Check PROGRESS.md for current module status. Update it as you complete tasks.

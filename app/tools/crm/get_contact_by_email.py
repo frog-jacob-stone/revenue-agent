@@ -9,7 +9,7 @@ from app.integrations.hubspot import (
     search_contact_by_email,
 )
 from app.lib.nomalize_utils import normalize_email
-from app.tools.base import ToolContext, ToolDefinition
+from app.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
 
 
 async def _get_contact_by_email(
@@ -17,28 +17,28 @@ async def _get_contact_by_email(
     *,
     email_address: str,
     **_: Any,
-) -> dict[str, Any]:
+) -> ToolReturn:
     email = normalize_email(email_address)
     if email is None:
-        return {"status": "error", "error": "Provide a valid email_address."}
+        return Done({"status": "error", "error": "Provide a valid email_address."})
 
     try:
         contact = await search_contact_by_email(settings, email)
         if contact is None:
-            return {
+            return Done({
                 "status": "not_found",
                 "message": f"No HubSpot contact found for {email}.",
-            }
+            })
         primary_company_id = await get_primary_company_id(
             settings, str(contact.get("id"))
         )
     except HubSpotError as exc:
-        return {"status": "error", "error": str(exc)}
+        return Done({"status": "error", "error": str(exc)})
 
     props = dict(contact.get("properties") or {})
     name = " ".join(p for p in [props.get("firstname"), props.get("lastname")] if p)
 
-    return {
+    return Done({
         "status": "success",
         "contact_id": str(contact.get("id") or ""),
         "email": email,
@@ -49,7 +49,7 @@ async def _get_contact_by_email(
         "recent_conversion_event_name": props.get("recent_conversion_event_name"),
         "recent_conversion_date": props.get("recent_conversion_date"),
         "primary_company_id": primary_company_id,
-    }
+    })
 
 
 GET_CONTACT_BY_EMAIL = ToolDefinition(

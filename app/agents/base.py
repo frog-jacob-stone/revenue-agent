@@ -68,7 +68,12 @@ class ConversationalAgent(BaseAgent, ABC):
         rather than a separate permission check). `progress`, when provided,
         is forwarded on ToolContext so the tool can emit intermediate
         events back to a streaming caller.
+
+        Routes through `dispatch_tool` so Done/AwaitingApproval/Blocked
+        return shapes are uniformly translated into LLM-visible dicts
+        (ADR-0002).
         """
+        from app.orchestrator.dispatch import dispatch_tool
         from app.tools import ToolContext
 
         tool = self._tool_by_name.get(name)
@@ -81,6 +86,6 @@ class ConversationalAgent(BaseAgent, ABC):
             agent_slug=self.slug,
             progress=progress,
         )
-        return await tool.execute(ctx, **tool_input)
+        return await dispatch_tool(tool, ctx, tool_input)
 
 

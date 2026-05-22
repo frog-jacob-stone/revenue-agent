@@ -31,8 +31,11 @@ class ApprovalReject(ORMBase):
 
 class ApprovalResponse(ORMBase):
     id: UUID
-    workflow_id: UUID
-    node_name: str
+    # NULL for tool-driven approvals (ADR-0002); set for legacy graph-driven approvals.
+    workflow_id: UUID | None = None
+    node_name: str | None = None
+    # Registered executor name for tool-driven approvals; NULL for legacy graph-driven.
+    executor: str | None = None
     agent_slug: str
     action_type: str
     status: str

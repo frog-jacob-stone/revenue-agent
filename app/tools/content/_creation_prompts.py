@@ -139,7 +139,7 @@ Review the provided draft and respond with valid JSON only. No commentary before
 
 Format:
 {{
-  "voice_score": 8.5,
+  "voice_score": 8,  # 1-10 score of how well the draft matches the voice profile
   "passed_voice_review": true,
   "issues_found": ["list of specific issues, empty if none"],
   "suggested_changes": ["list of specific suggested edits, empty if none"],

@@ -5,7 +5,7 @@ from typing import Any
 from app.config import settings
 from app.integrations.hubspot import HubSpotError, find_form_submission_for_email
 from app.lib.nomalize_utils import normalize_email
-from app.tools.base import ToolContext, ToolDefinition
+from app.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
 
 
 def _interesting_fields(values: dict[str, str]) -> dict[str, str]:
@@ -20,20 +20,20 @@ async def _get_form_submission(
     form_id: str | None = None,
     lookback_days: int = 14,
     **_: Any,
-) -> dict[str, Any]:
+) -> ToolReturn:
     email = normalize_email(email_address)
     if email is None:
-        return {"status": "error", "error": "Provide a valid email_address."}
+        return Done({"status": "error", "error": "Provide a valid email_address."})
 
     target_form_id = (form_id or settings.hubspot_form_id or "").strip()
     if not target_form_id:
-        return {
+        return Done({
             "status": "error",
             "error": (
                 "No form_id provided and HUBSPOT_FORM_ID is not configured. "
                 "Set HUBSPOT_FORM_ID in the environment or pass form_id explicitly."
             ),
-        }
+        })
 
     if lookback_days < 1:
         lookback_days = 14
@@ -43,25 +43,25 @@ async def _get_form_submission(
             settings, target_form_id, email, lookback_days=lookback_days
         )
     except HubSpotError as exc:
-        return {"status": "error", "error": str(exc)}
+        return Done({"status": "error", "error": str(exc)})
 
     if match is None:
-        return {
+        return Done({
             "status": "not_found",
             "message": (
                 f"No submission for {email} in form {target_form_id} "
                 f"within the last {lookback_days} days."
             ),
-        }
+        })
 
     submission = match.get("submission") or {}
-    return {
+    return Done({
         "status": "success",
         "form_id": target_form_id,
         "submitted_at": match["submitted_at"],
         "page_url": submission.get("pageUrl"),
         "submission_fields": _interesting_fields(match["values"]),
-    }
+    })
 
 
 GET_FORM_SUBMISSION = ToolDefinition(

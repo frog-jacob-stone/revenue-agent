@@ -18,6 +18,56 @@ from app.services import audit
 # ── Create ──────────────────────────────────────────────────────────────────────
 
 
+async def create_pending_for_tool(
+    conn: asyncpg.Connection,
+    *,
+    agent_slug: str,
+    executor: str,
+    action_type: str,
+    proposed_payload: dict[str, Any],
+    summary: str,
+    reasoning: str | None = None,
+    risk_level: str | None = None,
+    assigned_to: str | None = None,
+) -> dict[str, Any]:
+    """Insert a pending approval for a tool-driven proposal (ADR-0002).
+
+    Distinct from `create_pending_conn` (used by the graph runner) in that
+    there is no `workflow_id` / `node_name` and the `executor` name is
+    required — the approval-grant handler invokes it on grant.
+    """
+    row = await conn.fetchrow(
+        """
+        INSERT INTO approvals
+            (workflow_id, node_name, agent_slug, action_type, status,
+             risk_level, summary, reasoning, proposed_payload, assigned_to,
+             executor)
+        VALUES (NULL, NULL, $1, $2, 'pending', $3, $4, $5, $6, $7, $8)
+        RETURNING *
+        """,
+        agent_slug,
+        action_type,
+        risk_level,
+        summary,
+        reasoning,
+        proposed_payload,
+        assigned_to,
+        executor,
+    )
+    await audit.write_audit_event(
+        conn,
+        events.APPROVAL_REQUESTED,
+        actor=f"agent:{agent_slug}",
+        payload={
+            "approval_id": str(row["id"]),
+            "executor": executor,
+            "action_type": action_type,
+            "agent_slug": agent_slug,
+        },
+    )
+    return dict(row)
+
+
 async def create_pending_conn(
     conn: asyncpg.Connection,
     *,

@@ -42,9 +42,9 @@ def _patch_settings_form_id(value: str):
 
 async def test_returns_submission_using_explicit_form_id():
     with _patch():
-        result = await _get_form_submission(
+        result = (await _get_form_submission(
             _CTX, email_address="lead@example.com", form_id="form-1"
-        )
+        )).payload
 
     assert result["status"] == "success"
     assert result["form_id"] == "form-1"
@@ -66,7 +66,7 @@ async def test_falls_back_to_configured_form_id():
         "app.tools.crm.get_form_submission.find_form_submission_for_email",
         new=fake_find,
     ):
-        result = await _get_form_submission(_CTX, email_address="lead@example.com")
+        result = (await _get_form_submission(_CTX, email_address="lead@example.com")).payload
 
     assert result["status"] == "success"
     assert captured["form_id"] == "default-form-99"
@@ -77,7 +77,7 @@ async def test_missing_form_id_returns_error():
         "app.tools.crm.get_form_submission.find_form_submission_for_email",
         new=AsyncMock(),
     ) as mock_find:
-        result = await _get_form_submission(_CTX, email_address="lead@example.com")
+        result = (await _get_form_submission(_CTX, email_address="lead@example.com")).payload
 
     assert result["status"] == "error"
     assert "HUBSPOT_FORM_ID" in result["error"]
@@ -89,9 +89,9 @@ async def test_invalid_email_returns_error():
         "app.tools.crm.get_form_submission.find_form_submission_for_email",
         new=AsyncMock(),
     ) as mock_find:
-        result = await _get_form_submission(
+        result = (await _get_form_submission(
             _CTX, email_address="not-an-email", form_id="form-1"
-        )
+        )).payload
 
     assert result == {"status": "error", "error": "Provide a valid email_address."}
     mock_find.assert_not_awaited()
@@ -99,9 +99,9 @@ async def test_invalid_email_returns_error():
 
 async def test_no_match_returns_not_found():
     with _patch(match=None):
-        result = await _get_form_submission(
+        result = (await _get_form_submission(
             _CTX, email_address="nobody@example.com", form_id="form-1"
-        )
+        )).payload
 
     assert result["status"] == "not_found"
     assert "nobody@example.com" in result["message"]
@@ -110,9 +110,9 @@ async def test_no_match_returns_not_found():
 
 async def test_hubspot_not_configured_returns_error():
     with _patch(side_effect=HubSpotNotConfigured("HUBSPOT_TOKEN is not configured.")):
-        result = await _get_form_submission(
+        result = (await _get_form_submission(
             _CTX, email_address="lead@example.com", form_id="form-1"
-        )
+        )).payload
 
     assert result["status"] == "error"
     assert "HUBSPOT_TOKEN" in result["error"]

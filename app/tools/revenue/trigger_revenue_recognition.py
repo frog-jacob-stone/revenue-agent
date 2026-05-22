@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Any
 
-from app.tools.base import ToolContext, ToolDefinition
+from app.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
 
 
 async def _trigger_revenue_recognition(
@@ -9,7 +9,9 @@ async def _trigger_revenue_recognition(
     *,
     date_recognized: str | None = None,
     **_: Any,
-) -> dict[str, Any]:
+) -> ToolReturn:
+    # NOTE: still graph-spawning during Phase 0. Migrated to the
+    # AwaitingApproval / Blocked pattern in plan 18.
     from app.orchestrator.graphs.rev_rec import REV_REC_KIND
     from app.orchestrator.runner import runner
 
@@ -39,7 +41,7 @@ async def _trigger_revenue_recognition(
     else:
         workflow_id = await runner.start(REV_REC_KIND, **start_kwargs)
 
-    return {"workflow_id": str(workflow_id)}
+    return Done({"workflow_id": str(workflow_id)})
 
 
 TRIGGER_REVENUE_RECOGNITION = ToolDefinition(

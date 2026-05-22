@@ -42,6 +42,14 @@ class AuditEvent(StrEnum):
     CHAT_TURN_COMPLETED = "chat.turn.completed"
     CHAT_TURN_FAILED = "chat.turn.failed"
 
+    # Tool-level events (ADR-0002). Replace workflow/node events as graphs are
+    # migrated to tools. APPROVAL_REQUESTED / APPROVAL_EXECUTED / APPROVAL_FAILED
+    # are reused for the AwaitingApproval -> execute chain.
+    TOOL_CALLED = "tool.called"
+    TOOL_COMPLETED = "tool.completed"
+    TOOL_FAILED = "tool.failed"
+    TOOL_BLOCKED = "tool.blocked"
+
 
 WORKFLOW_STARTED = AuditEvent.WORKFLOW_STARTED
 WORKFLOW_COMPLETED = AuditEvent.WORKFLOW_COMPLETED
@@ -69,3 +77,8 @@ SUBWORKFLOW_COMPLETED = AuditEvent.SUBWORKFLOW_COMPLETED
 CHAT_TURN_STARTED = AuditEvent.CHAT_TURN_STARTED
 CHAT_TURN_COMPLETED = AuditEvent.CHAT_TURN_COMPLETED
 CHAT_TURN_FAILED = AuditEvent.CHAT_TURN_FAILED
+
+TOOL_CALLED = AuditEvent.TOOL_CALLED
+TOOL_COMPLETED = AuditEvent.TOOL_COMPLETED
+TOOL_FAILED = AuditEvent.TOOL_FAILED
+TOOL_BLOCKED = AuditEvent.TOOL_BLOCKED

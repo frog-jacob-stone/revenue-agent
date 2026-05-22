@@ -252,6 +252,8 @@ async def run_agent_task(
             )
 
             # Execute each tool call and append results.
+            from app.orchestrator.dispatch import dispatch_tool
+
             for tc in response.tool_calls:
                 tool = tool_by_name.get(tc.name)
                 if tool is None:
@@ -269,7 +271,10 @@ async def run_agent_task(
                             "name": tc.name,
                             "args": args,
                         })
-                    result = await tool.execute(tool_ctx, **args)
+                    try:
+                        result = await dispatch_tool(tool, tool_ctx, args)
+                    except Exception as exc:
+                        result = {"error": str(exc)}
                 if progress:
                     progress.emit({
                         "type": "agent_task_tool_completed",

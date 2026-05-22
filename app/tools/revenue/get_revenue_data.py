@@ -1,7 +1,7 @@
 from typing import Any
 
 from app.services import revenue as revenue_service
-from app.tools.base import ToolContext, ToolDefinition
+from app.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
 
 
 async def _get_revenue_data(
@@ -10,8 +10,9 @@ async def _get_revenue_data(
     date_from: str | None = None,
     date_to: str | None = None,
     **_: Any,
-) -> list[dict[str, Any]]:
-    return await revenue_service.get_revenue_data_slim(date_from=date_from, date_to=date_to)
+) -> ToolReturn:
+    records = await revenue_service.get_revenue_data_slim(date_from=date_from, date_to=date_to)
+    return Done({"records": records})
 
 
 GET_REVENUE_DATA = ToolDefinition(

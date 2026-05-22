@@ -34,7 +34,7 @@ class RevenueOpsAgent(ConversationalAgent):
         "by calling specialist workers and workflow triggers."
     )
     requires_approval = False
-    model = "gpt-4o"
+    model = "gpt-4o-mini"
 
     allowed_tools: ClassVar[tuple[ToolDefinition, ...]] = (
         ASK_AGENT,

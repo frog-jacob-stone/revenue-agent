@@ -1,6 +1,6 @@
 from typing import Any
 
-from app.tools.base import ToolContext, ToolDefinition
+from app.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
 
 
 async def _get_posts(
@@ -8,7 +8,7 @@ async def _get_posts(
     *,
     status: str | None = None,
     **_: Any,
-) -> dict[str, Any]:
+) -> ToolReturn:
     from app.db import get_pool
     from app.services import social_posts as svc
 
@@ -24,7 +24,7 @@ async def _get_posts(
             )
             posts = [dict(r) for r in rows]
 
-    return {
+    return Done({
         "count": len(posts),
         "posts": [
             {
@@ -38,7 +38,7 @@ async def _get_posts(
             }
             for p in posts
         ],
-    }
+    })
 
 
 GET_POSTS = ToolDefinition(

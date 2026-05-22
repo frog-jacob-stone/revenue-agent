@@ -20,14 +20,6 @@ from typing import Any
 # Mirror of ui/src/pages/Chat/nodeLabels.ts. Keep in sync.
 
 _NODE_LABELS: dict[str, str] = {
-    # content_creation
-    "content_creation:interpret_brief": "Interpreting brief",
-    "content_creation:draft_post": "Drafting post",
-    "content_creation:voice_review": "Reviewing voice",
-    "content_creation:failed_terminal": "Voice attempts exhausted",
-    # content_publish
-    "content_publish:propose_post": "Proposing post",
-    "content_publish:post_to_linkedin": "Posting to LinkedIn",
     # outreach_chain
     "outreach_chain:pull_hubspot": "Pulling HubSpot contact",
     "outreach_chain:web_search": "Searching the web",
@@ -48,9 +40,16 @@ _NODE_LABELS: dict[str, str] = {
     "rev_rec_monthly:write_entries": "Writing entries",
 }
 
+# Tool-step labels (ADR-0002). Used when a tool emits `tool_step_started` /
+# `tool_step_completed` events on its ProgressEmitter rather than going through
+# a LangGraph workflow.
+_TOOL_STEP_LABELS: dict[str, str] = {
+    "create_post:interpret_brief": "Interpreting brief",
+    "create_post:draft_post": "Drafting post",
+    "create_post:voice_review": "Reviewing voice",
+}
+
 _WORKFLOW_LABELS: dict[str, str] = {
-    "content_creation": "Content creation",
-    "content_publish": "Publish post",
     "outreach_chain": "Outreach",
     "rev_rec_monthly": "Revenue recognition",
 }
@@ -62,6 +61,11 @@ def _title_case(node: str) -> str:
 
 def label_for_node(kind: str, node: str) -> str:
     return _NODE_LABELS.get(f"{kind}:{node}", _title_case(node))
+
+
+def label_for_tool_step(tool: str, step: str) -> str:
+    """Label for a `tool_step_*` event (ADR-0002)."""
+    return _TOOL_STEP_LABELS.get(f"{tool}:{step}", _title_case(step))
 
 
 def label_for_kind(kind: str) -> str:

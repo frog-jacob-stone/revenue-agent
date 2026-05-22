@@ -94,7 +94,8 @@ async def test_tool_result_passed_to_next_turn():
     captured: list[list[dict]] = []
 
     async def _capture(ctx: ToolContext, **_: Any) -> Any:
-        return {"key": "value-from-tool"}
+        from app.tools.base import Done
+        return Done({"key": "value-from-tool"})
 
     tool = ToolDefinition(
         name="capture_tool",

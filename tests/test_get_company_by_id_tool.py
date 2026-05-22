@@ -36,7 +36,7 @@ def _patch(company=_COMPANY, side_effect=None):
 
 async def test_returns_company_profile():
     with _patch():
-        result = await _get_company_by_id(_CTX, company_id="co-1")
+        result = (await _get_company_by_id(_CTX, company_id="co-1")).payload
 
     assert result["status"] == "success"
     assert result["company_id"] == "co-1"
@@ -49,7 +49,7 @@ async def test_returns_company_profile():
 
 async def test_returns_not_found_when_company_missing():
     with _patch(company=None):
-        result = await _get_company_by_id(_CTX, company_id="missing")
+        result = (await _get_company_by_id(_CTX, company_id="missing")).payload
 
     assert result["status"] == "not_found"
     assert "missing" in result["message"]
@@ -59,7 +59,7 @@ async def test_blank_company_id_returns_error_without_calling_hubspot():
     with patch(
         "app.tools.crm.get_company_by_id.get_company", new=AsyncMock()
     ) as mock_get:
-        result = await _get_company_by_id(_CTX, company_id="   ")
+        result = (await _get_company_by_id(_CTX, company_id="   ")).payload
 
     assert result == {"status": "error", "error": "Provide a company_id."}
     mock_get.assert_not_awaited()
@@ -67,7 +67,7 @@ async def test_blank_company_id_returns_error_without_calling_hubspot():
 
 async def test_hubspot_not_configured_returns_error():
     with _patch(side_effect=HubSpotNotConfigured("HUBSPOT_TOKEN is not configured.")):
-        result = await _get_company_by_id(_CTX, company_id="co-1")
+        result = (await _get_company_by_id(_CTX, company_id="co-1")).payload
 
     assert result["status"] == "error"
     assert "HUBSPOT_TOKEN" in result["error"]

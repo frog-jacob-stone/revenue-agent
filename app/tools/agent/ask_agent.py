@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 
 from app.db import get_pool
 from app.services import agent_messages
-from app.tools.base import ToolContext, ToolDefinition
+from app.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
 
 
 async def _ask_agent(
@@ -26,7 +26,7 @@ async def _ask_agent(
     prompt: str,
     thread_id: str | None = None,
     **_: Any,
-) -> dict[str, Any]:
+) -> ToolReturn:
     # Lazy imports avoid a cycle:
     # app/orchestrator/__init__.py → agent_invoke → app.agents.registry →
     # app.agents.revenue_ops_agent → app.tools.agent.ask_agent (this module).
@@ -72,7 +72,7 @@ async def _ask_agent(
         workflow_id=workflow_id,
     )
 
-    return {"answer": answer, "thread_id": str(thread_uuid)}
+    return Done({"answer": answer, "thread_id": str(thread_uuid)})
 
 
 ASK_AGENT = ToolDefinition(

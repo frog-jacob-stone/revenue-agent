@@ -66,31 +66,36 @@ One row per business process instance.
 
 ### `approvals`
 
-Lifecycle-only queue for human-in-the-loop pauses in LangGraph workflows. Added in migration `0010`.
+Lifecycle-only queue for human-in-the-loop pauses. Originally added (migration `0010`) for LangGraph node-driven pauses; extended in migration `0021` for tool-driven approvals (per [ADR-0002](adr/0002-tools-not-graphs.md)).
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid | PK |
-| `workflow_id` | uuid | FK → `workflows.id`, cascade delete |
-| `node_name` | text | Which graph node requested approval |
+| `workflow_id` | uuid | FK → `workflows.id`, cascade delete. **Nullable since `0021`** — NULL for tool-driven approvals; non-NULL for legacy graph-driven approvals. |
+| `node_name` | text | Which graph node requested approval. **Nullable since `0021`** — NULL for tool-driven approvals. |
+| `executor` | text | **Added in `0021`.** Registered executor name (per `app/executors/registry.py`) the approval-grant handler invokes on grant. NULL for legacy graph-driven approvals — becomes NOT NULL after all graphs migrate (ADR-0002, plan 19). |
 | `agent_slug` | text | The agent acting (display + future ACL) |
 | `action_type` | text | Free text — same vocabulary as `actions.action_type` for now |
 | `status` | text | One of `pending`, `approved`, `rejected`, `executed`, `failed` (CHECK constraint enforces) |
 | `risk_level` | text | `low`, `medium`, `high` |
 | `summary` | text | Human-readable description |
 | `reasoning` | text | Agent's explanation |
-| `proposed_payload` | jsonb | What the node proposed |
+| `proposed_payload` | jsonb | What the tool or node proposed |
 | `executed_payload` | jsonb | What actually ran (may differ if human edited) |
 | `assigned_to` | text | Reserved for multi-user routing; ignored today |
 | `approved_by` / `approved_at` | — | Set on approval |
 | `rejected_by` / `rejection_reason` | — | Set on rejection |
-| `executed_at` | timestamptz | Set when the gated node completes |
-| `error` | text | Set if the gated node fails after approval |
+| `executed_at` | timestamptz | Set when the executor (or, for legacy graphs, the gated node) completes |
+| `error` | text | Set if the executor (or gated node) fails after approval |
 | `created_at` | timestamptz | |
 
 **Lifecycle:** `pending → approved → executed | failed`, or `pending → rejected`. Audit events emitted at every transition (see "Event Types" below).
 
 **Two payload columns by design:** `proposed_payload` preserves the agent's draft; `executed_payload` captures what actually went out the door. If a human edits the payload before approving, both are preserved for the audit trail.
+
+**Two grant paths today (transitional):**
+- `executor IS NOT NULL` → tool-driven: `POST /approvals/{id}/approve` invokes the named executor with the payload.
+- `executor IS NULL` AND `workflow_id IS NOT NULL` → legacy graph-driven: the grant handler resumes the LangGraph workflow via `runner.resume()`. Removed in plan 19 once all graphs are migrated.
 
 ### `memories`
 
@@ -321,6 +326,7 @@ Migrations run in filename order; each is idempotent.
 18. `0018_enable_rls_gaps.sql` — enables RLS on `approvals` and `agent_messages`
 19. `0019_chat_sessions_default_slug.sql` — gives `chat_sessions.agent_slug` a `DEFAULT 'revenue-ops'`. Single front-door pattern means new sessions always target the same conversational agent; this lets the router create sessions with no body
 20. `0020_drop_agents_config.sql` — drops `agents.config`. The column was a free-form jsonb knob that no app code ever read; per-agent LLM selection lives on the Python class `model` attribute. Follows the precedent of `0006_simplify_agents.sql`
+21. `0021_approvals_for_tools.sql` — adds `approvals.executor` and makes `workflow_id` / `node_name` nullable. First step in the [ADR-0002](adr/0002-tools-not-graphs.md) migration from LangGraph graphs to tool-driven approvals. Both grant paths coexist until plan 19
 
 ## Open Questions
 

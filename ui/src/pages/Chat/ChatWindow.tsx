@@ -17,7 +17,7 @@ import type {
   ChatPersistedMessage,
   ChatMessageStatus,
 } from '../../types';
-import { labelForKind, labelForNode } from './nodeLabels';
+import { labelForKind, labelForNode, labelForToolStep } from './nodeLabels';
 
 const AGENT_COLORS: Record<string, string> = {
   'sdr-researcher': '#6366f1',
@@ -151,6 +151,9 @@ export default function ChatWindow({ agentId, sessionId, agent }: Props) {
     let pendingAgentByLineId: string | null = null;
     let pendingAgentSlug: string | null = null;
     let agentTaskToolLineId: string | null = null;
+    // Tracks the most recent in-flight tool_step line so tool_step_completed
+    // can patch it to ok/fail (ADR-0002, plan 16).
+    const toolStepLineIds: Record<string, string> = {};
 
     const updateAssistant = (mut: (m: DisplayMessage) => DisplayMessage) =>
       setMessages((prev) => prev.map((m) => (m.id === assistantId ? mut(m) : m)));
@@ -302,6 +305,34 @@ export default function ChatWindow({ agentId, sessionId, agent }: Props) {
             });
           agentTaskToolLineId = null;
           break;
+        case 'tool_step_started': {
+          const key = `${evt.tool}:${evt.step}:${evt.attempt ?? 1}`;
+          const lineId = `ts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          toolStepLineIds[key] = lineId;
+          const base = labelForToolStep(evt.tool, evt.step);
+          const label = evt.attempt && evt.attempt > 1 ? `${base} (attempt ${evt.attempt})` : base;
+          pushLine({
+            id: lineId,
+            kind: 'node',
+            parentId: toolLineId,
+            label,
+            status: 'running',
+          });
+          break;
+        }
+        case 'tool_step_completed': {
+          const key = `${evt.tool}:${evt.step}:${evt.attempt ?? 1}`;
+          const lineId = toolStepLineIds[key];
+          if (lineId) {
+            // For voice_review the `passed` flag drives the status; other
+            // steps don't carry it and are considered ok on completion.
+            const status =
+              evt.passed === false ? 'fail' : evt.passed === true ? 'ok' : 'ok';
+            patchLine(lineId, { status });
+            delete toolStepLineIds[key];
+          }
+          break;
+        }
         case 'tool_call_completed':
           if (toolLineId)
             patchLine(toolLineId, {

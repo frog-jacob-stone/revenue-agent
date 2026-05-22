@@ -8,8 +8,6 @@ checkpointer.
 from __future__ import annotations
 
 from app.orchestrator.graphs import (
-    content_creation,
-    content_publish,
     outreach,
     rev_rec,
 )
@@ -17,7 +15,7 @@ from app.orchestrator.runner import Runner
 
 
 def register_all(runner: Runner) -> None:
-    runner.register("content_publish", content_publish.build_graph)
     runner.register("rev_rec_monthly", rev_rec.build_graph)
     runner.register("outreach_chain", outreach.build_graph)
-    runner.register("content_creation", content_creation.build_graph)
+    # content_creation migrated to a tool in plan 16 (ADR-0002).
+    # content_publish migrated to a tool + executor in plan 17 (ADR-0002).
