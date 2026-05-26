@@ -1,9 +1,9 @@
-"""End-to-end test: revenue-ops asks BDR to draft an inbound reply.
+"""End-to-end test: chief-of-staff asks BDR to draft an inbound reply.
 
 Covers the full delegation path:
-  revenue-ops (ask_agent) → BDR (run_agent_task) →
+  chief-of-staff (ask_agent) → BDR (run_agent_task) →
     CRM tools (get_contact_by_email, get_form_submission, get_company_by_id) →
-    final draft returned to revenue-ops.
+    final draft returned to chief-of-staff.
 
 HubSpot and the LLM are both mocked; the test DB is used for agent_messages
 and audit rows.
@@ -20,8 +20,8 @@ from unittest.mock import AsyncMock, patch
 
 from app.agents.bdr_agent import BDRAgent
 from app.integrations.llm import LlmResponse, ToolCall, use_provider
-from app.tools import ToolContext
-from app.tools.agent.ask_agent import _ask_agent
+from app.agents.tools import ToolContext
+from app.agents.tools.agent.ask_agent import _ask_agent
 from tests.fakes.llm import FakeProvider
 
 _HUBSPOT_CONTACT = {
@@ -60,30 +60,30 @@ def _hubspot_patches(
 ):
     return (
         patch(
-            "app.tools.crm.get_contact_by_email.search_contact_by_email",
+            "app.agents.tools.crm.get_contact_by_email.search_contact_by_email",
             new=AsyncMock(return_value=contact),
         ),
         patch(
-            "app.tools.crm.get_contact_by_email.get_primary_company_id",
+            "app.agents.tools.crm.get_contact_by_email.get_primary_company_id",
             new=AsyncMock(return_value=(company or {}).get("id") if company else None),
         ),
         patch(
-            "app.tools.crm.get_company_by_id.get_company",
+            "app.agents.tools.crm.get_company_by_id.get_company",
             new=AsyncMock(return_value=company),
         ),
         patch(
-            "app.tools.crm.get_form_submission.find_form_submission_for_email",
+            "app.agents.tools.crm.get_form_submission.find_form_submission_for_email",
             new=AsyncMock(return_value=form_match),
         ),
         patch(
-            "app.tools.crm.get_form_submission.settings.hubspot_form_id",
+            "app.agents.tools.crm.get_form_submission.settings.hubspot_form_id",
             "form-1",
         ),
     )
 
 
 async def test_ask_agent_bdr_chains_crm_tools_to_draft():
-    """revenue-ops delegates to BDR; BDR calls contact → company → form, then drafts."""
+    """chief-of-staff delegates to BDR; BDR calls contact → company → form, then drafts."""
 
     call_log: list[str] = []
 
@@ -150,7 +150,7 @@ async def test_ask_agent_bdr_chains_crm_tools_to_draft():
         )
 
     provider = FakeProvider(respond=_respond)
-    ctx = ToolContext(agent_id=uuid.UUID(int=0), agent_slug="revenue-ops")
+    ctx = ToolContext(agent_id=uuid.UUID(int=0), agent_slug="chief-of-staff")
 
     p1, p2, p3, p4, p5 = _hubspot_patches()
     with p1, p2, p3, p4, p5, use_provider(provider):
@@ -169,7 +169,7 @@ async def test_ask_agent_bdr_chains_crm_tools_to_draft():
 async def test_ask_agent_bdr_uses_bdr_system_prompt():
     """BDR system prompt must be in the first LLM request."""
     provider = FakeProvider(completions=[LlmResponse(text="Draft.", finish_reason="stop")])
-    ctx = ToolContext(agent_id=uuid.UUID(int=0), agent_slug="revenue-ops")
+    ctx = ToolContext(agent_id=uuid.UUID(int=0), agent_slug="chief-of-staff")
 
     p1, p2, p3, p4, p5 = _hubspot_patches(
         contact=None, company=None, form_match=None
@@ -185,7 +185,7 @@ async def test_ask_agent_bdr_uses_bdr_system_prompt():
     system_msg = next(
         m for m in first_request["messages"] if m.get("role") == "system"
     )
-    assert BDRAgent.system_prompt in system_msg["content"]
+    assert BDRAgent().get_system_prompt() in system_msg["content"]
 
 
 async def test_ask_agent_records_both_message_directions():
@@ -195,7 +195,7 @@ async def test_ask_agent_records_both_message_directions():
     from app.services import agent_messages
 
     provider = FakeProvider(completions=[LlmResponse(text="Draft.", finish_reason="stop")])
-    ctx = ToolContext(agent_id=uuid.UUID(int=0), agent_slug="revenue-ops")
+    ctx = ToolContext(agent_id=uuid.UUID(int=0), agent_slug="chief-of-staff")
 
     p1, p2, p3, p4, p5 = _hubspot_patches(
         contact=None, company=None, form_match=None
@@ -211,4 +211,4 @@ async def test_ask_agent_records_both_message_directions():
     thread_id = uuid.UUID(result.payload["thread_id"])
     messages = await agent_messages.read_thread(pool, thread_id)
     senders = [m["from_agent_slug"] for m in messages]
-    assert senders == ["revenue-ops", "bdr"]
+    assert senders == ["chief-of-staff", "bdr"]

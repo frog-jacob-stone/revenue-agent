@@ -4,7 +4,7 @@ from typing import Any
 
 from app.config import settings
 from app.integrations.hubspot import HubSpotError, get_company
-from app.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
+from app.agents.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
 
 
 async def _get_company_by_id(

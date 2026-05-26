@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 
 from app.db import get_pool
 from app.services import agent_messages
-from app.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
+from app.agents.tools.base import Blocked, Done, ToolContext, ToolDefinition, ToolReturn
 
 
 async def _ask_agent(
@@ -25,8 +25,25 @@ async def _ask_agent(
 ) -> ToolReturn:
     # Lazy imports avoid a cycle:
     # app/orchestrator/__init__.py → agent_invoke → app.agents.registry →
-    # app.agents.revenue_ops_agent → app.tools.agent.ask_agent (this module).
+    # app.agents.revenue_ops_agent → app.agents.tools.agent.ask_agent (this module).
+    from app.agents.registry import AGENTS_BY_SLUG
     from app.orchestrator.agent_invoke import NodeContext, run_agent_task
+
+    # Structural delegation allowlist (ADR-0003). The caller declares its
+    # `available_agents` set on the class; this tool enforces it. The
+    # LLM cannot escape the constraint by hallucinating a target slug.
+    caller_cls = AGENTS_BY_SLUG.get(ctx.agent_slug or "")
+    if caller_cls is None:
+        return Blocked(reason=f"Unknown caller agent '{ctx.agent_slug}'.")
+    allowed_slugs = {cls.slug for cls in caller_cls.available_agents}
+    if target_slug not in allowed_slugs:
+        allowed = ", ".join(sorted(allowed_slugs)) or "(none)"
+        return Blocked(
+            reason=(
+                f"Agent '{ctx.agent_slug}' is not permitted to delegate to "
+                f"'{target_slug}'. Allowed targets: {allowed}."
+            ),
+        )
 
     pool = await get_pool()
     thread_uuid = UUID(thread_id) if thread_id else uuid4()

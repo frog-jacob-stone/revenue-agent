@@ -124,9 +124,9 @@ Every state transition writes a row to `audit_log`. The inbox is the canonical r
 
 ## Module 5: Agent Chat Interface
 
-**Build:** Conversational chat UI with message bubbles; agent selector sidebar filtered to conversational agents only (content-orchestrator, revenue-recognition); typing indicator (animated dots); auto-scroll to latest message; "Actions from this chat route to your Approval Inbox" routing notice; message history in component state (max 20); Markdown rendering for structured agent responses; `agentChat()` API call wired to `POST /chat/{agent_slug}`
+**Build:** Conversational chat UI with message bubbles; the user only chats with `chief-of-staff` (the single front door); typing indicator (animated dots); auto-scroll to latest message; "Actions from this chat route to your Approval Inbox" routing notice; message history in component state (max 20); Markdown rendering for structured agent responses; `agentChat()` API call wired to `POST /chat/{agent_slug}`
 
-**Learn:** Chat as an interface, not an agent type. The same agent (revenue-recognition) is triggered by webhook, schedule, or chat — all paths that propose writes flow through the same approval inbox. Message history management when the LLM API is stateless — the component owns the conversation context. Why conversational agents are a subset of all agents (only agents with `is_conversational=True` appear in the sidebar).
+**Learn:** Chat as an interface, not an agent type. The same agent (revenue-ops) is triggered by webhook, schedule, or chat — all paths that propose writes flow through the same approval inbox. Message history management when the LLM API is stateless — the component owns the conversation context. Why conversational agents are a subset of all agents (only agents with `is_conversational=True` appear in the sidebar).
 
 ---
 
@@ -178,7 +178,7 @@ These are backend capabilities that the UI above operates on. Each is a self-con
 
 ## Workflow C: Content Creation & Publishing
 
-**Build:** Two chains: **content_creation** (`prompt_chain_action`): `_interpret_brief` (LLM: strategy idea with title, angle, target, type) → `_draft_post` (LLM: post text, hook, CTA; writes `social_posts` row) → `_voice_review` (PersonalVoiceAgent critique; max 3 attempts; on pass: status → `ready`; on exhaustion: status → `needs_revision`, workflow → `failed`). **content_publish** (`supervised_automation`): `_propose_linkedin_post` execution approval → `_linkedin_post_stub` (stub; status → `published`). Content orchestrator (`content-orchestrator`) as the conversational front door — users never see the chains. Post state machine: `draft` → `needs_revision` → `ready` → `published | rejected`.
+**Build:** Two chains: **content_creation** (`prompt_chain_action`): `_interpret_brief` (LLM: strategy idea with title, angle, target, type) → `_draft_post` (LLM: post text, hook, CTA; writes `social_posts` row) → `_voice_review` (PersonalVoiceAgent critique; max 3 attempts; on pass: status → `ready`; on exhaustion: status → `needs_revision`, workflow → `failed`). **content_publish** (`supervised_automation`): `_propose_linkedin_post` execution approval → `_linkedin_post_stub` (stub; status → `published`). The LinkedIn agent (`linkedin`) owns the content tools and is invoked by `chief-of-staff` via `ask_agent` — users never see the chains. Post state machine: `draft` → `needs_revision` → `ready` → `published | rejected`.
 
 **Learn:** Conversational approval — how a chat agent drives an orchestrated chain without exposing chain internals to the user. Two-chain composition: create and publish are separate chains with separate approval gates, not one long chain. Social post state machine design: why `needs_revision` is a distinct state from `draft` (it carries critique context). All LLM calls use OpenAI — gpt-4o for reasoning-heavy steps, gpt-4o-mini for drafting and critique steps where latency matters more than depth.
 

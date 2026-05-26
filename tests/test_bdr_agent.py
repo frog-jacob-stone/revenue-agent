@@ -1,5 +1,5 @@
 """Tests for BDRAgent — domain agent with autonomous tool execution."""
-from app.agents.base import BaseAgent, ConversationalAgent
+from app.agents.base import Agent
 from app.agents.bdr_agent import BDRAgent
 from app.agents.registry import AGENTS_BY_SLUG
 
@@ -9,14 +9,12 @@ def test_bdr_registered():
     assert AGENTS_BY_SLUG["bdr"] is BDRAgent
 
 
-def test_bdr_is_worker_not_conversational():
-    """BDR is a domain agent invoked via ask_agent — NOT a chat agent."""
-    assert issubclass(BDRAgent, BaseAgent)
-    assert not issubclass(BDRAgent, ConversationalAgent)
+def test_bdr_is_an_agent():
+    assert issubclass(BDRAgent, Agent)
 
 
 def test_bdr_has_identity_level_system_prompt():
-    prompt = BDRAgent.system_prompt
+    prompt = BDRAgent().get_system_prompt()
     assert isinstance(prompt, str)
     assert len(prompt) > 200
     assert "Frogslayer" in prompt
@@ -38,3 +36,8 @@ def test_bdr_tool_schemas_have_openai_shape():
         assert schema["type"] == "function"
         assert "name" in schema["function"]
         assert "parameters" in schema["function"]
+
+
+def test_bdr_cannot_delegate_by_default():
+    """Domain agents have empty `available_agents` — they can't call ask_agent."""
+    assert BDRAgent.available_agents == ()

@@ -25,7 +25,7 @@ const AGENT_COLORS: Record<string, string> = {
   'content-writer': '#10b981',
   'proposal-generator': '#f59e0b',
   'slide-deck-agent': '#ec4899',
-  'revenue-recognition': '#8b5cf6',
+  'revenue-ops': '#8b5cf6',
 };
 
 const CONFIG_PANELS: Record<AgentId, React.ComponentType> = {
@@ -34,7 +34,7 @@ const CONFIG_PANELS: Record<AgentId, React.ComponentType> = {
   'content-writer': ContentWriterConfig,
   'proposal-generator': ProposalGeneratorConfig,
   'slide-deck-agent': SlideDeckAgentConfig,
-  'revenue-recognition': RevenueRecognitionConfig,
+  'revenue-ops': RevenueRecognitionConfig,
 };
 
 function fmt(iso: string) {

@@ -1,6 +1,6 @@
 from typing import Any
 
-from app.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
+from app.agents.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
 
 
 async def _get_posts(

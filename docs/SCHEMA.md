@@ -128,7 +128,7 @@ Curated reference content. Separate from `memories` because the lifecycle and ac
 
 ### `social_posts`
 
-Draft and approval queue for the Content Orchestrator. Separate from `workflows`/`actions` because content creation has no external writes — approval is conversational, not inbox-based.
+Draft and approval queue for the LinkedIn agent. Separate from `workflows`/`actions` because content creation has no external writes — approval is conversational, not inbox-based.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -186,7 +186,7 @@ Human-to-agent conversation containers. Each row is one chat that the user can r
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid | PK |
-| `agent_slug` | text | Which conversational agent this chat is with. `DEFAULT 'revenue-ops'` (migration `0019`) since the single-front-door pattern means new sessions always target the same agent; old rows preserve their original slug for the audit trail. |
+| `agent_slug` | text | Which conversational agent this chat is with. `DEFAULT 'chief-of-staff'` (migration `0019` first set it to `'revenue-ops'`; migration `0023` renamed default + historical rows after the front-door rename). The single-front-door pattern means new sessions always target the same agent. |
 | `title` | text | Auto-titled from the first user message (~60 chars), default `'New chat'` |
 | `created_at` | timestamptz | |
 | `updated_at` | timestamptz | Bumped on every turn |
@@ -218,9 +218,9 @@ Indexes: `(session_id, id)`, partial `(session_id) where status = 'streaming'` (
 
 ## Agent Types
 
-**Front-door agent** — `revenue-ops`. The only conversational agent users chat with. Owns the action tools (`create_post`, `publish_post`, `trigger_revenue_recognition`, etc.). Drives an OpenAI tool-call loop inside one chat turn via `app/services/chat_turn.py`.
+**Front-door agent** — `chief-of-staff`. The only conversational agent users chat with. Owns no domain tools; delegates revenue, BDR, and LinkedIn content work to domain agents via `ask_agent`. Drives an OpenAI tool-call loop inside one chat turn via `app/services/chat_turn.py`.
 
-**Domain worker agents** — invoked single-turn via `run_agent_task` (no `allowed_tools`) or as ReAct loops (with tools). Examples: `revenue-recognition`, `content-orchestrator`, `bdr`. Reached via the `ask_agent` tool; record exchanges in `agent_messages`.
+**Domain worker agents** — invoked single-turn via `run_agent_task` (no `allowed_tools`) or as ReAct loops (with tools). Examples: `revenue-ops`, `linkedin`, `bdr`. Reached via the `ask_agent` tool; record exchanges in `agent_messages`.
 
 ## Event Types (Audit Log Vocabulary)
 
@@ -280,7 +280,7 @@ Migrations run in filename order; each is idempotent.
 4. `0004_invoice_action_types.sql` — adds invoice-related values to `action_type` enum
 5. `0005_agentic_patterns.sql` — adds `step_kind`, parent/retry tracking, `critique_result` to `actions`; adds `pattern`, `current_step` to `workflows`
 6. `0006_simplify_agents.sql` — drops static metadata columns from `agents` (`name`, `description`, `requires_approval`, `approval_scope`, `system_prompt`, `allowed_tools`); these are now owned exclusively by the Python class registry
-7. `0007_social_posts.sql` — adds `social_posts` table for the Content Orchestrator draft and approval queue
+7. `0007_social_posts.sql` — adds `social_posts` table for the LinkedIn agent's draft and approval queue
 8. `0008_content_action_type.sql` — adds `post_to_linkedin` to `action_type` enum for the `content_publish` chain
 9. `0009_rename_tool_call_to_task.sql` — renames `actions.step_kind` value `tool_call` → `task`; updates the CHECK constraint to match the Python `StepKind` enum
 10. `0010_create_approvals_table.sql` — creates the `approvals` table for the orchestrator's human-in-the-loop queue
@@ -292,10 +292,11 @@ Migrations run in filename order; each is idempotent.
 16. `0016_create_llm_calls.sql` — adds the `llm_calls` audit table for per-request LLM provider call logging
 17. `0017_create_chat_tables.sql` — adds `chat_sessions` and `chat_messages` for human-to-agent chat persistence (sidebar multi-chat + durable streaming via `TurnRuntime`)
 18. `0018_enable_rls_gaps.sql` — enables RLS on `approvals` and `agent_messages`
-19. `0019_chat_sessions_default_slug.sql` — gives `chat_sessions.agent_slug` a `DEFAULT 'revenue-ops'`. Single front-door pattern means new sessions always target the same conversational agent; this lets the router create sessions with no body
+19. `0019_chat_sessions_default_slug.sql` — gives `chat_sessions.agent_slug` a `DEFAULT 'revenue-ops'` (later changed to `'chief-of-staff'` by migration `0023`). Single front-door pattern means new sessions always target the same conversational agent; this lets the router create sessions with no body
 20. `0020_drop_agents_config.sql` — drops `agents.config`. The column was a free-form jsonb knob that no app code ever read; per-agent LLM selection lives on the Python class `model` attribute. Follows the precedent of `0006_simplify_agents.sql`
 21. `0021_approvals_for_tools.sql` — adds `approvals.executor` and makes `workflow_id` / `node_name` nullable. First step in the [ADR-0002](adr/0002-tools-not-graphs.md) migration from LangGraph graphs to tool-driven approvals. Both grant paths coexist until plan 19
 22. `0022_drop_langgraph_artifacts.sql` — drops LangGraph checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`), drops the `workflows` table, drops the workflow_id FKs on `approvals` / `audit_log` / `memories.source_workflow_id` / `llm_calls` / `agent_messages` (columns stay as plain UUIDs for historical audit lookups), and flips `approvals.executor` to NOT NULL. Final step of the ADR-0002 cutover (plan 19)
+23. `0023_rename_front_door_to_chief_of_staff.sql` — renames `agents.slug` `'revenue-ops'` → `'chief-of-staff'` (the old orchestrator becomes the chief-of-staff coordinator) and `'revenue-recognition'` → `'revenue-ops'` (the rev-rec domain agent becomes the true RevOps agent owning revenue tools). Rewrites text `agent_slug` references in `chat_sessions` / `approvals` / `llm_calls` / `agent_messages` accordingly. Updates the `chat_sessions.agent_slug` default to `'chief-of-staff'`. UUIDs are preserved through the slug rename, so audit history stays intact
 
 ## Open Questions
 

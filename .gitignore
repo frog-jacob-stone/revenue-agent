@@ -28,6 +28,7 @@ htmlcov/
 
 # Docker
 *.log
+docker-compose.override.yml
 
 # macOS
 .DS_Store

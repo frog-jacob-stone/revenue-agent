@@ -11,7 +11,7 @@ import type { ChatSession } from '../../types';
 import ChatWindow from './ChatWindow';
 
 // Single front-door pattern. Matches FRONT_DOOR_SLUG in app/services/chat_turn.py.
-const FRONT_DOOR_SLUG = 'revenue-ops';
+const FRONT_DOOR_SLUG = 'chief-of-staff';
 
 function fmtSessionTime(iso: string | null): string {
   if (!iso) return '';

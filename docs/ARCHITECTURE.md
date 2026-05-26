@@ -47,7 +47,7 @@ router  →  service  →  (agent | integration client | db)
 - **Routers** validate input and call services. No business logic.
 - **Services** hold business logic. Never call routers. Every state-changing service function calls `write_audit_event()`.
 - **Agents** are services that drive LLM tool-call loops. They propose actions by returning `AwaitingApproval` from a tool. They never call third-party systems on their own.
-- **Tools** (`app/tools/`) are the unit of agent capability. A tool returns one of `Done | AwaitingApproval | Blocked`. The runtime — `app/orchestrator/dispatch.py::dispatch_tool` — pattern-matches the return shape, writes audit + (for `AwaitingApproval`) approval rows, and hands a status dict back to the LLM.
+- **Tools** (`app/agents/tools/`) are the unit of agent capability. A tool returns one of `Done | AwaitingApproval | Blocked`. The runtime — `app/orchestrator/dispatch.py::dispatch_tool` — pattern-matches the return shape, writes audit + (for `AwaitingApproval`) approval rows, and hands a status dict back to the LLM.
 - **Executors** (`app/executors/`) are the post-approval side-effect performers. They live in a registry separate from tools, indexed by name, and are invoked only by the approval grant handler. Never added to any agent's `allowed_tools`.
 - **Integration clients** (HubSpot, Gmail, Harvest, Airtable) are called only by executors and by read-only services that an agent legitimately needs.
 - All DB, HTTP, and agent calls are async.
@@ -71,11 +71,11 @@ An agent has a single coherent identity: one job, one audit trail, one approval 
 
 **Read-only vs. write-proposing is a hard split.** An analytics agent and an operations agent for the same domain are distinct agents — different audit trails, different inbox behavior, different UI presentation.
 
-**Agents vs. inline LLM calls.** Classes in `app/agents/` represent identity-bearing things: the conversational front door (`RevenueOpsAgent`) or worker personas meant to be invoked via `ask_agent` / `run_agent_task` and accountable in the audit trail (`BDRAgent`, `RevenueRecognitionAgent`, `ContentOrchestratorAgent`). Single-turn, fixed-prompt LLM calls made inline inside a tool are NOT agents — they live in the tool file (or a sibling `_prompts.py`) as `MODEL` + `SYSTEM_PROMPT` constants, attributed via `Attribution(agent_slug=..., purpose=...)` on the dispatch call. Rule of thumb: if a "thing" has no identity, no autonomy, and one caller, it's a prompt, not an agent.
+**Agents vs. inline LLM calls.** Classes in `app/agents/` represent identity-bearing things: the conversational front door (`ChiefOfStaffAgent`) or worker personas meant to be invoked via `ask_agent` / `run_agent_task` and accountable in the audit trail (`BDRAgent`, `RevenueOpsAgent`, `LinkedInAgent`). Single-turn, fixed-prompt LLM calls made inline inside a tool are NOT agents — they live in the tool file (or a sibling `_prompts.py`) as `MODEL` + `SYSTEM_PROMPT` constants, attributed via `Attribution(agent_slug=..., purpose=...)` on the dispatch call. Rule of thumb: if a "thing" has no identity, no autonomy, and one caller, it's a prompt, not an agent.
 
 **Chat is an interface, not an agent type.** Chat is one of several trigger sources (webhook, schedule, chat). All paths that propose writes flow through the approval inbox.
 
-**Single front-door pattern.** Exactly one agent is conversational: `RevenueOpsAgent` (slug `revenue-ops`), defined in `app/agents/revenue_ops_agent.py`. The user only ever chats with this agent. Specialist agents (`revenue-recognition`, `content-orchestrator`, etc.) are plain `BaseAgent` workers invoked via `ask_agent` from the front door, which routes through `run_agent_task`. The front-door slug is hardcoded as `FRONT_DOOR_SLUG` in `app/services/chat_turn.py` — there is no agent picker.
+**Single front-door pattern.** Exactly one agent is conversational: `ChiefOfStaffAgent` (slug `chief-of-staff`), defined in `app/agents/chief_of_staff_agent.py`. The user only ever chats with this agent. Specialist agents (`revenue-ops`, `linkedin`, `bdr`) are plain `Agent` workers invoked via `ask_agent` from the front door, which routes through `run_agent_task`. The front-door slug is hardcoded as `FRONT_DOOR_SLUG` in `app/services/chat_turn.py` — there is no agent picker.
 
 ## Orchestrator runtime (`app/orchestrator/`)
 
@@ -90,9 +90,9 @@ What's intentionally *not* here:
 - **No multi-gate approvals.** Every production workflow today is single-gate (or zero-gate). If a future workflow needs more than one approval, revisit; do not pre-build the abstraction.
 - **No persistent workflow state.** Audit log + approvals carry enough state to reconstruct what happened. The `workflows` table was dropped in migration `0022`.
 
-## Tools (`app/tools/`)
+## Tools (`app/agents/tools/`)
 
-A tool exports a `ToolDefinition` constant — name, description, OpenAI input schema, async `execute` callable. The `execute` returns `Done | AwaitingApproval | Blocked` (the `ToolReturn` union, defined in `app/tools/base.py`). Helpers:
+A tool exports a `ToolDefinition` constant — name, description, OpenAI input schema, async `execute` callable. The `execute` returns `Done | AwaitingApproval | Blocked` (the `ToolReturn` union, defined in `app/agents/tools/base.py`). Helpers:
 
 - **`ProgressEmitter`** — tools may emit `tool_step_started` / `tool_step_completed` events for in-tool observability. These bubble up to the chat UI and appear as nested activity lines under the tool's call.
 - **`ToolContext`** — carries `agent_id`, `agent_slug`, optional `workflow_id`, and the optional `ProgressEmitter`. Passed by `dispatch_tool`.
@@ -109,11 +109,11 @@ The inbox UI sources from `/approvals` only. `Approval` rows discriminate by sta
 
 ## Multi-Agent Orchestration
 
-The system is a **single front door + specialist workers**. There is one conversational agent (`revenue-ops`); every other agent is a worker.
+The system is a **single front door + specialist workers**. There is one conversational agent (`chief-of-staff`); every other agent is a worker.
 
 Dispatch shape:
 
-- **User → front door (chat).** `app/services/chat_turn.py::start_turn` drives the OpenAI tool-call loop against `RevenueOpsAgent`. The front door has the action tools (`trigger_revenue_recognition`, `create_post`, `publish_post`, etc.) directly.
+- **User → front door (chat).** `app/services/chat_turn.py::start_turn` drives the OpenAI tool-call loop against `ChiefOfStaffAgent`. The front door owns the cross-domain content tools (`create_post`, `publish_post`, etc.) directly; revenue tools (`trigger_revenue_recognition`, `get_revenue_data`) live on the `revenue-ops` domain agent and are reached via `ask_agent`.
 - **Front door → specialist (LLM delegation).** The front door calls `ask_agent(target_slug, prompt)` for domain-specific explanation or reasoning. `ask_agent` writes the outbound prompt to `agent_messages`, calls `run_agent_task` (which is either single-turn or a ReAct loop depending on whether the target has `allowed_tools`), writes the inbound reply, and returns `{answer, thread_id}`. The specialist's `system_prompt` is what's load-bearing.
 
 Specialists never appear in the chat surface. To iterate on a specialist's prompt, drive `run_agent_task` from a test or shell — there is intentionally no admin chat endpoint for them.

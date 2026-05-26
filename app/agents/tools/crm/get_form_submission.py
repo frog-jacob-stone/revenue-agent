@@ -5,7 +5,7 @@ from typing import Any
 from app.config import settings
 from app.integrations.hubspot import HubSpotError, find_form_submission_for_email
 from app.lib.nomalize_utils import normalize_email
-from app.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
+from app.agents.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
 
 
 def _interesting_fields(values: dict[str, str]) -> dict[str, str]:

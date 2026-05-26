@@ -13,11 +13,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.agents.base import BaseAgent
+from app.agents.base import Agent
 from app.integrations.llm import LlmResponse, ToolCall, use_provider
 from app.orchestrator import NodeContext, events
 from app.orchestrator.agent_invoke import run_agent_task
-from app.tools.base import ToolContext, ToolDefinition
+from app.agents.tools.base import ToolContext, ToolDefinition
 from tests.fakes.llm import FakeProvider
 
 
@@ -36,16 +36,16 @@ def _make_tool(name: str, return_value: Any) -> ToolDefinition:
     )
 
 
-def _fake_agent_cls(slug: str, tools: tuple[ToolDefinition, ...]) -> type[BaseAgent]:
+def _fake_agent_cls(slug: str, tools: tuple[ToolDefinition, ...]) -> type[Agent]:
     return type(
         "_FakeAgent",
-        (BaseAgent,),
+        (Agent,),
         {
             "slug": slug,
             "name": "Fake",
             "description": "",
             "model": "gpt-4o-mini",
-            "system_prompt": "You are a test agent.",
+            "get_system_prompt": lambda self: "You are a test agent.",
             "allowed_tools": tools,
         },
     )
@@ -94,7 +94,7 @@ async def test_tool_result_passed_to_next_turn():
     captured: list[list[dict]] = []
 
     async def _capture(ctx: ToolContext, **_: Any) -> Any:
-        from app.tools.base import Done
+        from app.agents.tools.base import Done
         return Done({"key": "value-from-tool"})
 
     tool = ToolDefinition(

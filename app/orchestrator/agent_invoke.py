@@ -15,13 +15,13 @@ from uuid import UUID, uuid4
 
 import asyncpg
 
-from app.agents.base import BaseAgent, ConversationalAgent
+from app.agents.base import Agent
 from app.agents.registry import AGENTS
 from app.db import get_pool
 from app.integrations.llm import Attribution, dispatch
 from app.orchestrator import events
 from app.services import audit
-from app.tools.base import ProgressEmitter, ToolContext
+from app.agents.tools.base import ProgressEmitter, ToolContext
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class NodeContext:
     pool: asyncpg.Pool | None = None
 
 
-def _agent_class_for_slug(slug: str) -> type[BaseAgent]:
+def _agent_class_for_slug(slug: str) -> type[Agent]:
     for cls in AGENTS:
         if getattr(cls, "slug", None) == slug:
             return cls
@@ -49,16 +49,6 @@ def _agent_class_for_slug(slug: str) -> type[BaseAgent]:
 
 async def _agent_id_for_slug(pool: asyncpg.Pool, slug: str) -> UUID | None:
     return await pool.fetchval("SELECT id FROM agents WHERE slug = $1", slug)
-
-
-def _resolve_system_prompt(agent_cls: type[BaseAgent], agent_id: UUID | None) -> str:
-    if issubclass(agent_cls, ConversationalAgent):
-        try:
-            instance = agent_cls(agent_id=agent_id)  # type: ignore[arg-type]
-            return instance.get_system_prompt()
-        except Exception:
-            return getattr(agent_cls, "system_prompt", "") or ""
-    return getattr(agent_cls, "system_prompt", "") or ""
 
 
 def _summarize(result: Any) -> str:
@@ -90,7 +80,7 @@ async def run_agent_task(
     workflow_id = ctx.workflow_id if ctx else None
     allowed_tools = list(getattr(agent_cls, "allowed_tools", ()) or ())
 
-    system_prompt = _resolve_system_prompt(agent_cls, agent_id)
+    system_prompt = agent_cls(agent_id=agent_id).get_system_prompt()
 
     messages: list[dict[str, Any]] = []
     if system_prompt:

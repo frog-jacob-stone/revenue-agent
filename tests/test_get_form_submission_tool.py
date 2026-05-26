@@ -5,8 +5,8 @@ import uuid
 from unittest.mock import AsyncMock, patch
 
 from app.integrations.hubspot import HubSpotNotConfigured
-from app.tools.base import ToolContext
-from app.tools.crm.get_form_submission import _get_form_submission
+from app.agents.tools.base import ToolContext
+from app.agents.tools.crm.get_form_submission import _get_form_submission
 
 _CTX = ToolContext(agent_id=uuid.UUID(int=0), agent_slug="bdr")
 
@@ -32,12 +32,12 @@ def _patch(match=_MATCH, side_effect=None):
         else {"new": AsyncMock(return_value=match)}
     )
     return patch(
-        "app.tools.crm.get_form_submission.find_form_submission_for_email", **kwargs
+        "app.agents.tools.crm.get_form_submission.find_form_submission_for_email", **kwargs
     )
 
 
 def _patch_settings_form_id(value: str):
-    return patch("app.tools.crm.get_form_submission.settings.hubspot_form_id", value)
+    return patch("app.agents.tools.crm.get_form_submission.settings.hubspot_form_id", value)
 
 
 async def test_returns_submission_using_explicit_form_id():
@@ -63,7 +63,7 @@ async def test_falls_back_to_configured_form_id():
         return _MATCH
 
     with _patch_settings_form_id("default-form-99"), patch(
-        "app.tools.crm.get_form_submission.find_form_submission_for_email",
+        "app.agents.tools.crm.get_form_submission.find_form_submission_for_email",
         new=fake_find,
     ):
         result = (await _get_form_submission(_CTX, email_address="lead@example.com")).payload
@@ -74,7 +74,7 @@ async def test_falls_back_to_configured_form_id():
 
 async def test_missing_form_id_returns_error():
     with _patch_settings_form_id(""), patch(
-        "app.tools.crm.get_form_submission.find_form_submission_for_email",
+        "app.agents.tools.crm.get_form_submission.find_form_submission_for_email",
         new=AsyncMock(),
     ) as mock_find:
         result = (await _get_form_submission(_CTX, email_address="lead@example.com")).payload
@@ -86,7 +86,7 @@ async def test_missing_form_id_returns_error():
 
 async def test_invalid_email_returns_error():
     with patch(
-        "app.tools.crm.get_form_submission.find_form_submission_for_email",
+        "app.agents.tools.crm.get_form_submission.find_form_submission_for_email",
         new=AsyncMock(),
     ) as mock_find:
         result = (await _get_form_submission(

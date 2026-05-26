@@ -73,7 +73,7 @@ supabase db reset
 Or apply just the migration:
 
 ```bash
-supabase db push
+supabase migration up
 ```
 
 ### 4. Start the Approval Inbox UI

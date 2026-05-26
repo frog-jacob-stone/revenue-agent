@@ -4,7 +4,7 @@ status: ready-for-agent
 
 ## Problem Statement
 
-Every agent capability today either lives as a tool on the orchestrator agent (`revenue-ops`) or as a prescribed workflow graph. There is no middle tier. As capabilities grow, the orchestrator accumulates domain tools it shouldn't own, the tool list becomes unwieldy, and every new feature requires either adding a tool to the front door or writing a full LangGraph graph — even for simple, agentic tasks like "draft a reply to this inbound lead."
+Every agent capability today either lives as a tool on the orchestrator agent (`chief-of-staff`) or as a prescribed workflow graph. There is no middle tier. As capabilities grow, the orchestrator accumulates domain tools it shouldn't own, the tool list becomes unwieldy, and every new feature requires either adding a tool to the front door or writing a full LangGraph graph — even for simple, agentic tasks like "draft a reply to this inbound lead."
 
 Jacob needs a way to say "handle this inbound form submission" to the orchestrator and have the right domain agent figure out what to do — fetching the right context, making decisions about what information is needed, and returning a result — without Jacob having to know which tools that involves.
 
@@ -54,13 +54,13 @@ Tool execution inside the loop uses `ToolDefinition.execute` directly from the a
 
 ### `ask_agent` upgrade
 
-The `ask_agent` tool delegates to `run_agent_task` when the target agent has a non-empty `allowed_tools`, and falls back to `invoke_agent` when it does not. Callers (including `revenue-ops`) do not change.
+The `ask_agent` tool delegates to `run_agent_task` when the target agent has a non-empty `allowed_tools`, and falls back to `invoke_agent` when it does not. Callers (including `chief-of-staff`) do not change.
 
 ### BDR agent gains `allowed_tools`
 
 The BDR agent declares `allowed_tools` containing three CRM read tools (`get_contact_by_email`, `get_company_by_id`, `get_form_submission`). The BDR remains a `BaseAgent` subclass; `run_agent_task` does not require `ConversationalAgent` — it resolves the system prompt from the `system_prompt` class attribute and the tools from `allowed_tools` directly.
 
-### CRM tools (`app/tools/crm/`)
+### CRM tools (`app/agents/tools/crm/`)
 
 The original single `find_hubspot_form_submission` tool was split into three orthogonal primitives so the BDR composes them autonomously rather than receiving one pre-bundled payload:
 
@@ -70,7 +70,7 @@ The original single `find_hubspot_form_submission` tool was split into three ort
 
 Each tool returns a structured dict with `status` ∈ {`success`, `not_found`, `error`}. All HubSpot errors (`HubSpotNotConfigured`, `HubSpotAuthError`, `HubSpotApiError`) collapse into `status: error` with a human-readable message.
 
-`app/integrations/hubspot.py` exposes the underlying primitives: `search_contact_by_email`, `get_primary_company_id`, `get_company`, `find_form_submission_for_email`. `app/lib/nomalize_utils.py` is kept. The WIP `app/tools/outreach/` directory and its tests are deleted.
+`app/integrations/hubspot.py` exposes the underlying primitives: `search_contact_by_email`, `get_primary_company_id`, `get_company`, `find_form_submission_for_email`. `app/lib/nomalize_utils.py` is kept. The WIP `app/agents/tools/outreach/` directory and its tests are deleted.
 
 ### Revenue-ops agent
 
@@ -98,7 +98,7 @@ Good tests verify externally observable behaviour, not implementation steps. For
 
 - **BDR integration (agentic task end-to-end)** — FakeProvider scripted to chain `get_contact_by_email` → `get_company_by_id` → `get_form_submission` → final draft text. Mock the HubSpot integration functions on each tool's import site. Assert the final text from the BDR contains the expected draft content, that `BDRAgent.system_prompt` was in the first dispatch, and that `runner.start` was never called.
 
-- **Revenue-ops surface check** — assert `draft_form_submission_reply` is no longer in `revenue-ops` allowed tools. Assert `ask_agent` is still present.
+- **Revenue-ops surface check** — assert `draft_form_submission_reply` is no longer in `chief-of-staff` allowed tools. Assert `ask_agent` is still present.
 
 ## Out of Scope
 

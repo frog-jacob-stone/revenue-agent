@@ -1,19 +1,21 @@
-from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, ClassVar, Sequence
+from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import UUID
 
-from app.tools.base import ToolDefinition
+from app.agents.tools.base import ToolDefinition
 
 if TYPE_CHECKING:
-    from app.tools import ProgressEmitter
+    from app.agents.tools import ProgressEmitter
 
 
-class BaseAgent(ABC):
-    """Base class for all revenue agents.
+class Agent:
+    """Single base class for every agent in the system.
 
-    Subclasses declare code-owned metadata as class attributes — these are the
-    single source of truth for slug/name/description/permissions. The DB
-    `agents` table is derived from these via `app/seed.py`.
+    Role (Orchestrator vs Domain — see CONTEXT.md) is not encoded in the type
+    system. It lives in vocabulary and at the slug level. See ADR-0003.
+
+    Class attributes are the single source of truth for slug / name /
+    description / permissions / delegation. The DB `agents` table is derived
+    from these via `app/seed.py`.
     """
 
     slug: ClassVar[str]
@@ -21,38 +23,34 @@ class BaseAgent(ABC):
     description: ClassVar[str] = ""
     requires_approval: ClassVar[bool] = True
     allowed_tools: ClassVar[tuple[ToolDefinition, ...]] = ()
+    available_agents: ClassVar[tuple[type["Agent"], ...]] = ()
     model: ClassVar[str] = ""
 
-
-class ConversationalAgent(BaseAgent, ABC):
-    """Agents that support conversational chat.
-
-    Subclasses implement `get_system_prompt()`. Tool discovery and dispatch are
-    handled by the base class against the agent's `allowed_tools` — a tuple of
-    `ToolDefinition` references that the LLM sees as available functions.
-    """
-
-    def __init__(
-        self,
-        agent_id: UUID,
-        allowed_tools: Sequence[ToolDefinition] | None = None,
-    ) -> None:
+    def __init__(self, agent_id: UUID | None = None) -> None:
         self.agent_id = agent_id
-        self.allowed_tools: list[ToolDefinition] = (
-            list(allowed_tools) if allowed_tools is not None else list(type(self).allowed_tools)
-        )
         self._tool_by_name: dict[str, ToolDefinition] = {
-            t.name: t for t in self.allowed_tools
+            t.name: t for t in type(self).allowed_tools
         }
 
-    @abstractmethod
     def get_system_prompt(self) -> str:
-        """Return the full system prompt string for this agent."""
-        ...
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement get_system_prompt()"
+        )
 
     def get_tools(self) -> list[dict[str, Any]]:
         """Return OpenAI-format schemas for tools this agent is allowed to use."""
-        return [t.as_openai_schema() for t in self.allowed_tools]
+        return [t.as_openai_schema() for t in type(self).allowed_tools]
+
+    def _render_available_agents(self) -> str:
+        """Render the delegation roster as ` - slug — description` lines.
+
+        Subclasses with a populated `available_agents` can drop this into
+        their system prompt to surface the targets the LLM may reach via
+        `ask_agent`. Empty tuple → empty string.
+        """
+        return "\n".join(
+            f"- `{cls.slug}` — {cls.description}" for cls in self.available_agents
+        )
 
     async def execute_tool(
         self,
@@ -63,18 +61,12 @@ class ConversationalAgent(BaseAgent, ABC):
     ) -> Any:
         """Dispatch a tool call against the agent's allowed_tools.
 
-        The LLM's tool_call carries a `name` string; we resolve it against
-        the agent's own allowed list (least-privilege enforced by lookup
-        rather than a separate permission check). `progress`, when provided,
-        is forwarded on ToolContext so the tool can emit intermediate
-        events back to a streaming caller.
-
         Routes through `dispatch_tool` so Done/AwaitingApproval/Blocked
         return shapes are uniformly translated into LLM-visible dicts
         (ADR-0002).
         """
         from app.orchestrator.dispatch import dispatch_tool
-        from app.tools import ToolContext
+        from app.agents.tools import ToolContext
 
         tool = self._tool_by_name.get(name)
         if tool is None:
@@ -87,5 +79,3 @@ class ConversationalAgent(BaseAgent, ABC):
             progress=progress,
         )
         return await dispatch_tool(tool, ctx, tool_input)
-
-

@@ -4,7 +4,7 @@ from uuid import UUID
 from app.models.common import ORMBase
 
 
-class Agent(ORMBase):
+class AgentRead(ORMBase):
     # DB-backed columns
     id: UUID
     slug: str
@@ -15,4 +15,3 @@ class Agent(ORMBase):
     name: str = ""
     description: str | None = None
     requires_approval: bool = True
-    is_conversational: bool = False

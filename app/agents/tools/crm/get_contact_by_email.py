@@ -9,7 +9,7 @@ from app.integrations.hubspot import (
     search_contact_by_email,
 )
 from app.lib.nomalize_utils import normalize_email
-from app.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
+from app.agents.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
 
 
 async def _get_contact_by_email(

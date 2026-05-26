@@ -23,10 +23,10 @@ const AGENT_COLORS: Record<string, string> = {
   'sdr-researcher': '#6366f1',
   'outreach-agent': '#06b6d4',
   'content-writer': '#10b981',
-  'content-orchestrator': '#10b981',
+  'linkedin': '#10b981',
   'proposal-generator': '#f59e0b',
   'slide-deck-agent': '#ec4899',
-  'revenue-recognition': '#8b5cf6',
+  'revenue-ops': '#8b5cf6',
 };
 
 interface Props {

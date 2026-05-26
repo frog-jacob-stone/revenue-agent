@@ -7,27 +7,27 @@ on the class.
 
 After the inline-LLM-tools cleanup (plan 12), this registry contains only
 identity-bearing agents:
-  - `revenue-ops` — the single conversational front door
+  - `chief-of-staff` — the single conversational front door
   - `bdr` — Business Development Representative (worker; outreach attribution)
-  - `revenue-recognition` — domain worker; rev-rec approval attribution
-  - `content-orchestrator` — domain worker; content approval attribution
+  - `revenue-ops` — domain worker; revenue recognition + analysis
+  - `linkedin` — domain worker; LinkedIn content creation + approval attribution
 
 Single-turn LLM calls made by graph nodes are NOT agents. Their prompts live
 inline in the graph files as `MODEL` + `SYSTEM_PROMPT` constants, attributed
 to free-form slug strings via `Attribution(agent_slug=..., purpose=...)` on the
 dispatcher.
 """
-from app.agents.base import BaseAgent
+from app.agents.base import Agent
 from app.agents.bdr_agent import BDRAgent
-from app.agents.content_orchestrator_agent import ContentOrchestratorAgent
+from app.agents.chief_of_staff_agent import ChiefOfStaffAgent
+from app.agents.linkedin_agent import LinkedInAgent
 from app.agents.revenue_ops_agent import RevenueOpsAgent
-from app.agents.revenue_recognition_agent import RevenueRecognitionAgent
 
-AGENTS: tuple[type[BaseAgent], ...] = (
-    RevenueOpsAgent,
+AGENTS: tuple[type[Agent], ...] = (
+    ChiefOfStaffAgent,
     BDRAgent,
-    RevenueRecognitionAgent,
-    ContentOrchestratorAgent,
+    RevenueOpsAgent,
+    LinkedInAgent,
 )
 
 
@@ -40,4 +40,4 @@ def _assert_unique_slugs() -> None:
 
 _assert_unique_slugs()
 
-AGENTS_BY_SLUG: dict[str, type[BaseAgent]] = {cls.slug: cls for cls in AGENTS}
+AGENTS_BY_SLUG: dict[str, type[Agent]] = {cls.slug: cls for cls in AGENTS}

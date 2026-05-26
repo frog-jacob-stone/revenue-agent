@@ -53,7 +53,7 @@ Reference docs:
 - Critique loops, retries, and conditional branches are inline Python (`for`, `while`, `if`) — there is no graph helper. Extract a shared helper only when at least two tools need the same pattern.
 - Executors live in their own registry and are **never** added to any agent's `allowed_tools`. They are invoked by the approval-grant handler, not by the LLM.
 - Production tools (workflow-shaped): `trigger_revenue_recognition`, `create_post`, `publish_post`. Inbox UI sources solely from `/approvals`.
-- Agent-to-agent communication: `app/services/agent_messages.py` records turn-by-turn exchanges; `ask_agent` (in `app/tools/agent/ask_agent.py`) is the canonical delegation tool. Both messages (outgoing prompt + incoming reply) are written under one `thread_id`.
+- Agent-to-agent communication: `app/services/agent_messages.py` records turn-by-turn exchanges; `ask_agent` (in `app/agents/tools/agent/ask_agent.py`) is the canonical delegation tool. Both messages (outgoing prompt + incoming reply) are written under one `thread_id`.
 
 ## Progress
 Check PROGRESS.md for current module status. Update it as you complete tasks.

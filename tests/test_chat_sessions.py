@@ -18,8 +18,8 @@ from app.services import chat_sessions as cs
 @pytest.mark.asyncio
 async def test_create_session_with_explicit_slug():
     pool = await get_pool()
-    row = await cs.create_session(pool, "revenue-ops")
-    assert row["agent_slug"] == "revenue-ops"
+    row = await cs.create_session(pool, "chief-of-staff")
+    assert row["agent_slug"] == "chief-of-staff"
     assert row["title"] == "New chat"
     fetched = await cs.get_session(pool, row["id"])
     assert fetched is not None
@@ -28,18 +28,18 @@ async def test_create_session_with_explicit_slug():
 
 @pytest.mark.asyncio
 async def test_create_session_with_no_slug_uses_db_default():
-    """Migration 0019 sets the default to 'revenue-ops'."""
+    """Migration 0019 set the default to 'revenue-ops'; migration 0023 renames it to 'chief-of-staff'."""
     pool = await get_pool()
     row = await cs.create_session(pool)
-    assert row["agent_slug"] == "revenue-ops"
+    assert row["agent_slug"] == "chief-of-staff"
 
 
 @pytest.mark.asyncio
 async def test_list_sessions_filters_by_agent():
     pool = await get_pool()
-    a = await cs.create_session(pool, "revenue-ops")
+    a = await cs.create_session(pool, "chief-of-staff")
     b = await cs.create_session(pool, "legacy-something")
-    ro = await cs.list_sessions(pool, "revenue-ops")
+    ro = await cs.list_sessions(pool, "chief-of-staff")
     ro_ids = {r["id"] for r in ro}
     assert a["id"] in ro_ids
     assert b["id"] not in ro_ids

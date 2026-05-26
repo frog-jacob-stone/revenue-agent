@@ -12,7 +12,7 @@ Every LLM-driven tool call goes through `dispatch_tool`. It:
   4. On exception: TOOL_FAILED audit, re-raises
 
 The caller (an LLM-driven loop in `run_agent_task` or
-`ConversationalAgent.execute_tool`) sees a plain dict suitable for
+`Agent.execute_tool`) sees a plain dict suitable for
 JSON-encoding into a tool result message.
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ from app.db import get_pool
 from app.orchestrator import events
 from app.services import approvals as approvals_service
 from app.services import audit
-from app.tools.base import (
+from app.agents.tools.base import (
     AwaitingApproval,
     Blocked,
     Done,

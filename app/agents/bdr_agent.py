@@ -1,4 +1,4 @@
-"""Business Development Representative — outbound prospecting worker.
+"""Business Development Representative — outbound prospecting domain agent.
 
 The BDR is a domain agent invoked via `ask_agent` (run_agent_task). It owns
 the CRM read tools and composes them autonomously to research a lead
@@ -7,32 +7,16 @@ the orchestrator as a proposal.
 """
 from typing import ClassVar
 
-from app.agents.base import BaseAgent
-from app.tools.base import ToolDefinition
-from app.tools.crm import (
+from app.agents.base import Agent
+from app.agents.tools.base import ToolDefinition
+from app.agents.tools.crm import (
     GET_COMPANY_BY_ID,
     GET_CONTACT_BY_EMAIL,
     GET_FORM_SUBMISSION,
 )
 
 
-class BDRAgent(BaseAgent):
-    slug = "bdr"
-    name = "Business Development Representative"
-    description = (
-        "Researches outbound prospects, qualifies fit against the ideal "
-        "customer profile, and proposes first-touch outreach drafts for "
-        "human review. Triggered on schedule or via the front-door agent."
-    )
-    requires_approval = True
-    model = "gpt-4o-mini"
-    allowed_tools: ClassVar[tuple[ToolDefinition, ...]] = (
-        GET_CONTACT_BY_EMAIL,
-        GET_COMPANY_BY_ID,
-        GET_FORM_SUBMISSION,
-    )
-
-    system_prompt: ClassVar[str] = """\
+_SYSTEM_PROMPT = """\
 You are a Business Development Representative for Frogslayer, a B2B software \
 delivery firm that builds and runs custom platforms for mid-market and enterprise \
 clients in regulated industries.
@@ -70,3 +54,26 @@ the Approval Inbox.
 context you were given or fetched via your tools.
 - You do not chase. One follow-up at most without a reply; then move on.
 """
+
+
+class BDRAgent(Agent):
+    slug = "bdr"
+    name = "Business Development Representative"
+    description = (
+        "Researches prospects and drafts first-touch outreach. "
+        "Delegate when: the user asks for a draft reply to an inbound website "
+        "form submission, an outreach draft for a named lead, or research on "
+        "a prospect's ICP fit. Pass the email address plus any context you "
+        "have; the BDR will pull HubSpot contact, company, and form-submission "
+        "data as needed. Returns an ephemeral draft — nothing is saved or sent."
+    )
+    requires_approval = True
+    model = "gpt-4o-mini"
+    allowed_tools: ClassVar[tuple[ToolDefinition, ...]] = (
+        GET_CONTACT_BY_EMAIL,
+        GET_COMPANY_BY_ID,
+        GET_FORM_SUBMISSION,
+    )
+
+    def get_system_prompt(self) -> str:
+        return _SYSTEM_PROMPT

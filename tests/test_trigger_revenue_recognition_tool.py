@@ -18,8 +18,8 @@ import pytest
 from httpx import AsyncClient
 
 from app.db import get_pool
-from app.tools.base import AwaitingApproval, Blocked, ToolContext
-from app.tools.revenue.trigger_revenue_recognition import (
+from app.agents.tools.base import AwaitingApproval, Blocked, ToolContext
+from app.agents.tools.revenue.trigger_revenue_recognition import (
     TRIGGER_REVENUE_RECOGNITION,
     _trigger_revenue_recognition,
 )
@@ -44,7 +44,7 @@ def _project(
     }
 
 
-_TOOL = "app.tools.revenue.trigger_revenue_recognition"
+_TOOL = "app.agents.tools.revenue.trigger_revenue_recognition"
 _EXEC = "app.executors.write_rev_rec_entries"
 
 

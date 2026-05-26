@@ -110,13 +110,13 @@ def test_agent_task_tool_events_nest_under_parent_tool():
         {"type": "tool_call_started", "name": "ask_agent", "args": {}},
         {
             "type": "agent_task_tool_started",
-            "agent_slug": "revenue-recognition",
+            "agent_slug": "revenue-ops",
             "name": "get_revenue_data",
             "args": {},
         },
         {
             "type": "agent_task_tool_completed",
-            "agent_slug": "revenue-recognition",
+            "agent_slug": "revenue-ops",
             "name": "get_revenue_data",
             "ok": True,
             "result_summary": "{records…}",
@@ -131,7 +131,7 @@ def test_agent_task_tool_events_nest_under_parent_tool():
     nested = next(line for line in activity if line["kind"] == "tool" and line["parentId"])
     parent = next(line for line in activity if line["parentId"] is None)
     assert nested["parentId"] == parent["id"]
-    assert nested["label"] == "revenue-recognition → get_revenue_data"
+    assert nested["label"] == "revenue-ops → get_revenue_data"
     assert nested["status"] == "ok"
     assert nested["detail"] == "{records…}"
 

@@ -14,7 +14,7 @@ Adding a new tool:
 Cross-cutting helpers (`ToolContext`, `ToolDefinition`, `ProgressEmitter`)
 live in `app/tools/base.py` and are re-exported here for convenience.
 """
-from app.tools.base import (
+from app.agents.tools.base import (
     AwaitingApproval,
     Blocked,
     Done,

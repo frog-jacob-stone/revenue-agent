@@ -37,34 +37,31 @@ from uuid import UUID, uuid4
 
 import asyncpg
 
-from app.agents.base import ConversationalAgent
+from app.agents.base import Agent
 from app.agents.registry import AGENTS_BY_SLUG
-from app.agents.revenue_ops_agent import RevenueOpsAgent
+from app.agents.chief_of_staff_agent import ChiefOfStaffAgent
 from app.integrations.llm import Attribution, LlmResponse, StreamDelta, dispatch_stream
 from app.orchestrator import events
 from app.services import audit
 from app.services.activity_builder import ActivityState, apply_event
-from app.tools.base import ProgressEmitter
+from app.agents.tools.base import ProgressEmitter
 
 logger = logging.getLogger(__name__)
 
-FRONT_DOOR_SLUG: str = RevenueOpsAgent.slug
+FRONT_DOOR_SLUG: str = ChiefOfStaffAgent.slug
 
 
 # ── Agent helpers ───────────────────────────────────────────────────────────
 
 
-def _get_front_door() -> ConversationalAgent:
-    """Instantiate the single conversational agent users chat with."""
+def _get_front_door() -> Agent:
+    """Instantiate the orchestrator agent users chat with."""
     cls = AGENTS_BY_SLUG.get(FRONT_DOOR_SLUG)
-    if cls is None or not issubclass(cls, ConversationalAgent):
+    if cls is None:
         raise RuntimeError(
-            f"Front-door agent '{FRONT_DOOR_SLUG}' is not registered as a ConversationalAgent"
+            f"Orchestrator agent '{FRONT_DOOR_SLUG}' is not registered"
         )
-    return cls(
-        agent_id=UUID(int=0),
-        allowed_tools=list(cls.allowed_tools),
-    )
+    return cls(agent_id=UUID(int=0))
 
 
 def _summarize_result(result: Any) -> str:
@@ -82,7 +79,7 @@ def _summarize_result(result: Any) -> str:
 
 
 async def _execute_tool_streaming(
-    agent: ConversationalAgent,
+    agent: Agent,
     name: str,
     args: dict[str, Any],
 ) -> AsyncIterator[dict[str, Any]]:
@@ -115,7 +112,7 @@ async def _stream_llm_turn(
 ) -> AsyncIterator[dict[str, Any]]:
     """Drive the LLM tool-call loop for one chat turn and yield SSE events.
 
-    The system prompt and tool roster are pulled from the front-door agent
+    The system prompt and tool roster are pulled from the orchestrator agent
     (`FRONT_DOOR_SLUG`). No agent selection — there is only one.
 
     The streaming dispatcher owns provider details and `llm_calls` row writes;

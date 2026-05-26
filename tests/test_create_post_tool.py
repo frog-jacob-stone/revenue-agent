@@ -21,8 +21,8 @@ import pytest
 from app.db import get_pool
 from app.integrations.llm import LlmResponse, use_provider
 from app.services import social_posts as svc
-from app.tools.base import Done, ProgressEmitter, ToolContext
-from app.tools.content.create_post import _create_post
+from app.agents.tools.base import Done, ProgressEmitter, ToolContext
+from app.agents.tools.content.create_post import _create_post
 from tests.fakes.llm import FakeProvider
 
 
@@ -110,7 +110,7 @@ def _ctx_with_progress() -> tuple[ToolContext, ProgressEmitter]:
     progress = ProgressEmitter()
     ctx = ToolContext(
         agent_id=uuid.UUID(int=0),
-        agent_slug="revenue-ops",
+        agent_slug="chief-of-staff",
         progress=progress,
     )
     return ctx, progress

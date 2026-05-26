@@ -10,8 +10,8 @@ import uuid
 from unittest.mock import AsyncMock, patch
 
 from app.integrations.hubspot import HubSpotAuthError, HubSpotNotConfigured
-from app.tools.base import ToolContext
-from app.tools.crm.get_contact_by_email import _get_contact_by_email
+from app.agents.tools.base import ToolContext
+from app.agents.tools.crm.get_contact_by_email import _get_contact_by_email
 
 _CTX = ToolContext(agent_id=uuid.UUID(int=0), agent_slug="bdr")
 
@@ -38,11 +38,11 @@ def _patches(*, contact=_CONTACT, primary_company_id="co-1", search_side_effect=
     )
     return (
         patch(
-            "app.tools.crm.get_contact_by_email.search_contact_by_email",
+            "app.agents.tools.crm.get_contact_by_email.search_contact_by_email",
             **search_kwargs,
         ),
         patch(
-            "app.tools.crm.get_contact_by_email.get_primary_company_id",
+            "app.agents.tools.crm.get_contact_by_email.get_primary_company_id",
             new=AsyncMock(return_value=primary_company_id),
         ),
     )
@@ -73,7 +73,7 @@ async def test_returns_not_found_when_contact_missing():
 
 async def test_invalid_email_returns_error_without_calling_hubspot():
     with patch(
-        "app.tools.crm.get_contact_by_email.search_contact_by_email",
+        "app.agents.tools.crm.get_contact_by_email.search_contact_by_email",
         new=AsyncMock(),
     ) as mock_search:
         result = (await _get_contact_by_email(_CTX, email_address="not-an-email")).payload

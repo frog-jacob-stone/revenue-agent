@@ -37,7 +37,7 @@ def _sse(event_type: str, data: dict) -> bytes:
 @router.post("/sessions", response_model=ChatSessionResponse)
 async def create_session(body: ChatSessionCreate | None = None):
     """Create a chat session. Body is optional — when omitted, the DB DEFAULT
-    (`'revenue-ops'`) is used for `agent_slug`. Callers may pass an explicit
+    (`'chief-of-staff'`) is used for `agent_slug`. Callers may pass an explicit
     slug to opt out of the default."""
     pool = await get_pool()
     slug = body.agent_slug if body else None

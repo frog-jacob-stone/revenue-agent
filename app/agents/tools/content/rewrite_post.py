@@ -3,7 +3,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from app.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
+from app.agents.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +24,10 @@ async def _rewrite_post(
     channel: str = "linkedin",
     **_: Any,
 ) -> ToolReturn:
-    from app.agents.content_orchestrator_agent import ContentOrchestratorAgent
+    from app.agents.linkedin_agent import LinkedInAgent
     from app.db import get_pool
     from app.integrations.llm import Attribution, dispatch
-    from app.tools.content._creation_prompts import LINKEDIN_WRITER_SYSTEM_PROMPT
+    from app.agents.tools.content._creation_prompts import LINKEDIN_WRITER_SYSTEM_PROMPT
     from app.services import social_posts as svc
 
     pool = await get_pool()
@@ -51,7 +51,7 @@ async def _rewrite_post(
             {"role": "user", "content": user_msg},
         ],
         attribution=Attribution(
-            agent_slug=ContentOrchestratorAgent.slug,
+            agent_slug=LinkedInAgent.slug,
             purpose="rewrite_post",
         ),
         response_format={"type": "json_object"},

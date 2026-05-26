@@ -4,7 +4,7 @@ export type AgentId =
   | 'content-writer'
   | 'proposal-generator'
   | 'slide-deck-agent'
-  | 'revenue-recognition';
+  | 'revenue-ops';
 
 export type AgentStatus = 'idle' | 'running' | 'error' | 'disabled';
 export type ActionType = 'create' | 'update' | 'delete';
@@ -119,7 +119,7 @@ export const AGENTS: Agent[] = [
     description: 'Converts proposals into formatted slide decks.',
   },
   {
-    id: 'revenue-recognition',
+    id: 'revenue-ops',
     name: 'Revenue Recognition',
     status: 'disabled',
     lastRun: '2026-04-01T06:00:00Z',
@@ -427,7 +427,7 @@ export const CHAT_HISTORIES: Record<AgentId, ChatMessage[]> = {
     { id: 'c13', role: 'user', content: 'Can you generate a deck for the CloudNine proposal?', timestamp: '2026-04-22T10:00:00Z' },
     { id: 'c14', role: 'agent', content: 'To generate a deck for CloudNine Logistics, I need the approved proposal document first. I can see **Deal #D-2198** has an approved proposal. I will now draft a 12-slide deck based on that proposal.\n\nThe action will appear in your approval inbox once the draft is ready. Estimated time: 2–3 minutes.', timestamp: '2026-04-22T10:00:25Z' },
   ],
-  'revenue-recognition': [
+  'revenue-ops': [
     { id: 'c15', role: 'user', content: 'When does the next monthly run trigger?', timestamp: '2026-04-01T08:00:00Z' },
     { id: 'c16', role: 'agent', content: 'The Revenue Recognition agent is scheduled to run on the **1st of each month at 06:00 UTC**. The next run is **May 1, 2026 at 06:00 UTC**.\n\nThis agent is currently **disabled**. Enable it in Settings before the scheduled date to ensure it runs.', timestamp: '2026-04-01T08:00:12Z' },
   ],
@@ -449,7 +449,7 @@ export const MEMORY_ENTRIES: MemoryEntry[] = [
   { id: 'm11', agentId: 'proposal-generator', content: 'Standard proposal template is "modernization-v3". Use "enterprise-v2" only for deals over $500k.', source: 'System config', date: '2026-04-01', tags: ['templates', 'proposals'] },
   { id: 'm12', agentId: 'proposal-generator', content: 'Discount approval threshold: up to 10% can be proposed autonomously. Over 10% requires manual review flag.', source: 'Jacob Stone (manual)', date: '2026-04-12', tags: ['pricing', 'discounts'] },
   { id: 'm13', agentId: 'slide-deck-agent', content: 'Default deck length is 10-14 slides. Executive decks should stay under 10.', source: 'Jacob Stone (manual)', date: '2026-04-01', tags: ['decks', 'formatting'] },
-  { id: 'm14', agentId: 'revenue-recognition', content: 'Monthly run should complete by 08:00 UTC on the 1st. Alert Jacob if it runs past 09:00.', source: 'System config', date: '2026-03-01', tags: ['scheduling', 'alerts'] },
+  { id: 'm14', agentId: 'revenue-ops', content: 'Monthly run should complete by 08:00 UTC on the 1st. Alert Jacob if it runs past 09:00.', source: 'System config', date: '2026-03-01', tags: ['scheduling', 'alerts'] },
 ];
 
 // ── Analytics ──────────────────────────────────────────────────────────────

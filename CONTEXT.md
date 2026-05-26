@@ -7,11 +7,11 @@ Project-specific vocabulary. Use these terms exactly in code, prompts, docs, and
 ### Agents
 
 **Orchestrator agent**:
-The single conversational agent Jacob talks to. Slug `revenue-ops`. Stays thin: its tools are workflow triggers for prescribed processes and `ask_agent` for delegating to domain agents. Does not own domain tools — domain agents do.
+The single conversational agent Jacob talks to. Slug `chief-of-staff`. Stays thin: its tools are workflow triggers for prescribed processes and `ask_agent` for delegating to domain agents. Does not own domain tools — domain agents do.
 _Avoid_: front-door agent, chat agent, assistant.
 
 **Domain agent**:
-A specialist agent that owns tools for a specific business domain and runs autonomously when delegated a task. Has a slug, a row in `agents`, and an `allowed_tools` set. When invoked via `ask_agent`, drives a ReAct loop — decides which tools to call, in what order — and returns a final answer. Examples: `bdr`, `content-orchestrator`, `revenue-recognition`.
+A specialist agent that owns tools for a specific business domain and runs autonomously when delegated a task. Has a slug, a row in `agents`, and an `allowed_tools` set. When invoked via `ask_agent`, drives a ReAct loop — decides which tools to call, in what order — and returns a final answer. Examples: `bdr`, `linkedin`, `revenue-ops`.
 _Avoid_: sub-agent, worker agent, helper agent.
 
 **Inline prompt**:
@@ -81,14 +81,14 @@ The agent identity a tool's work attributes to. Declared as a class attribute on
 _Avoid_: workflow agent, runner agent.
 
 **Invoking agent**:
-The agent that called a tool (typically `revenue-ops` from a chat turn, or another agent via `ask_agent`; cron-triggered tools have no invoking agent). Distinct from the **owning agent**: when `revenue-ops` calls `create_post`, the invoking agent is `revenue-ops` and the owning agent is `content-orchestrator` (the tool's declared owner). The relationship lives in the audit trail and `agent_messages` thread, not on `llm_calls` rows.
+The agent that called a tool (typically `chief-of-staff` from a chat turn, or another agent via `ask_agent`; cron-triggered tools have no invoking agent). Distinct from the **owning agent**: when `chief-of-staff` delegates to `linkedin` via `ask_agent`, the invoking agent of `ask_agent` is `chief-of-staff`, but every LLM call inside the delegated ReAct loop is attributed to `linkedin` (the owning agent of `create_post` and the other content tools). The relationship lives in the audit trail and `agent_messages` thread, not on `llm_calls` rows.
 _Avoid_: caller agent, triggering agent.
 
 ## Example dialogue
 
 > **Dev:** Jacob wants to draft a reply to an inbound lead. Where does this live?
 > **Domain:** BDR — it's an agentic task. Revenue-ops calls `ask_agent("bdr", "draft a reply for lead@example.com")`. BDR decides to call its HubSpot tool, gets the context, drafts the reply, returns it. Revenue-ops surfaces it in chat.
-> **Dev:** Why not just add a `draft_reply` tool to revenue-ops?
+> **Dev:** Why not just add a `draft_reply` tool to chief-of-staff?
 > **Domain:** Because that's how you end up with 100 tools on the orchestrator. BDR owns the outreach domain — the tools, the voice, the logic. Revenue-ops just routes.
 > **Dev:** What if I need to score a lead as a sub-step inside an outreach tool?
 > **Domain:** Inline prompt. Fixed `SYSTEM_PROMPT` constant in the tool's module, `Attribution` with purpose `"outreach.score_lead"`. The tool owns the step sequence; the inline prompt has no agent identity.

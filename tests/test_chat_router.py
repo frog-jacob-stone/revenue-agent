@@ -1,7 +1,7 @@
 """HTTP-layer tests for the chat router.
 
 Single front-door pattern: there is no `/{agent_slug}` path segment any more.
-Sessions default to `revenue-ops` at the DB layer.
+Sessions default to `chief-of-staff` at the DB layer.
 """
 from __future__ import annotations
 
@@ -28,15 +28,15 @@ async def test_create_session_with_no_body_uses_front_door_default(client):
     res = await client.post("/chat/sessions", json={})
     assert res.status_code == 200
     body = res.json()
-    assert body["agent_slug"] == "revenue-ops"
+    assert body["agent_slug"] == "chief-of-staff"
     assert body["title"] == "New chat"
 
 
 @pytest.mark.asyncio
 async def test_create_session_with_explicit_slug_honored(client):
-    res = await client.post("/chat/sessions", json={"agent_slug": "revenue-ops"})
+    res = await client.post("/chat/sessions", json={"agent_slug": "chief-of-staff"})
     assert res.status_code == 200
-    assert res.json()["agent_slug"] == "revenue-ops"
+    assert res.json()["agent_slug"] == "chief-of-staff"
 
 
 @pytest.mark.asyncio

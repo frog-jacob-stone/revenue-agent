@@ -10,7 +10,7 @@ so the inbox / UI reflects the state. Each step emits ProgressEmitter
 events so the chat stream can render a live activity tree.
 
 The Attribution agent_slug for every LLM call inside is the
-ContentOrchestratorAgent's slug; the per-step `purpose` discriminates.
+LinkedInAgent's slug; the per-step `purpose` discriminates.
 """
 from __future__ import annotations
 
@@ -19,27 +19,25 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from app.agents.content_orchestrator_agent import ContentOrchestratorAgent
 from app.db import get_pool
 from app.integrations.llm import Attribution, dispatch
 from app.lib.json_utils import parse_json
-from app.tools.base import (
+from app.agents.tools.base import (
     Done,
     ProgressEmitter,
     ToolContext,
     ToolDefinition,
     ToolReturn,
 )
-from app.tools.content._creation_prompts import (
+from app.agents.tools.content._creation_prompts import (
     CONTENT_STRATEGY_SYSTEM_PROMPT,
     LINKEDIN_WRITER_SYSTEM_PROMPT,
     build_personal_voice_system_prompt,
 )
 
-# `social_posts` (via `app.services.audit` -> `app.orchestrator.events`) triggers
-# the orchestrator package init, which transitively imports agents that re-export
-# tools — creating a circular import at module-load time. Imported lazily inside
-# `_create_post` to break the cycle.
+# `LinkedInAgent` and `social_posts` are imported lazily inside `_create_post`
+# to break circular import cycles (LinkedInAgent re-exports this tool;
+# social_posts pulls in the orchestrator package).
 
 logger = logging.getLogger(__name__)
 
@@ -53,19 +51,19 @@ def _emit(progress: ProgressEmitter | None, event: dict[str, Any]) -> None:
 
 
 async def _interpret_brief(
-    brief: str, channel: str, instructions: str
+    brief: str, channel: str, instructions: str, *, model: str, agent_slug: str
 ) -> dict[str, Any]:
     user_msg = f"Brief: {brief}\nChannel: {channel}"
     if instructions:
         user_msg += f"\nAdditional instructions: {instructions}"
     response = await dispatch(
-        model=ContentOrchestratorAgent.model,
+        model=model,
         messages=[
             {"role": "system", "content": CONTENT_STRATEGY_SYSTEM_PROMPT},
             {"role": "user", "content": user_msg},
         ],
         attribution=Attribution(
-            agent_slug=ContentOrchestratorAgent.slug,
+            agent_slug=agent_slug,
             purpose="content_creation.interpret_brief",
         ),
         response_format={"type": "json_object"},
@@ -89,6 +87,8 @@ async def _draft_post(
     idea: dict[str, Any],
     prior_text: str | None,
     last_feedback: dict[str, Any] | None,
+    model: str,
+    agent_slug: str,
 ) -> str:
     user_msg = (
         f"Idea:\n{json.dumps(idea, indent=2)}\n\n"
@@ -102,13 +102,13 @@ async def _draft_post(
             f"SPECIFIC ISSUES: {last_feedback.get('issues', [])}\n"
         )
     response = await dispatch(
-        model=ContentOrchestratorAgent.model,
+        model=model,
         messages=[
             {"role": "system", "content": LINKEDIN_WRITER_SYSTEM_PROMPT},
             {"role": "user", "content": user_msg},
         ],
         attribution=Attribution(
-            agent_slug=ContentOrchestratorAgent.slug,
+            agent_slug=agent_slug,
             purpose="content_creation.draft_post",
         ),
         response_format={"type": "json_object"},
@@ -118,15 +118,17 @@ async def _draft_post(
     return draft.get("post_text") or f"[Draft: {idea.get('idea_title', brief)}]"
 
 
-async def _run_voice_review(*, post_text: str, channel: str) -> dict[str, Any]:
+async def _run_voice_review(
+    *, post_text: str, channel: str, model: str, agent_slug: str
+) -> dict[str, Any]:
     response = await dispatch(
-        model=ContentOrchestratorAgent.model,
+        model=model,
         messages=[
             {"role": "system", "content": build_personal_voice_system_prompt(channel)},
             {"role": "user", "content": f"Post to review:\n\n{post_text}"},
         ],
         attribution=Attribution(
-            agent_slug=ContentOrchestratorAgent.slug,
+            agent_slug=agent_slug,
             purpose="content_creation.voice_review",
         ),
         response_format={"type": "json_object"},
@@ -155,10 +157,13 @@ async def _create_post(
     voice_max_attempts: int = DEFAULT_VOICE_MAX_ATTEMPTS,
     **_: Any,
 ) -> ToolReturn:
+    from app.agents.linkedin_agent import LinkedInAgent
     from app.services import social_posts as svc
 
     pool = await get_pool()
     progress = ctx.progress
+    model = LinkedInAgent.model
+    agent_slug = LinkedInAgent.slug
 
     # Pre-create the social_posts row so post_id is available for streaming UI.
     post = await svc.save_post(pool, topic=brief)
@@ -166,7 +171,9 @@ async def _create_post(
 
     # Step 1: interpret brief
     _emit(progress, {"type": "tool_step_started", "tool": TOOL_NAME, "step": "interpret_brief"})
-    idea = await _interpret_brief(brief, channel, instructions or "")
+    idea = await _interpret_brief(
+        brief, channel, instructions or "", model=model, agent_slug=agent_slug
+    )
     _emit(progress, {"type": "tool_step_completed", "tool": TOOL_NAME, "step": "interpret_brief"})
 
     last_feedback: dict[str, Any] | None = None
@@ -181,6 +188,7 @@ async def _create_post(
         post_text = await _draft_post(
             brief=brief, channel=channel, idea=idea,
             prior_text=prior_text, last_feedback=last_feedback,
+            model=model, agent_slug=agent_slug,
         )
         async with pool.acquire() as conn:
             await svc.update_post_conn(
@@ -200,7 +208,10 @@ async def _create_post(
             "type": "tool_step_started", "tool": TOOL_NAME,
             "step": "voice_review", "attempt": attempt,
         })
-        critique = await _run_voice_review(post_text=post_text, channel=channel)
+        critique = await _run_voice_review(
+            post_text=post_text, channel=channel,
+            model=model, agent_slug=agent_slug,
+        )
         if critique["passed"]:
             final_text = critique["revised_post_text"]
             async with pool.acquire() as conn:

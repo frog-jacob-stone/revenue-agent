@@ -21,7 +21,7 @@ async def create_session(
     agent_slug: str | None = None,
 ) -> dict[str, Any]:
     """Create a chat session. When `agent_slug` is None, the DB DEFAULT
-    (migration 0019: 'revenue-ops') is used."""
+    (migration 0023: 'chief-of-staff') is used."""
     if agent_slug is None:
         row = await pool.fetchrow(
             """

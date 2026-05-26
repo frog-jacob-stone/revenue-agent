@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from app.tools.base import (
+from app.agents.tools.base import (
     AwaitingApproval,
     Blocked,
     ToolContext,

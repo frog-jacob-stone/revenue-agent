@@ -5,8 +5,8 @@ import uuid
 from unittest.mock import AsyncMock, patch
 
 from app.integrations.hubspot import HubSpotNotConfigured
-from app.tools.base import ToolContext
-from app.tools.crm.get_company_by_id import _get_company_by_id
+from app.agents.tools.base import ToolContext
+from app.agents.tools.crm.get_company_by_id import _get_company_by_id
 
 _CTX = ToolContext(agent_id=uuid.UUID(int=0), agent_slug="bdr")
 
@@ -31,7 +31,7 @@ def _patch(company=_COMPANY, side_effect=None):
         if side_effect
         else {"new": AsyncMock(return_value=company)}
     )
-    return patch("app.tools.crm.get_company_by_id.get_company", **kwargs)
+    return patch("app.agents.tools.crm.get_company_by_id.get_company", **kwargs)
 
 
 async def test_returns_company_profile():
@@ -57,7 +57,7 @@ async def test_returns_not_found_when_company_missing():
 
 async def test_blank_company_id_returns_error_without_calling_hubspot():
     with patch(
-        "app.tools.crm.get_company_by_id.get_company", new=AsyncMock()
+        "app.agents.tools.crm.get_company_by_id.get_company", new=AsyncMock()
     ) as mock_get:
         result = (await _get_company_by_id(_CTX, company_id="   ")).payload
 

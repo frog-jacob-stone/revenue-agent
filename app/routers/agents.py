@@ -3,10 +3,9 @@ from typing import Any
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.agents.base import ConversationalAgent
 from app.agents.registry import AGENTS_BY_SLUG
 from app.db import get_pool
-from app.models.agents import Agent
+from app.models.agents import AgentRead
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -21,25 +20,24 @@ def _enrich(d: dict) -> dict:
         d["name"] = cls.name
         d["description"] = cls.description
         d["requires_approval"] = cls.requires_approval
-        d["is_conversational"] = issubclass(cls, ConversationalAgent)
     return d
 
 
-@router.get("", response_model=list[Agent])
+@router.get("", response_model=list[AgentRead])
 async def list_agents(pool: asyncpg.Pool = Depends(_db)):
     rows = await pool.fetch("SELECT * FROM agents ORDER BY slug")
-    return [Agent.model_validate(_enrich(dict(r))) for r in rows]
+    return [AgentRead.model_validate(_enrich(dict(r))) for r in rows]
 
 
-@router.get("/{slug}", response_model=Agent)
+@router.get("/{slug}", response_model=AgentRead)
 async def get_agent(slug: str, pool: asyncpg.Pool = Depends(_db)):
     row = await pool.fetchrow("SELECT * FROM agents WHERE slug = $1", slug)
     if not row:
         raise HTTPException(status_code=404, detail=f"Agent '{slug}' not found")
-    return Agent.model_validate(_enrich(dict(row)))
+    return AgentRead.model_validate(_enrich(dict(row)))
 
 
-@router.patch("/{slug}/active", response_model=Agent)
+@router.patch("/{slug}/active", response_model=AgentRead)
 async def set_agent_active(slug: str, is_active: bool, pool: asyncpg.Pool = Depends(_db)):
     row = await pool.fetchrow(
         "UPDATE agents SET is_active = $1 WHERE slug = $2 RETURNING *",
@@ -48,7 +46,7 @@ async def set_agent_active(slug: str, is_active: bool, pool: asyncpg.Pool = Depe
     )
     if not row:
         raise HTTPException(status_code=404, detail=f"Agent '{slug}' not found")
-    return Agent.model_validate(_enrich(dict(row)))
+    return AgentRead.model_validate(_enrich(dict(row)))
 
 
 @router.get("/{slug}/tools")
