@@ -1,0 +1,40 @@
+# Keep secrets out of image layers.
+#
+# The Dockerfile does `COPY app/ app/`, and COPY of a directory includes
+# dotfiles — so without this line `app/.env` (Harvest token, OpenAI key, Postgres
+# credentials) is written into a layer and stays extractable via `docker history`
+# or by untarring the image, regardless of what the running container sets.
+#
+# It is also pointless: docker-compose supplies the same file at runtime through
+# `env_file`, so the baked copy is never the one being read.
+.env
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+
+# Build context hygiene — none of this belongs in the image, and excluding it
+# makes builds faster and layers smaller.
+.git
+.gitignore
+.venv
+venv
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.DS_Store
+**/.DS_Store
+node_modules
+**/node_modules
+ui
+infra
+.github
+.claude
+.agent
+docs
+supabase
+tests
+*.md
+!README.md

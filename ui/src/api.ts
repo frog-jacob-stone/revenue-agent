@@ -4,36 +4,22 @@ import type {
   Approval,
   ChatPersistedMessage,
   ChatSession,
-  TriggerResult,
 } from './types';
 import { supabase } from './lib/supabase';
 
-export interface SummaryStats {
-  accountsResearched: number;
-  outreachSent: number;
-  proposalsGenerated: number;
-  approvalRate: number;
-  avgTimeToApprove: string;
-  mostActiveAgent: string;
+// Falls back to localhost only in dev. A production build with VITE_API_URL
+// unset used to ship a bundle that pointed every request at the visitor's own
+// machine — which fails in a way that looks like the API being down rather than
+// the build being wrong. vite.config.ts also asserts this at build time, so a
+// misconfigured deploy is a red pipeline; this throw is the last line of defence
+// and the one that covers local dev. Mirrors lib/supabase.ts.
+const BASE = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://localhost:8000' : '');
+if (!BASE) {
+  throw new Error(
+    'VITE_API_URL is required for production builds. The deploy workflow supplies ' +
+      'it from the API hostname; for local dev, set it in ui/.env.',
+  );
 }
-
-export interface DailyRunRow {
-  date: string;
-  [agentName: string]: number | string;
-}
-
-export interface ApprovalRateRow {
-  agent: string;
-  rate: number;
-}
-
-export interface AnalyticsData {
-  summaryStats: SummaryStats;
-  dailyRuns: DailyRunRow[];
-  approvalRates: ApprovalRateRow[];
-}
-
-const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 
 async function authedHeaders(extra?: HeadersInit): Promise<Headers> {
   const headers = new Headers(extra);
@@ -58,11 +44,43 @@ export async function authedFetch(path: string, init?: RequestInit): Promise<Res
   return res;
 }
 
+/**
+ * A failed request, with the status and the raw `detail` preserved.
+ *
+ * `message` alone is not always enough. FastAPI's `detail` may be an object —
+ * the unknown-outcome response from the invoice write carries the ids needed to
+ * resolve the stuck row plus the remedy to show the operator, and flattening
+ * that to a string would have rendered it as "[object Object]" in the one place
+ * the text matters most.
+ *
+ * Existing callers that read `.message` keep working unchanged.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly detail: unknown;
+
+  constructor(status: number, detail: unknown) {
+    super(ApiError.messageFrom(status, detail));
+    this.name = 'ApiError';
+    this.status = status;
+    this.detail = detail;
+  }
+
+  private static messageFrom(status: number, detail: unknown): string {
+    if (typeof detail === 'string' && detail) return detail;
+    if (detail && typeof detail === 'object') {
+      const msg = (detail as { message?: unknown }).message;
+      if (typeof msg === 'string' && msg) return msg;
+    }
+    return `HTTP ${status}`;
+  }
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await authedFetch(path, init);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
+    throw new ApiError(res.status, (body as { detail?: unknown }).detail);
   }
   return res.json() as Promise<T>;
 }
@@ -117,14 +135,6 @@ export function getAgent(slug: string): Promise<AgentRecord> {
 export function setAgentActive(slug: string, isActive: boolean): Promise<AgentRecord> {
   return apiFetch<AgentRecord>(`/agents/${slug}/active?is_active=${isActive}`, {
     method: 'PATCH',
-  });
-}
-
-export function triggerAgent(slug: string): Promise<TriggerResult> {
-  return apiFetch<TriggerResult>(`/agents/${slug}/trigger`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ initiated_by: 'system', context: {} }),
   });
 }
 
@@ -215,10 +225,6 @@ export function listChatSessions(agentSlug: string): Promise<ChatSession[]> {
   );
 }
 
-export function getChatSession(sessionId: string): Promise<ChatSession> {
-  return apiFetch<ChatSession>(`/chat/sessions/${sessionId}`);
-}
-
 export function getChatMessages(sessionId: string): Promise<ChatPersistedMessage[]> {
   return apiFetch<ChatPersistedMessage[]>(`/chat/sessions/${sessionId}/messages`);
 }
@@ -251,10 +257,6 @@ export async function sendChatMessage(
     signal: callbacks.signal,
   });
   await parseSseStream(res, callbacks);
-}
-
-export function getAnalytics(days = 30): Promise<AnalyticsData> {
-  return apiFetch<AnalyticsData>(`/analytics?days=${days}`);
 }
 
 export interface AuditLogEntry {
@@ -365,4 +367,286 @@ export function getLlmCallsSummary(
 
 export function getLlmCall(id: number): Promise<LlmCallDetail> {
   return apiFetch<LlmCallDetail>(`/llm-calls/${id}`);
+}
+
+// ── Billing / invoicing ─────────────────────────────────────────────────────
+
+import type {
+  BillingGroup,
+  BillingGroupInput,
+  BillingHealth,
+  BillingRunDetail,
+  BillingRunSummary,
+  BillingSettingsValues,
+  CreatedInvoice,
+  CreatedInvoiceTotals,
+  Draw,
+  DrawInvoiceResult,
+  DrawPreview,
+  InFlightItem,
+  ResolveInFlightRequest,
+  ResolveInFlightResult,
+  SnapshotRefreshResult,
+} from './invoicing';
+
+export function getBillingGroups(
+  filters: { billing_type?: string; include_inactive?: boolean } = {},
+): Promise<BillingGroup[]> {
+  const params = new URLSearchParams();
+  if (filters.billing_type) params.set('billing_type', filters.billing_type);
+  if (filters.include_inactive) params.set('include_inactive', 'true');
+  const qs = params.toString();
+  return apiFetch<BillingGroup[]>(`/billing/groups${qs ? `?${qs}` : ''}`);
+}
+
+export function getBillingGroup(id: string): Promise<BillingGroup> {
+  return apiFetch<BillingGroup>(`/billing/groups/${id}`);
+}
+
+export function createBillingGroup(body: BillingGroupInput): Promise<BillingGroup> {
+  return apiFetch<BillingGroup>('/billing/groups', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateBillingGroup(
+  id: string,
+  body: Partial<BillingGroupInput>,
+): Promise<BillingGroup> {
+  return apiFetch<BillingGroup>(`/billing/groups/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export function deactivateBillingGroup(id: string): Promise<BillingGroup> {
+  return apiFetch<BillingGroup>(`/billing/groups/${id}/deactivate`, { method: 'POST' });
+}
+
+export function getBillingHealth(includeTime = true): Promise<BillingHealth> {
+  return apiFetch<BillingHealth>(`/billing/health?include_time=${includeTime}`);
+}
+
+export function refreshHarvestSnapshot(): Promise<SnapshotRefreshResult> {
+  return apiFetch<SnapshotRefreshResult>('/billing/snapshot/refresh', { method: 'POST' });
+}
+
+export function getBillingRuns(kind: 'monthly' | 'draw' | 'all' = 'monthly'):
+  Promise<BillingRunSummary[]> {
+  // An empty `kind` means both. Draw runs are single-invoice and frequent, so
+  // the monthly history would drown in them by default.
+  return apiFetch<BillingRunSummary[]>(
+    `/billing/runs?kind=${kind === 'all' ? '' : kind}`,
+  );
+}
+
+// ── Draws ──────────────────────────────────────────────────────────────────
+
+export function getDraws(
+  filters: {
+    group_id?: string;
+    state?: 'pending' | 'ready' | 'in_flight' | 'invoiced';
+  } = {},
+): Promise<Draw[]> {
+  const params = new URLSearchParams();
+  if (filters.group_id) params.set('group_id', filters.group_id);
+  if (filters.state) params.set('state', filters.state);
+  const qs = params.toString();
+  return apiFetch<Draw[]>(`/billing/draws${qs ? `?${qs}` : ''}`);
+}
+
+/** Confirm (or withdraw) delivery — the only thing that makes a draw billable. */
+export function setDrawRelease(drawId: string, released: boolean): Promise<Draw> {
+  return apiFetch<Draw>(`/billing/draws/${drawId}/release`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ released }),
+  });
+}
+
+/** The exact invoice this draw would produce. Computed on read — nothing is
+ *  persisted, so there is no staged copy to keep in sync or to unwind. */
+export function getDrawPreview(
+  drawId: string, issueDate?: string,
+): Promise<DrawPreview> {
+  const qs = issueDate ? `?issue_date=${issueDate}` : '';
+  return apiFetch<DrawPreview>(`/billing/draws/${drawId}/preview${qs}`);
+}
+
+/**
+ * Create the Harvest draft invoice for one released draw.
+ *
+ * The only call in this app that writes to Harvest. The payload is deliberately
+ * NOT sent — the server recomputes it from the same pure function that produced
+ * the preview just read, so what gets created is what was on screen.
+ *
+ * Status codes carry the §8 distinction and the caller must not flatten them:
+ * 409 nothing happened · 422 Harvest refused · 502 outcome unknown, go look.
+ */
+export function invoiceDraw(
+  drawId: string, issueDate?: string,
+): Promise<DrawInvoiceResult> {
+  return apiFetch<DrawInvoiceResult>(`/billing/draws/${drawId}/invoice`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(issueDate ? { issue_date: issueDate } : {}),
+  });
+}
+
+/** Account-level billing config a human edits. Never contains secrets. */
+export function getBillingSettings(): Promise<BillingSettingsValues> {
+  return apiFetch<BillingSettingsValues>('/billing/settings');
+}
+
+/** PATCH semantics: an omitted field is left alone, an empty string clears it. */
+export function updateBillingSettings(
+  values: Partial<BillingSettingsValues>,
+): Promise<BillingSettingsValues> {
+  return apiFetch<BillingSettingsValues>('/billing/settings', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(values),
+  });
+}
+
+/**
+ * Every invoice this system created — draws and monthly runs together.
+ *
+ * Reads the ledger, so it survives reloads and shows months of history. `status`
+ * defaults to `created`, the only value that means an invoice exists in Harvest.
+ */
+export function getCreatedInvoices(
+  filters: {
+    kind?: 'draw' | 'monthly';
+    status?: 'created' | 'failed' | 'in_flight';
+    group_id?: string;
+    since?: string;
+    limit?: number;
+  } = {},
+): Promise<CreatedInvoice[]> {
+  const params = new URLSearchParams();
+  if (filters.kind) params.set('kind', filters.kind);
+  if (filters.status) params.set('status', filters.status);
+  if (filters.group_id) params.set('group_id', filters.group_id);
+  if (filters.since) params.set('since', filters.since);
+  if (filters.limit) params.set('limit', String(filters.limit));
+  const qs = params.toString();
+  return apiFetch<CreatedInvoice[]>(`/billing/invoices${qs ? `?${qs}` : ''}`);
+}
+
+export function getCreatedInvoiceTotals(
+  since?: string,
+): Promise<CreatedInvoiceTotals> {
+  const qs = since ? `?since=${since}` : '';
+  return apiFetch<CreatedInvoiceTotals>(`/billing/invoices/totals${qs}`);
+}
+
+/** Ledger rows whose Harvest write never returned. Should always be empty. */
+export function getInFlightItems(): Promise<InFlightItem[]> {
+  return apiFetch<InFlightItem[]>('/billing/in-flight');
+}
+
+/** A human's statement about what actually happened in Harvest. */
+export function resolveInFlight(
+  runId: string,
+  itemId: string,
+  body: ResolveInFlightRequest,
+): Promise<ResolveInFlightResult> {
+  return apiFetch<ResolveInFlightResult>(
+    `/billing/runs/${runId}/items/${itemId}/resolve`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export function getBillingRun(id: string): Promise<BillingRunDetail> {
+  return apiFetch<BillingRunDetail>(`/billing/runs/${id}`);
+}
+
+export function planBillingRun(runMonth?: string): Promise<BillingRunDetail> {
+  return apiFetch<BillingRunDetail>('/billing/runs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ run_month: runMonth ?? null }),
+  });
+}
+
+export function abandonBillingRun(id: string): Promise<BillingRunDetail> {
+  return apiFetch<BillingRunDetail>(`/billing/runs/${id}/abandon`, { method: 'POST' });
+}
+
+/** Approve / un-approve one group, and/or record an error override. Both
+ *  fields are independent; the override is sticky. */
+export function setItemApproval(
+  runId: string,
+  itemId: string,
+  body: { approved?: boolean; override?: boolean },
+): Promise<BillingRunDetail> {
+  return apiFetch<BillingRunDetail>(`/billing/runs/${runId}/items/${itemId}/approval`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+/** Approve every already-approvable group, or clear every approval. */
+export function setRunApproval(
+  runId: string, approved: boolean,
+): Promise<BillingRunDetail> {
+  return apiFetch<BillingRunDetail>(`/billing/runs/${runId}/approval`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ approved }),
+  });
+}
+
+export interface HarvestClientOption {
+  harvest_id: number;
+  name: string;
+  currency: string | null;
+  is_active: boolean;
+  billable_project_count: number;
+}
+
+export interface HarvestProjectOption {
+  harvest_id: number;
+  name: string;
+  client_id: number;
+  client_name: string | null;
+  client_currency: string | null;
+  is_active: boolean;
+  is_fixed_fee: boolean;
+  hourly_rate: number | null;
+  /** Null when free to map; set when another active group already claims it. */
+  billing_group_id: string | null;
+  billing_group_name: string | null;
+}
+
+export interface InvoiceItemCategory {
+  harvest_id: number;
+  name: string;
+}
+
+export function getInvoiceItemCategories(): Promise<InvoiceItemCategory[]> {
+  return apiFetch<InvoiceItemCategory[]>('/billing/harvest/item-categories');
+}
+
+export function getHarvestClients(): Promise<HarvestClientOption[]> {
+  return apiFetch<HarvestClientOption[]>('/billing/harvest/clients');
+}
+
+export function getHarvestProjects(
+  opts: { client_id?: number; exclude_group_id?: string } = {},
+): Promise<HarvestProjectOption[]> {
+  const params = new URLSearchParams();
+  if (opts.client_id !== undefined) params.set('client_id', String(opts.client_id));
+  if (opts.exclude_group_id) params.set('exclude_group_id', opts.exclude_group_id);
+  const qs = params.toString();
+  return apiFetch<HarvestProjectOption[]>(`/billing/harvest/projects${qs ? `?${qs}` : ''}`);
 }

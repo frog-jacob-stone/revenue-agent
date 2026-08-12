@@ -5,6 +5,10 @@
 **/.env
 **/.env.*
 !**/.env.example
+# .env.production holds live production credentials and is covered by `.env.*`
+# above. Only its template is tracked — the negation is required because
+# `!.env.example` does not match `.env.production.example`.
+!.env.production.example
 
 # Python
 __pycache__/

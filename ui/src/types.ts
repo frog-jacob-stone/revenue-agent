@@ -21,11 +21,6 @@ export interface AgentTool {
   };
 }
 
-export interface TriggerResult {
-  workflow_id: string;
-  proposals: number;
-}
-
 export type ApprovalStatus =
   | 'pending'
   | 'approved'

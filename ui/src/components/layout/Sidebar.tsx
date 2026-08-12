@@ -1,26 +1,24 @@
 import { NavLink } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  LayoutDashboard, Inbox, Bot, ScrollText, MessageSquare,
-  BookOpen, BarChart3, Activity, Settings, ChevronLeft, ChevronRight,
-  Zap,
+  LayoutDashboard, Inbox, MessageSquare,
+  Settings, ChevronLeft, ChevronRight, Zap, Receipt,
 } from 'lucide-react';
-import { getApprovals } from '../../api';
+import { getApprovals, getDraws } from '../../api';
+import { drawsNeedingAttention } from '../../invoicing';
 
 interface Props {
   collapsed: boolean;
   onToggle: () => void;
 }
 
+// Agents, Audit Log, and LLM Calls live as Settings tabs rather than top-level
+// nav — see pages/Settings/SettingsLayout.tsx.
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, exact: true },
-  { to: '/inbox', label: 'Approval Inbox', icon: Inbox, inboxBadge: true },
-  { to: '/agents', label: 'Agents', icon: Bot },
-  { to: '/audit', label: 'Audit Log', icon: ScrollText },
+  { to: '/invoices', label: 'Invoices', icon: Receipt, drawsBadge: true },
   { to: '/chat', label: 'Chat', icon: MessageSquare },
-  { to: '/knowledge', label: 'Knowledge Base', icon: BookOpen },
-  { to: '/analytics', label: 'Analytics', icon: BarChart3 },
-  { to: '/llm-calls', label: 'LLM Calls', icon: Activity },
+  { to: '/inbox', label: 'Approval Inbox', icon: Inbox, inboxBadge: true },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 
@@ -34,24 +32,34 @@ export default function Sidebar({ collapsed, onToggle }: Props) {
     refetchInterval: 15_000,
   });
 
+  // Draws ready to bill or past due. Shares the Invoices pages' cache entry, so
+  // acting on a draw updates this without a second round trip. Uncollected
+  // money is worth surfacing from wherever you happen to be.
+  const { data: draws = [] } = useQuery({
+    queryKey: ['billing-draws'],
+    queryFn: () => getDraws(),
+    refetchInterval: 60_000,
+  });
+  const drawCount = drawsNeedingAttention(draws);
+
   return (
     <aside
-      className={`relative flex flex-col bg-slate-900 border-r border-slate-800 transition-all duration-200 ${collapsed ? 'w-16' : 'w-56'}`}
+      className={`relative flex flex-col bg-white border-r border-slate-200 transition-all duration-200 ${collapsed ? 'w-16' : 'w-56'}`}
     >
       {/* Logo */}
-      <div className={`flex items-center gap-2.5 px-4 py-4 border-b border-slate-800 ${collapsed ? 'justify-center px-0' : ''}`}>
-        <div className="w-7 h-7 rounded-lg bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center flex-shrink-0">
-          <Zap className="w-4 h-4 text-cyan-400" />
+      <div className={`flex items-center gap-2.5 px-4 py-4 border-b border-slate-200 ${collapsed ? 'justify-center px-0' : ''}`}>
+        <div className="w-7 h-7 rounded-lg bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center flex-shrink-0">
+          <Zap className="w-4 h-4 text-cyan-600" />
         </div>
         {!collapsed && (
-          <span className="text-slate-100 font-semibold text-sm tracking-tight">Revenue Ops</span>
+          <span className="text-slate-900 font-semibold text-sm tracking-tight">Revenue Ops</span>
         )}
       </div>
 
       {/* Nav */}
       <nav className="flex-1 py-3 space-y-0.5 px-2 overflow-y-auto">
-        {NAV.map(({ to, label, icon: Icon, inboxBadge, exact }) => {
-          const badge = inboxBadge ? pendingCount : 0;
+        {NAV.map(({ to, label, icon: Icon, inboxBadge, drawsBadge, exact }) => {
+          const badge = inboxBadge ? pendingCount : drawsBadge ? drawCount : 0;
           return (
             <NavLink
               key={to}
@@ -60,20 +68,20 @@ export default function Sidebar({ collapsed, onToggle }: Props) {
               className={({ isActive }) =>
                 `flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors group relative ${
                   isActive
-                    ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/20'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                    ? 'bg-cyan-500/15 text-cyan-600 border border-cyan-500/40'
+                    : 'text-slate-600 hover:text-slate-800 hover:bg-slate-100'
                 } ${collapsed ? 'justify-center' : ''}`
               }
             >
               <Icon className="w-4 h-4 flex-shrink-0" />
               {!collapsed && <span className="flex-1 truncate">{label}</span>}
               {!collapsed && badge > 0 && (
-                <span className="ml-auto bg-cyan-500 text-slate-900 text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                <span className="ml-auto bg-cyan-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
                   {badge}
                 </span>
               )}
               {collapsed && badge > 0 && (
-                <span className="absolute top-0.5 right-0.5 w-4 h-4 bg-cyan-500 text-slate-900 text-[9px] font-bold rounded-full flex items-center justify-center">
+                <span className="absolute top-0.5 right-0.5 w-4 h-4 bg-cyan-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
                   {badge}
                 </span>
               )}
@@ -85,7 +93,7 @@ export default function Sidebar({ collapsed, onToggle }: Props) {
       {/* Collapse toggle */}
       <button
         onClick={onToggle}
-        className="flex items-center justify-center h-10 border-t border-slate-800 text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
+        className="flex items-center justify-center h-10 border-t border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors"
       >
         {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
       </button>

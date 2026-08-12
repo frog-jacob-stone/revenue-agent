@@ -20,10 +20,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app.db import get_pool
-from app.orchestrator import events
-from app.services import approvals as approvals_service
-from app.services import audit
 from app.agents.tools.base import (
     AwaitingApproval,
     Blocked,
@@ -31,6 +27,10 @@ from app.agents.tools.base import (
     ToolContext,
     ToolDefinition,
 )
+from app.db import get_pool
+from app.orchestrator import events
+from app.services import approvals as approvals_service
+from app.services import audit
 
 logger = logging.getLogger(__name__)
 

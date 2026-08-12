@@ -10,9 +10,9 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID, uuid4
 
+from app.agents.tools.base import Blocked, Done, ToolContext, ToolDefinition, ToolReturn
 from app.db import get_pool
 from app.services import agent_messages
-from app.agents.tools.base import Blocked, Done, ToolContext, ToolDefinition, ToolReturn
 
 
 async def _ask_agent(

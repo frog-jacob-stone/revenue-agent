@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any, AsyncIterator
 
+import httpx
 import openai
 
 from app.config import settings
@@ -117,7 +118,15 @@ class OpenAiProvider:
 def _get_client() -> openai.AsyncOpenAI:
     global _client
     if _client is None:
-        _client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+        _client = openai.AsyncOpenAI(
+            api_key=settings.openai_api_key.get_secret_value(),
+            # Both explicit, because the SDK defaults are wrong for this app: 600s
+            # and 2 retries means a single wedged call can hold a detached chat
+            # turn for half an hour. A turn nobody is waiting on still occupies a
+            # slot on the one replica, and the user sees a stream that never ends.
+            timeout=httpx.Timeout(120.0, connect=10.0),
+            max_retries=2,
+        )
     return _client
 
 

@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from uuid import UUID
 
-
 # ── Tool return shapes (ADR-0002) ──────────────────────────────────────────
 
 

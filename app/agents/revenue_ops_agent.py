@@ -1,16 +1,21 @@
 """Revenue Operations domain agent.
 
-Owns the revenue tools (`trigger_revenue_recognition`, `get_revenue_data`) and
-the revenue-recognition domain knowledge. Invoked by the chief of staff via
-`ask_agent("revenue-ops", ...)`, which runs a ReAct loop because this agent
-has tools.
+Owns `get_revenue_data` and the revenue-recognition domain knowledge. Invoked by
+the chief of staff via `ask_agent("revenue-ops", ...)`, which runs a ReAct loop
+because this agent has tools.
+
+Analysis only. `trigger_revenue_recognition` was removed from `allowed_tools`
+per [ADR-0004](../../docs/adr/0004-operator-initiated-writes.md) — running
+recognition is an operator action, not an agent one. The tool and its
+`write_rev_rec_entries` executor both remain registered and intact, but until
+rev rec gets a UI button there is no way to run it.
 """
 import logging
 from typing import ClassVar
 
 from app.agents.base import Agent
 from app.agents.tools.base import ToolDefinition
-from app.agents.tools.revenue import GET_REVENUE_DATA, TRIGGER_REVENUE_RECOGNITION
+from app.agents.tools.revenue import GET_REVENUE_DATA
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +27,13 @@ call, in what order, and return a concise final answer. Do not propose follow-up
 
 ## Tools you own
 
-- `trigger_revenue_recognition(date_recognized?)` — kicks off the monthly recognition \
-workflow. The proposed entries land in the Approval Inbox; nothing is written until a human \
-approves.
 - `get_revenue_data(...)` — query the recognition table for analysis. Use the narrowest date \
 range that answers the question.
 
-Call `get_revenue_data` freely (read-only). Call `trigger_revenue_recognition` only when the \
-caller asks you to run monthly recognition.
+You cannot run monthly recognition — that is done by the user from the Revenue page. If asked \
+to run it, say so plainly rather than reaching for a tool you don't have.
+
+Call `get_revenue_data` freely — it is read-only.
 
 ## Revenue record fields
 
@@ -72,18 +76,17 @@ class RevenueOpsAgent(Agent):
     slug = "revenue-ops"
     name = "Revenue Operations"
     description = (
-        "Runs monthly revenue recognition and answers revenue analysis "
-        "questions. Delegate when: the user asks to run rev rec, query the "
-        "recognition table, rank or compare projects/periods, or asks "
+        "Answers revenue analysis questions. Delegate when: the user asks to "
+        "query the recognition table, rank or compare projects/periods, or asks "
         "profitability-style questions (cost data is not available — proxies "
         "only). Pass the question; this agent will call its own tools as "
-        "needed. Returns prose with the answer and the rule applied."
+        "needed. Returns prose with the answer and the rule applied. Cannot run "
+        "monthly recognition — that is done by the user from the Revenue page."
     )
     requires_approval = True
     model = "gpt-4o-mini"
 
     allowed_tools: ClassVar[tuple[ToolDefinition, ...]] = (
-        TRIGGER_REVENUE_RECOGNITION,
         GET_REVENUE_DATA,
     )
 

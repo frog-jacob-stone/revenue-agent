@@ -1,4 +1,10 @@
-"""Tests for BDRAgent — domain agent with autonomous tool execution."""
+"""Tests for BDRAgent — a toolless drafting agent.
+
+The BDR had three HubSpot CRM read tools until HubSpot was removed from the
+system. It is deliberately toolless now, not accidentally: `test_bdr_has_no_tools`
+guards that, because a stray tool would silently turn a single-turn draft back
+into a ReAct loop.
+"""
 from app.agents.base import Agent
 from app.agents.bdr_agent import BDRAgent
 from app.agents.registry import AGENTS_BY_SLUG
@@ -21,21 +27,16 @@ def test_bdr_has_identity_level_system_prompt():
     assert "Business Development Representative" in prompt or "BDR" in prompt
 
 
-def test_bdr_has_crm_tools():
-    tool_names = {t.name for t in BDRAgent.allowed_tools}
-    assert {
-        "get_contact_by_email",
-        "get_company_by_id",
-        "get_form_submission",
-    }.issubset(tool_names)
+def test_bdr_has_no_tools():
+    """No CRM to read, so nothing to call — the draft comes from the prompt alone."""
+    assert BDRAgent.allowed_tools == ()
 
 
-def test_bdr_tool_schemas_have_openai_shape():
-    for tool in BDRAgent.allowed_tools:
-        schema = tool.as_openai_schema()
-        assert schema["type"] == "function"
-        assert "name" in schema["function"]
-        assert "parameters" in schema["function"]
+def test_bdr_prompt_does_not_promise_tools():
+    """A prompt telling the model to fetch context it cannot fetch invites invention."""
+    prompt = BDRAgent().get_system_prompt().lower()
+    assert "hubspot" not in prompt
+    assert "no tools" in prompt
 
 
 def test_bdr_cannot_delegate_by_default():

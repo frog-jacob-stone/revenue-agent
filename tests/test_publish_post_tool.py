@@ -16,9 +16,9 @@ from uuid import UUID
 import pytest
 from httpx import AsyncClient
 
-from app.db import get_pool
 from app.agents.tools.base import AwaitingApproval, Blocked, ToolContext
 from app.agents.tools.content.publish_post import _publish_post
+from app.db import get_pool
 
 
 async def _seed_ready_post(*, post_text: str = "Hello world.") -> UUID:
@@ -93,8 +93,8 @@ async def test_approve_runs_executor_and_publishes(
     client: AsyncClient, test_agent_slug
 ):
     """Happy path: tool → approval row → POST /approve → executor → status='published'."""
-    from app.orchestrator.dispatch import dispatch_tool
     from app.agents.tools.content.publish_post import PUBLISH_POST
+    from app.orchestrator.dispatch import dispatch_tool
 
     post_id = await _seed_ready_post(post_text="Original draft.")
     pool = await get_pool()
@@ -141,8 +141,8 @@ async def test_approve_runs_executor_and_publishes(
 @pytest.mark.asyncio
 async def test_approve_with_edited_payload(client: AsyncClient, test_agent_slug):
     """Approving with executed_payload override uses the edited text."""
-    from app.orchestrator.dispatch import dispatch_tool
     from app.agents.tools.content.publish_post import PUBLISH_POST
+    from app.orchestrator.dispatch import dispatch_tool
 
     post_id = await _seed_ready_post(post_text="Original.")
     pool = await get_pool()
@@ -174,8 +174,8 @@ async def test_approve_with_edited_payload(client: AsyncClient, test_agent_slug)
 @pytest.mark.asyncio
 async def test_reject_leaves_post_unchanged(client: AsyncClient, test_agent_slug):
     """Rejecting the approval leaves the post at 'ready'; no executor runs."""
-    from app.orchestrator.dispatch import dispatch_tool
     from app.agents.tools.content.publish_post import PUBLISH_POST
+    from app.orchestrator.dispatch import dispatch_tool
 
     post_id = await _seed_ready_post(post_text="Draft for rejection.")
     pool = await get_pool()

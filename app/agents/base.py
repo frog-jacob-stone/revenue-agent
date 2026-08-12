@@ -65,8 +65,8 @@ class Agent:
         return shapes are uniformly translated into LLM-visible dicts
         (ADR-0002).
         """
-        from app.orchestrator.dispatch import dispatch_tool
         from app.agents.tools import ToolContext
+        from app.orchestrator.dispatch import dispatch_tool
 
         tool = self._tool_by_name.get(name)
         if tool is None:

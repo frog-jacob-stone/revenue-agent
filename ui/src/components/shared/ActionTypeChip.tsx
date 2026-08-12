@@ -1,10 +1,10 @@
 const STYLES: Record<string, string> = {
-  create: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30',
-  update: 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
-  delete: 'bg-red-500/20 text-red-400 border border-red-500/30',
+  create: 'bg-emerald-500/20 text-emerald-600 border border-emerald-500/40',
+  update: 'bg-blue-500/20 text-blue-600 border border-blue-500/40',
+  delete: 'bg-red-500/20 text-red-600 border border-red-500/40',
 };
 
-const FALLBACK = 'bg-slate-700/50 text-slate-400 border border-slate-600/30';
+const FALLBACK = 'bg-slate-100 text-slate-600 border border-slate-300';
 
 export default function ActionTypeChip({ type }: { type: string }) {
   return (

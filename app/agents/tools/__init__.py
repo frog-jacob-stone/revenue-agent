@@ -1,7 +1,7 @@
 """Tool layer.
 
-Tools are organised into domain subpackages (`agent/`, `content/`, `outreach/`,
-`revenue/`). Each tool file exports a `ToolDefinition` constant (e.g.
+Tools are organised into domain subpackages (`agent/`, `content/`, `revenue/`).
+Each tool file exports a `ToolDefinition` constant (e.g.
 `CREATE_POST` in `app/tools/content/create_post.py`); the domain `__init__.py`
 re-exports those constants for ergonomic agent imports.
 

@@ -25,9 +25,9 @@ async def _rewrite_post(
     **_: Any,
 ) -> ToolReturn:
     from app.agents.linkedin_agent import LinkedInAgent
+    from app.agents.tools.content._creation_prompts import LINKEDIN_WRITER_SYSTEM_PROMPT
     from app.db import get_pool
     from app.integrations.llm import Attribution, dispatch
-    from app.agents.tools.content._creation_prompts import LINKEDIN_WRITER_SYSTEM_PROMPT
     from app.services import social_posts as svc
 
     pool = await get_pool()
@@ -92,7 +92,10 @@ REWRITE_POST = ToolDefinition(
             },
             "instruction": {
                 "type": "string",
-                "description": "What to change. E.g. 'Make the hook more direct', 'Cut the last paragraph'.",
+                "description": (
+                    "What to change. E.g. 'Make the hook more direct', "
+                    "'Cut the last paragraph'."
+                ),
             },
             "channel": {
                 "type": "string",

@@ -1,7 +1,7 @@
 from typing import Any
 
-from app.services import revenue as revenue_service
 from app.agents.tools.base import Done, ToolContext, ToolDefinition, ToolReturn
+from app.services import revenue as revenue_service
 
 
 async def _get_revenue_data(

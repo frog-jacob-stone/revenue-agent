@@ -12,7 +12,6 @@ from uuid import UUID
 
 import asyncpg
 
-
 # ── Sessions ────────────────────────────────────────────────────────────────
 
 

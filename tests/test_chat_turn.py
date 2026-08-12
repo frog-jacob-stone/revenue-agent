@@ -10,15 +10,13 @@ Two layers of testing:
 from __future__ import annotations
 
 import asyncio
-import json
-import uuid
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from app.db import get_pool
-from app.integrations.llm import LlmResponse, StreamDelta, ToolCall, use_provider
+from app.integrations.llm import LlmResponse, StreamDelta, use_provider
 from app.orchestrator import events as evt_const
 from app.services import chat_sessions as cs
 from app.services.chat_turn import (
@@ -28,7 +26,6 @@ from app.services.chat_turn import (
     start_turn,
 )
 from tests.fakes.llm import FakeProvider
-
 
 # ── _stream_llm_turn (loop) ─────────────────────────────────────────────────
 
@@ -110,7 +107,12 @@ async def test_start_turn_pushes_events_to_subscriber():
     events = [
         {"type": "delta", "text": "Hi"},
         {"type": "tool_call_started", "name": "create_post", "args": {}},
-        {"type": "tool_call_completed", "name": "create_post", "ok": True, "result_summary": "{ok}"},
+        {
+            "type": "tool_call_completed",
+            "name": "create_post",
+            "ok": True,
+            "result_summary": "{ok}",
+        },
         {"type": "done", "answer": "Hi", "tool_used": "create_post"},
     ]
     fake_gen = await _fake_stream_gen(events)
@@ -182,7 +184,12 @@ async def test_activity_is_persisted_with_tool_lifecycle():
 
     events = [
         {"type": "tool_call_started", "name": "create_post", "args": {}},
-        {"type": "tool_call_completed", "name": "create_post", "ok": True, "result_summary": "{ok}"},
+        {
+            "type": "tool_call_completed",
+            "name": "create_post",
+            "ok": True,
+            "result_summary": "{ok}",
+        },
         {"type": "delta", "text": "Done."},
         {"type": "done", "answer": "Done.", "tool_used": "create_post"},
     ]

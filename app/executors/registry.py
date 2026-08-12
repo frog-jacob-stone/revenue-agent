@@ -12,7 +12,6 @@ from app.executors.base import ExecutorDefinition
 from app.executors.post_to_linkedin import POST_TO_LINKEDIN
 from app.executors.write_rev_rec_entries import WRITE_REV_REC_ENTRIES
 
-
 EXECUTORS: tuple[ExecutorDefinition, ...] = (
     POST_TO_LINKEDIN,
     WRITE_REV_REC_ENTRIES,

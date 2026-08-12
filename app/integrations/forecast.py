@@ -9,18 +9,21 @@ logger = logging.getLogger(__name__)
 
 _BASE = "https://api.forecastapp.com"
 
+# Matches app/integrations/harvest.py — same token, same vendor, same reasons.
+_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+
 
 def _headers(cfg: Settings) -> dict[str, str]:
     # Forecast uses the same Personal Access Token as Harvest
     return {
-        "Authorization": f"Bearer {cfg.harvest_token}",
+        "Authorization": f"Bearer {cfg.harvest_token.get_secret_value()}",
         "Forecast-Account-Id": cfg.forecast_account_id,
     }
 
 
 async def _get_projects(cfg: Settings) -> list[dict[str, Any]]:
     """Return all Forecast projects (includes harvest_id mapping)."""
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await client.get(f"{_BASE}/projects", headers=_headers(cfg))
         resp.raise_for_status()
         return resp.json().get("projects", [])
@@ -31,7 +34,7 @@ async def _get_future_scheduled_hours_raw(
 ) -> dict[int, float]:
     """Return aggregate scheduled hours keyed by Forecast project ID."""
     url = f"{_BASE}/aggregate/future_scheduled_hours/{from_date}"
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await client.get(url, headers=_headers(cfg))
         resp.raise_for_status()
         data = resp.json()

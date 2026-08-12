@@ -28,7 +28,9 @@ async def test_create_session_with_explicit_slug():
 
 @pytest.mark.asyncio
 async def test_create_session_with_no_slug_uses_db_default():
-    """Migration 0019 set the default to 'revenue-ops'; migration 0023 renames it to 'chief-of-staff'."""
+    """Migration 0019 set the default to 'revenue-ops'; migration 0023 renames it to
+    'chief-of-staff'.
+    """
     pool = await get_pool()
     row = await cs.create_session(pool)
     assert row["agent_slug"] == "chief-of-staff"
@@ -72,11 +74,13 @@ async def test_get_messages_returns_in_insertion_order():
     pool = await get_pool()
     session = await cs.create_session(pool)
     await pool.execute(
-        "INSERT INTO chat_messages (session_id, role, content, status) VALUES ($1, 'user', 'a', 'complete')",
+        "INSERT INTO chat_messages (session_id, role, content, status) "
+        "VALUES ($1, 'user', 'a', 'complete')",
         session["id"],
     )
     await pool.execute(
-        "INSERT INTO chat_messages (session_id, role, content, status) VALUES ($1, 'assistant', 'b', 'complete')",
+        "INSERT INTO chat_messages (session_id, role, content, status) "
+        "VALUES ($1, 'assistant', 'b', 'complete')",
         session["id"],
     )
     msgs = await cs.get_messages(pool, session["id"])

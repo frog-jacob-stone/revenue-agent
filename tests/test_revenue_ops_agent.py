@@ -10,10 +10,16 @@ def test_revenue_ops_registered():
     assert AGENTS_BY_SLUG["revenue-ops"] is RevenueOpsAgent
 
 
-def test_revenue_ops_owns_revenue_tools():
+def test_revenue_ops_is_analysis_only():
+    """ADR-0004: `trigger_revenue_recognition` is no longer agent-reachable.
+
+    Running recognition is an operator action. The tool and its executor still
+    exist — see tests/test_no_agent_approval_tools.py — but nothing an LLM holds
+    can reach them.
+    """
     inst = RevenueOpsAgent(agent_id=uuid4())
     names = {t.name for t in inst.allowed_tools}
-    assert names == {"trigger_revenue_recognition", "get_revenue_data"}
+    assert names == {"get_revenue_data"}
 
 
 def test_system_prompt_carries_domain_rules():
@@ -22,4 +28,10 @@ def test_system_prompt_carries_domain_rules():
     # Key domain rules the rev-rec specialist must encode.
     assert "revenue_delta" in prompt
     assert "blended_rate" in prompt
-    assert "trigger_revenue_recognition" in prompt
+
+
+def test_system_prompt_says_it_cannot_run_rev_rec():
+    """Silent absence invites the LLM to claim it ran rev rec, or to hunt for a
+    tool it doesn't have. The prompt has to name the limit."""
+    prompt = RevenueOpsAgent(agent_id=uuid4()).get_system_prompt()
+    assert "cannot run monthly recognition" in prompt.lower()

@@ -2,3 +2,10 @@ node_modules/
 dist/
 .env
 .env.local
+
+# tsc build artifacts. vite.config.js in particular MUST NOT be committed —
+# Vite loads it in preference to vite.config.ts, so a stale copy shadows the
+# real config. See the comment in tsconfig.node.json.
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts

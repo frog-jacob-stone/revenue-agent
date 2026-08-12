@@ -19,9 +19,6 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from app.db import get_pool
-from app.integrations.llm import Attribution, dispatch
-from app.lib.json_utils import parse_json
 from app.agents.tools.base import (
     Done,
     ProgressEmitter,
@@ -34,6 +31,9 @@ from app.agents.tools.content._creation_prompts import (
     LINKEDIN_WRITER_SYSTEM_PROMPT,
     build_personal_voice_system_prompt,
 )
+from app.db import get_pool
+from app.integrations.llm import Attribution, dispatch
+from app.lib.json_utils import parse_json
 
 # `LinkedInAgent` and `social_posts` are imported lazily inside `_create_post`
 # to break circular import cycles (LinkedInAgent re-exports this tool;

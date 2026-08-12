@@ -1,9 +1,14 @@
 """LinkedIn domain agent — owns the social content tools.
 
 Invoked by the chief of staff via `ask_agent("linkedin", ...)`. Drives a
-ReAct loop over the content tools (`create_post`, `publish_post`, etc.) and
-owns the executive-voice reasoning previously sitting in the content
-orchestrator. Every action tool routes through the Approval Inbox.
+ReAct loop over the content tools and owns the executive-voice reasoning
+previously sitting in the content orchestrator.
+
+Drafting only. `publish_post` was removed from `allowed_tools` per
+[ADR-0004](../../docs/adr/0004-operator-initiated-writes.md): it is the one
+content tool that leaves our boundary, and publishing is now an operator action
+taken from the UI. Posts reach `ready` here and go no further. The tool and its
+`post_to_linkedin` executor both remain registered and intact.
 """
 from typing import ClassVar
 
@@ -13,11 +18,9 @@ from app.agents.tools.content import (
     CREATE_POST,
     EXPORT_POSTS,
     GET_POSTS,
-    PUBLISH_POST,
     REJECT_POST,
     REWRITE_POST,
 )
-
 
 _SYSTEM_PROMPT = """\
 You are the LinkedIn content specialist for Jacob Stone, VP of Revenue at Frogslayer \
@@ -32,11 +35,13 @@ review). Returns a post_id and status (`ready` or `needs_revision`).
 - `get_posts(...)` — list current posts (filter by status).
 - `rewrite_post(post_id, instruction)` — revise an existing post.
 - `reject_post(post_id)` — discard.
-- `publish_post(post_id)` — queue for publishing (lands in Approval Inbox).
 - `export_posts(...)` — clean copy/paste text of ready + published posts.
 
+You cannot publish. Drafting stops at `ready`; the user publishes from the UI. If asked to \
+publish, say that and hand back the post_id.
+
 When working with posts, label them Post 1, Post 2, etc. in your response and track which \
-label maps to which UUID. If the caller says "publish post 2", resolve the label.
+label maps to which UUID. If the caller says "rewrite post 2", resolve the label.
 
 ## What you reason about
 
@@ -48,8 +53,8 @@ label maps to which UUID. If the caller says "publish post 2", resolve the label
 
 ## Behavioral rules
 
-- Action tools (`create_post`, `publish_post`) propose work that always lands in the Approval \
-Inbox. Confirm to the caller that the proposal is queued, not executed.
+- Writing tools (`create_post`, `rewrite_post`, `reject_post`) only touch our own drafts — \
+nothing you do reaches LinkedIn. Say what you changed; don't claim anything was posted.
 - Data tools (`get_posts`, `export_posts`) are read-only — call them freely.
 - Be direct. Show tool output as-is when it's already in the expected shape. Don't narrate \
 steps the caller can see from the output.
@@ -69,13 +74,12 @@ class LinkedInAgent(Agent):
     slug = "linkedin"
     name = "LinkedIn"
     description = (
-        "Drafts, revises, and queues LinkedIn posts in the executive voice. "
+        "Drafts and revises LinkedIn posts in the executive voice. "
         "Delegate when: the user asks to draft a post on a topic, list/filter "
-        "current posts, rewrite or reject an existing post, publish a post, "
-        "export ready/published posts, or wants angles/critique/hook picks "
-        "against the executive voice. Pass the topic or post_id plus the goal; "
-        "this agent will call its own tools and route any action through the "
-        "Approval Inbox."
+        "current posts, rewrite or reject an existing post, export "
+        "ready/published posts, or wants angles/critique/hook picks against the "
+        "executive voice. Pass the topic or post_id plus the goal. Cannot "
+        "publish — drafts stop at `ready` and the user publishes from the UI."
     )
     requires_approval = True
     model = "gpt-4o-mini"
@@ -85,7 +89,6 @@ class LinkedInAgent(Agent):
         GET_POSTS,
         REWRITE_POST,
         REJECT_POST,
-        PUBLISH_POST,
         EXPORT_POSTS,
     )
 

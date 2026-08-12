@@ -109,10 +109,10 @@ export default function LlmCalls() {
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="px-6 pb-6 space-y-6 max-w-7xl mx-auto">
       <div>
-        <h1 className="text-xl font-semibold text-slate-100">LLM Calls</h1>
-        <p className="text-sm text-slate-400 mt-0.5">
+        <h1 className="text-xl font-semibold text-slate-900">LLM Calls</h1>
+        <p className="text-sm text-slate-600 mt-0.5">
           {loading && !summary ? '…' : `${summary?.total_calls ?? 0} total calls`}
         </p>
       </div>
@@ -122,7 +122,7 @@ export default function LlmCalls() {
         <StatCard
           label="Total calls"
           value={fmtNumber(summary?.total_calls ?? 0)}
-          icon={<Activity className="w-4 h-4 text-cyan-400" />}
+          icon={<Activity className="w-4 h-4 text-cyan-600" />}
         />
         <StatCard
           label="Total tokens"
@@ -132,7 +132,7 @@ export default function LlmCalls() {
               ? `${fmtNumber(summary.total_prompt_tokens)} in · ${fmtNumber(summary.total_completion_tokens)} out`
               : undefined
           }
-          icon={<Zap className="w-4 h-4 text-amber-400" />}
+          icon={<Zap className="w-4 h-4 text-amber-600" />}
         />
         <StatCard
           label="Avg latency"
@@ -141,8 +141,8 @@ export default function LlmCalls() {
         <StatCard
           label="Error rate"
           value={summary ? fmtPercent(summary.error_rate) : '—'}
-          icon={<AlertCircle className={`w-4 h-4 ${summary && summary.error_rate > 0 ? 'text-rose-400' : 'text-slate-500'}`} />}
-          accent={summary && summary.error_rate > 0 ? 'text-rose-400' : undefined}
+          icon={<AlertCircle className={`w-4 h-4 ${summary && summary.error_rate > 0 ? 'text-rose-600' : 'text-slate-500'}`} />}
+          accent={summary && summary.error_rate > 0 ? 'text-rose-600' : undefined}
         />
       </div>
 
@@ -153,7 +153,7 @@ export default function LlmCalls() {
           rows={
             summary?.by_model.map((r) => ({
               label: r.model,
-              labelClass: 'font-mono text-cyan-400',
+              labelClass: 'font-mono text-cyan-600',
               calls: r.calls,
               tokens: r.tokens,
             })) ?? []
@@ -164,7 +164,7 @@ export default function LlmCalls() {
           rows={
             summary?.by_agent.map((r) => ({
               label: r.agent_slug ?? '— (no agent)',
-              labelClass: r.agent_slug ? 'text-slate-200' : 'text-slate-500 italic',
+              labelClass: r.agent_slug ? 'text-slate-800' : 'text-slate-500 italic',
               calls: r.calls,
               tokens: r.tokens,
             })) ?? []
@@ -173,11 +173,11 @@ export default function LlmCalls() {
       </div>
 
       {/* Filter bar */}
-      <div className="flex items-center gap-3 bg-slate-900 border border-slate-800 rounded-lg px-4 py-3">
+      <div className="flex items-center gap-3 bg-white border border-slate-200 rounded-lg px-4 py-3">
         <Filter className="w-4 h-4 text-slate-500" />
         <span className="text-xs text-slate-500 font-medium uppercase tracking-wide">Filters</span>
         <select
-          className="bg-slate-800 border border-slate-700 text-slate-300 text-xs rounded px-2 py-1 ml-2"
+          className="bg-slate-100 border border-slate-300 text-slate-700 text-xs rounded px-2 py-1 ml-2"
           value={agentSlug}
           onChange={(e) => setAgentSlug(e.target.value)}
         >
@@ -187,7 +187,7 @@ export default function LlmCalls() {
           ))}
         </select>
         <select
-          className="bg-slate-800 border border-slate-700 text-slate-300 text-xs rounded px-2 py-1"
+          className="bg-slate-100 border border-slate-300 text-slate-700 text-xs rounded px-2 py-1"
           value={model}
           onChange={(e) => setModel(e.target.value)}
         >
@@ -197,7 +197,7 @@ export default function LlmCalls() {
           ))}
         </select>
         <select
-          className="bg-slate-800 border border-slate-700 text-slate-300 text-xs rounded px-2 py-1"
+          className="bg-slate-100 border border-slate-300 text-slate-700 text-xs rounded px-2 py-1"
           value={status}
           onChange={(e) => setStatus(e.target.value as '' | 'ok' | 'error')}
         >
@@ -208,10 +208,10 @@ export default function LlmCalls() {
       </div>
 
       {/* Calls table */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-slate-800 text-xs text-slate-500 uppercase tracking-wide">
+            <tr className="border-b border-slate-200 text-xs text-slate-500 uppercase tracking-wide">
               <th className="w-6 px-3 py-3" />
               <th className="text-left px-4 py-3 font-medium">Timestamp</th>
               <th className="text-left px-4 py-3 font-medium">Model</th>
@@ -269,12 +269,12 @@ function StatCard({
   label, value, sub, icon, accent,
 }: { label: string; value: string; sub?: string; icon?: React.ReactNode; accent?: string }) {
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+    <div className="bg-white border border-slate-200 rounded-xl p-5">
       <div className="flex items-center justify-between mb-1">
         <p className="text-xs text-slate-500">{label}</p>
         {icon}
       </div>
-      <p className={`text-3xl font-bold ${accent ?? 'text-slate-100'}`}>{value}</p>
+      <p className={`text-3xl font-bold ${accent ?? 'text-slate-900'}`}>{value}</p>
       {sub && <p className="text-xs text-slate-500 mt-1">{sub}</p>}
     </div>
   );
@@ -289,16 +289,16 @@ interface BreakdownRow {
 
 function BreakdownTable({ title, rows }: { title: string; rows: BreakdownRow[] }) {
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-      <div className="px-5 py-3 border-b border-slate-800">
-        <h2 className="text-sm font-semibold text-slate-300">{title}</h2>
+    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+      <div className="px-5 py-3 border-b border-slate-200">
+        <h2 className="text-sm font-semibold text-slate-700">{title}</h2>
       </div>
       {rows.length === 0 ? (
         <div className="px-5 py-6 text-center text-xs text-slate-500">No data</div>
       ) : (
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-slate-800 text-xs text-slate-500 uppercase tracking-wide">
+            <tr className="border-b border-slate-200 text-xs text-slate-500 uppercase tracking-wide">
               <th className="text-left px-5 py-2 font-medium">Name</th>
               <th className="text-right px-5 py-2 font-medium">Calls</th>
               <th className="text-right px-5 py-2 font-medium">Tokens</th>
@@ -306,10 +306,10 @@ function BreakdownTable({ title, rows }: { title: string; rows: BreakdownRow[] }
           </thead>
           <tbody>
             {rows.map((r, i) => (
-              <tr key={`${r.label}-${i}`} className={i < rows.length - 1 ? 'border-b border-slate-800/60' : ''}>
+              <tr key={`${r.label}-${i}`} className={i < rows.length - 1 ? 'border-b border-slate-200' : ''}>
                 <td className={`px-5 py-2 text-xs ${r.labelClass}`}>{r.label}</td>
-                <td className="px-5 py-2 text-xs text-slate-300 text-right tabular-nums">{fmtNumber(r.calls)}</td>
-                <td className="px-5 py-2 text-xs text-slate-300 text-right tabular-nums">{fmtNumber(r.tokens)}</td>
+                <td className="px-5 py-2 text-xs text-slate-700 text-right tabular-nums">{fmtNumber(r.calls)}</td>
+                <td className="px-5 py-2 text-xs text-slate-700 text-right tabular-nums">{fmtNumber(r.tokens)}</td>
               </tr>
             ))}
           </tbody>
@@ -331,40 +331,40 @@ function CallRow({
   return (
     <>
       <tr
-        className={`${rowBorderClass} border-slate-800 hover:bg-slate-800/40 cursor-pointer transition-colors`}
+        className={`${rowBorderClass} border-slate-200 hover:bg-slate-50 cursor-pointer transition-colors`}
         onClick={onToggle}
       >
-        <td className="px-3 py-2.5 text-slate-600">
+        <td className="px-3 py-2.5 text-slate-400">
           {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
         </td>
         <td className="px-4 py-2.5 text-xs text-slate-500 whitespace-nowrap">{fmtTime(call.started_at)}</td>
-        <td className="px-4 py-2.5 font-mono text-xs text-cyan-400 whitespace-nowrap">
+        <td className="px-4 py-2.5 font-mono text-xs text-cyan-600 whitespace-nowrap">
           {call.model}
           {call.streamed && (
             <span className="ml-1.5 text-[10px] text-slate-500 uppercase tracking-wide">stream</span>
           )}
         </td>
-        <td className="px-4 py-2.5 text-xs text-slate-300 whitespace-nowrap">{call.agent_slug ?? '—'}</td>
-        <td className="px-4 py-2.5 text-xs text-slate-400 max-w-[260px] truncate">{call.purpose ?? '—'}</td>
+        <td className="px-4 py-2.5 text-xs text-slate-700 whitespace-nowrap">{call.agent_slug ?? '—'}</td>
+        <td className="px-4 py-2.5 text-xs text-slate-600 max-w-[260px] truncate">{call.purpose ?? '—'}</td>
         <td className="px-4 py-2.5">
           <span
             className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${
               call.status === 'ok'
-                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/40'
+                : 'bg-rose-500/10 text-rose-600 border border-rose-500/40'
             }`}
           >
             {call.status}
           </span>
         </td>
-        <td className="px-4 py-2.5 text-xs text-slate-400 text-right tabular-nums whitespace-nowrap">
+        <td className="px-4 py-2.5 text-xs text-slate-600 text-right tabular-nums whitespace-nowrap">
           {fmtLatency(call.latency_ms)}
         </td>
-        <td className="px-4 py-2.5 text-xs text-slate-300 text-right tabular-nums whitespace-nowrap">
+        <td className="px-4 py-2.5 text-xs text-slate-700 text-right tabular-nums whitespace-nowrap">
           {call.total_tokens != null ? (
             <>
               {fmtNumber(call.total_tokens)}
-              <span className="text-slate-600 ml-1">
+              <span className="text-slate-400 ml-1">
                 ({fmtNumber(call.prompt_tokens)}/{fmtNumber(call.completion_tokens)})
               </span>
             </>
@@ -372,7 +372,7 @@ function CallRow({
         </td>
       </tr>
       {open && (
-        <tr className="border-b border-slate-800 bg-slate-950/50">
+        <tr className="border-b border-slate-200 bg-slate-50">
           <td colSpan={8} className="px-8 py-4">
             <CallDetailView call={call} detail={detail} />
           </td>
@@ -392,11 +392,11 @@ function CallDetailView({
     return <p className="text-xs text-slate-500 animate-pulse">Loading details…</p>;
   }
   if (detail === 'error') {
-    return <p className="text-xs text-rose-400">Failed to load call detail.</p>;
+    return <p className="text-xs text-rose-600">Failed to load call detail.</p>;
   }
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-400">
+      <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-600">
         <span><span className="text-slate-500">id</span> {detail.id}</span>
         <span><span className="text-slate-500">provider</span> {detail.provider}</span>
         {detail.workflow_id && <span><span className="text-slate-500">workflow</span> <span className="font-mono">{detail.workflow_id}</span></span>}
@@ -406,7 +406,7 @@ function CallDetailView({
       {call.status === 'error' && detail.error && (
         <div>
           <p className="text-xs text-slate-500 uppercase tracking-wide font-semibold mb-2">Error</p>
-          <pre className="text-xs text-rose-400 bg-slate-950 rounded-lg p-3 overflow-x-auto font-mono leading-relaxed whitespace-pre-wrap">
+          <pre className="text-xs text-rose-700 bg-slate-50 rounded-lg p-3 overflow-x-auto font-mono leading-relaxed whitespace-pre-wrap">
             {detail.error}
           </pre>
         </div>
@@ -423,7 +423,7 @@ function JsonBlock({ title, value }: { title: string; value: unknown }) {
   return (
     <div>
       <p className="text-xs text-slate-500 uppercase tracking-wide font-semibold mb-2">{title}</p>
-      <pre className="text-xs text-emerald-400 bg-slate-950 rounded-lg p-3 overflow-auto font-mono leading-relaxed max-h-96">
+      <pre className="text-xs text-emerald-700 bg-slate-50 rounded-lg p-3 overflow-auto font-mono leading-relaxed max-h-96">
         {value == null ? '—' : JSON.stringify(value, null, 2)}
       </pre>
     </div>
