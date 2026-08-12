@@ -87,7 +87,7 @@ _Avoid_: caller agent, triggering agent.
 ## Example dialogue
 
 > **Dev:** Jacob wants to draft a reply to an inbound lead. Where does this live?
-> **Domain:** BDR — it's an agentic task. Revenue-ops calls `ask_agent("bdr", "draft a reply for lead@example.com")`. BDR decides to call its HubSpot tool, gets the context, drafts the reply, returns it. Revenue-ops surfaces it in chat.
+> **Domain:** BDR. Revenue-ops calls `ask_agent("bdr", "draft a reply for Sarah Chen, VP Eng at Acme — they asked about our modernization work")`. BDR drafts in the outreach voice and returns it; revenue-ops surfaces it in chat. Note the caller supplies the context: BDR has had no tools since HubSpot was removed, so a bare email address gets you a draft with nothing specific in it.
 > **Dev:** Why not just add a `draft_reply` tool to chief-of-staff?
 > **Domain:** Because that's how you end up with 100 tools on the orchestrator. BDR owns the outreach domain — the tools, the voice, the logic. Revenue-ops just routes.
 > **Dev:** What if I need to score a lead as a sub-step inside an outreach tool?
@@ -95,7 +95,7 @@ _Avoid_: caller agent, triggering agent.
 > **Dev:** When is something a prescribed workflow vs. an agentic task?
 > **Domain:** Prescribed workflow when the process is fixed and the steps should never change without a code change — that's a tool returning `Done | AwaitingApproval | Blocked`. Agentic task when the agent should decide the approach. "Compose this email and propose sending it" is a prescribed workflow. "Draft a reply right now" is an agentic task.
 > **Dev:** BDR drafts an email — does it go through propose-approve-execute?
-> **Domain:** Only if it's being sent. A draft surfaced in chat is not a write — it's ephemeral. The moment it would touch an external system (Gmail, HubSpot) or persist to the DB, it becomes a proposed action: the tool returns `AwaitingApproval` and an executor runs after a human approves.
+> **Domain:** Only if it's being sent. A draft surfaced in chat is not a write — it's ephemeral. The moment it would touch an external system (Gmail, Harvest) or persist to the DB, it becomes a write — and per [ADR-0004](docs/adr/0004-operator-initiated-writes.md) how it gets authorized depends on who initiated it. Agent-initiated: the tool returns `AwaitingApproval` and an executor runs after a human approves. Operator-initiated: the human is already looking at the payload in the UI, and the click is the authorization.
 > **Dev:** Why can't the LLM just call the Gmail-send tool directly once the user said yes in chat?
 > **Domain:** Trust boundary — Rule #3. The LLM never holds the write capability. It proposes by returning `AwaitingApproval`; the executor that actually sends lives in a registry the LLM cannot reach. The user approves via the inbox UI, not by talking to the agent.
 

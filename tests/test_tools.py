@@ -19,7 +19,6 @@ import pytest
 
 from app.agents.revenue_ops_agent import RevenueOpsAgent
 
-
 # ── Agent-level least-privilege enforcement ─────────────────────────────────
 
 

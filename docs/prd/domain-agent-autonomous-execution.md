@@ -1,6 +1,17 @@
 ---
-status: ready-for-agent
+status: superseded
 ---
+
+> **Historical.** This plan shipped as written, then was partly undone on
+> 2026-08-10 when HubSpot was removed from the system. The `run_agent_task`
+> ReAct primitive it introduced is alive and is what drives every domain-agent
+> delegation. The three CRM tools it specified — `get_contact_by_email`,
+> `get_company_by_id`, `get_form_submission` — and `app/integrations/hubspot.py`
+> are deleted, which left the BDR agent toolless: it still drafts in the BDR
+> voice, but from context the caller passes it rather than context it fetches.
+>
+> The document is kept unedited below as the record of why the ReAct loop exists.
+> Read references to HubSpot tools as history, not as current behaviour.
 
 ## Problem Statement
 

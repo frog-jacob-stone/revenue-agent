@@ -16,7 +16,7 @@ Technical professionals (revenue ops, sales leaders, founders) who want to build
 **They need to understand:**
 - The propose/approve/execute pattern — why it exists and when to enforce it
 - Multi-step chain design — LLM steps, tool calls, critique loops, checkpoints
-- How to wire agents to real business data (Harvest, HubSpot, Airtable)
+- How to wire agents to real business data (Harvest, Airtable)
 - How to direct AI coding tools to build, extend, and debug agentic systems
 
 ## Scope
@@ -31,18 +31,18 @@ Technical professionals (revenue ops, sales leaders, founders) who want to build
 - ✅ Analytics (runs, approval rates, summary stats)
 - ✅ Settings (integrations, cron schedules, preferences)
 - ✅ Revenue recognition workflow (Harvest → compute → Airtable)
-- ✅ Outreach workflow (HubSpot → draft → critique × 2 → Gmail)
 - ✅ Content creation + publishing workflow (brief → strategy → draft → voice review → LinkedIn)
 - ✅ Critique loops with retry budgets and rewind logic
 - ✅ Append-only audit log with full state machine coverage
 
 ### Out of Scope
+- ❌ CRM and prospecting integrations — HubSpot and Apollo were removed on 2026-08-10; Frogslayer no longer uses either. This retired the outreach workflow (was: CRM pull → draft → critique × 2 → Gmail) and left the BDR agent toolless, drafting from context the caller supplies.
 - ❌ Multi-user / role-based access control (v1 is single-user)
 - ❌ LangChain, CrewAI, and similar agent frameworks — raw SDKs only for LLM calls
 - ❌ Document ingestion pipeline (SharePoint → pgvector)
 - ❌ Brand research workflow (deferred — needs ingestion first)
 - ❌ Real-time worker queue (Arq + Redis) — FastAPI BackgroundTasks for now
-- ❌ Invoice operations (retired; re-implement when use case lands)
+- 🔨 Invoice operations — **in progress.** Monthly Harvest draft-invoice creation, specified in `docs/prd/harvest-invoicing-requirements.md`. Pre-flight planning is built and read-only; draft creation (Phase 3) and fixed-fee/recurring billing types (Phase 4) are not. The system never sends, deletes, or modifies an invoice — enforced by a CI guardrail test, not convention.
 - ❌ Agent self-modification of system prompts at runtime
 
 ## Stack
@@ -55,13 +55,13 @@ Technical professionals (revenue ops, sales leaders, founders) who want to build
 | Orchestration | LangGraph (graphs, conditional edges, checkpointer); migration in progress per `.agent/plans/3.langgraph-multi-agent-rearchitecture.md` |
 | LLM | Anthropic + OpenAI (raw SDKs; no LangChain) |
 | Integration bus | n8n (triggers + third-party I/O only; no business logic) |
-| Integrations | Harvest, Airtable, Forecast, HubSpot, Gmail |
-| Secrets | Doppler |
+| Integrations | Harvest, Airtable, Forecast, Gmail |
+| Secrets | Gitignored env files (`app/.env`, `.env.production`) |
 
 ## Constraints
 
 - **No write without an approved action row** — every CUD operation flows through `proposed → approved → executing → completed` (v1) or `pending → approved → executed` on the `approvals` table (v2)
-- Agents never call HubSpot / Gmail / Harvest directly — only services execute after approval
+- Agents never call Harvest / Gmail / Airtable directly — only services execute after approval
 - LangGraph is the orchestration layer (graphs, state, checkpointer, interrupts). LLM calls inside nodes use raw `anthropic` / `openai` SDKs — no LangChain runtime.
 - Async everywhere; every state-changing service function calls `write_audit_event()`
 - Schema changes go through `supabase/migrations/` — never edit the DB by hand
@@ -100,7 +100,7 @@ Every state transition writes a row to `audit_log`. The inbox is the canonical r
 
 ## Module 2: Agent Dashboard
 
-**Build:** Agent status cards grid (agent name, color indicator, status chip, last run time, pending approval count, actions taken today); global error banner when any agent is in error state; recent activity feed (last 10–20 actions across all agents, with agent, type, target, outcome); manual trigger buttons per agent; "Reach out" button wired to the outreach workflow trigger (prompts for HubSpot contact ID, fires `POST /workflows/outreach`, handles async 202 response)
+**Build:** Agent status cards grid (agent name, color indicator, status chip, last run time, pending approval count, actions taken today); global error banner when any agent is in error state; recent activity feed (last 10–20 actions across all agents, with agent, type, target, outcome); manual trigger buttons per agent
 
 **Learn:** Agent status as a runtime concept — idle, running, paused. How a dashboard button triggers an orchestrated backend workflow without blocking the HTTP response (async 202 + BackgroundTasks pattern). Designing for operator trust: the dashboard's job is to answer "is everything working?" at a glance, not to expose implementation details.
 
@@ -148,9 +148,9 @@ Every state transition writes a row to `audit_log`. The inbox is the canonical r
 
 ## Module 8: Settings
 
-**Build:** Integration status cards (HubSpot, Apollo, OpenAI, Slack — connected/not-configured indicators with edit/connect modals); cron schedule table (6 agents × cron expression + description, with expression editor); timezone preference selector with save handler; integration connect/edit flows with credential input fields
+**Build:** Integration status cards (Harvest, Airtable, OpenAI, Slack — connected/not-configured indicators with edit/connect modals); cron schedule table (6 agents × cron expression + description, with expression editor); timezone preference selector with save handler; integration connect/edit flows with credential input fields
 
-**Learn:** Integration management at the operator layer. How cron schedules map to n8n trigger configurations (n8n calls FastAPI; FastAPI does not call n8n). Doppler as the secrets layer — why credentials are never stored in the DB. When to surface integration health in the UI vs. relying on alerting. The boundary between what belongs in Settings vs. what belongs in agent config panels.
+**Learn:** Integration management at the operator layer. How cron schedules map to n8n trigger configurations (n8n calls FastAPI; FastAPI does not call n8n). Why credentials live in the environment and are never stored in the DB. When to surface integration health in the UI vs. relying on alerting. The boundary between what belongs in Settings vs. what belongs in agent config panels.
 
 ---
 
@@ -168,11 +168,13 @@ These are backend capabilities that the UI above operates on. Each is a self-con
 
 ---
 
-## Workflow B: Outreach
+## Workflow B: Outreach — *removed*
 
-**Build:** `outreach_chain` (`prompt_chain_action` pattern): `_pull_hubspot_contact` (contact + company data) → `_web_search_company` (funding, news signals) → `_consolidate_context` (LLM: 3–4 sentence brief) → `_retrieve_knowledge_base` (GTM blurb) → `_draft_email` (LLM: to, subject, body) → `_voice_critique` (voice-critic agent; max 3 attempts; retries step 4 on fail) → `_accuracy_critique` (accuracy-critic agent; max 2 attempts; retries step 4 on fail) → `_propose_send` execution approval → `_gmail_send`. Voice profile loaded from `memories` (`kind=preference`, `metadata.kind=voice_profile`) at chain runtime. Stub fallbacks for all external calls (HubSpot, web search, Gmail, LLM) enable full chain execution in dev without credentials.
+Retired on 2026-08-10 along with the HubSpot integration. The chain began with a CRM contact pull, so removing HubSpot removed its first step and its reason to exist. Nothing replaced it; outbound is not currently a system concern.
 
-**Learn:** `prompt_chain_action` pattern. Critique loops as a quality gate: how rewind-and-retry works (`retry_of_action_id` chains, `attempt_number` increments, `max_attempts` budget). Why voice and accuracy are separate critics — different failure modes, different retry budgets, different evaluation logic. Budget exhaustion → workflow `failed` (not silent skip). How stub fallbacks let you build and test a complete chain before any integration is live.
+What the BDR agent retains is the drafting half: hand it a name, role, company, and a signal, and it returns a first-touch draft in the Frogslayer voice. It cannot look anything up.
+
+**Still worth learning from it:** the critique-loop pattern this workflow demonstrated — rewind-and-retry with `retry_of_action_id` chains, `attempt_number` increments, and a `max_attempts` budget, where exhaustion fails the workflow rather than silently skipping. Separate voice and accuracy critics, because they catch different failure modes and deserve different retry budgets. That pattern is now inline Python in tools per [ADR-0002](docs/adr/0002-tools-not-graphs.md), not a graph.
 
 ---
 
@@ -188,7 +190,7 @@ These are backend capabilities that the UI above operates on. Each is a self-con
 
 By the end, you should have:
 
-- ✅ A running revenue operations system connected to real business data (Harvest, Airtable, HubSpot)
+- ✅ A running revenue operations system connected to real business data (Harvest, Airtable)
 - ✅ Deep understanding of the propose/approve/execute pattern — why it exists and how to enforce it
 - ✅ Ability to design multi-step chains with LLM steps, tool calls, critique loops, and conditional paths
 - ✅ Full schema fluency — `actions`, `workflows`, `memories`, `audit_log`, `social_posts`, `knowledge_base`

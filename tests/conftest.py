@@ -34,9 +34,12 @@ os.environ["DATABASE_URL"] = _TEST_DB_URL
 os.environ.setdefault("ENV", "test")
 
 # ── Now safe to import everything else ───────────────────────────────────────
-import asyncpg
-import pytest
-from httpx import ASGITransport, AsyncClient
+# noqa: E402 on each — the position is load-bearing, not accidental. These must
+# follow the os.environ writes above, because importing anything under `app.`
+# evaluates Settings(), and Settings() reads DATABASE_URL/ENV exactly once.
+import asyncpg  # noqa: E402
+import pytest  # noqa: E402
+from httpx import ASGITransport, AsyncClient  # noqa: E402
 
 _MIGRATIONS_DIR = Path(__file__).parent.parent / "supabase" / "migrations"
 _MIGRATION_SQLS = [
@@ -106,6 +109,17 @@ async def _test_pool() -> asyncpg.Pool:
     # Necessary because CREATE POLICY is not idempotent in migration 0001.
     admin = await asyncpg.connect(admin_url)
     try:
+        # Migration 0001 generates RLS policies `to service_role`, and Postgres
+        # requires the role to exist. A Supabase cluster pre-provisions these; a
+        # stock postgres image does not, which is what CI runs. Roles are
+        # cluster-scoped, so creating them here survives the DROP DATABASE below.
+        # `anon` and `authenticated` are unreferenced today and created anyway —
+        # they cost nothing and pre-empt the next RLS migration.
+        for role in ("anon", "authenticated", "service_role"):
+            await admin.execute(
+                f"do $$ begin create role {role} nologin noinherit; "
+                f"exception when duplicate_object then null; end $$;"
+            )
         await admin.execute(
             f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)'
         )
@@ -159,47 +173,83 @@ async def test_agent_slug(test_agent_id: uuid.UUID) -> str:
 
 @pytest.fixture(scope="session")
 def _test_user_credentials() -> tuple[str, str]:
-    """Pull test user email/password from env. The user must exist in Supabase
-    Auth (create it manually via Supabase Studio at http://127.0.0.1:54323)."""
+    """Test user email/password from env. The user is created on demand below."""
     email = os.environ.get("TEST_USER_EMAIL")
     password = os.environ.get("TEST_USER_PASSWORD")
     if not email or not password:
         raise RuntimeError(
-            "TEST_USER_EMAIL and TEST_USER_PASSWORD must be set in app/.env.\n"
-            "Create the user via Supabase Studio (http://127.0.0.1:54323 → "
-            "Authentication → Add User) first."
+            "TEST_USER_EMAIL and TEST_USER_PASSWORD must be set in app/.env."
         )
     return email, password
 
 
 @pytest.fixture(scope="session")
 async def test_access_token(_test_user_credentials: tuple[str, str]) -> str:
-    """Sign in the test user against the local Supabase Auth server and return
-    the access token. Session-scoped so we hit the auth endpoint once."""
+    """A real access token. Session-scoped, so auth is hit once per run.
+
+    Two modes, chosen by `TEST_AUTH_MODE`:
+
+    - `supabase` (default) — a genuine password grant against the local Supabase
+      Auth server. Highest fidelity, and what a developer gets by default.
+    - `local-key` — sign a token with an ephemeral key and point `app.auth` at a
+      stub JWKS client. Used by CI, which has Postgres but no Supabase stack. See
+      tests/_local_jwt.py for exactly what this does and does not still verify.
+    """
+    if os.environ.get("TEST_AUTH_MODE", "supabase") == "local-key":
+        from tests._local_jwt import install
+
+        return install()
+
     import httpx
 
     from app.config import settings
 
-    if not settings.supabase_url or not settings.supabase_publishable_key:
+    # Read from the environment rather than from Settings. The publishable key
+    # is needed only to talk to Supabase Auth from this fixture — no application
+    # code path reads it — so it is not a Settings field, and having it there
+    # meant every production deploy carried a variable the app never used.
+    publishable_key = os.environ.get("SUPABASE_PUBLISHABLE_KEY", "")
+    if not settings.supabase_url or not publishable_key:
         raise RuntimeError(
             "SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY must be set in app/.env."
         )
     email, password = _test_user_credentials
+    base = settings.supabase_url.rstrip("/")
+    headers = {"apikey": publishable_key, "Content-Type": "application/json"}
+    creds = {"email": email, "password": password}
+
     async with httpx.AsyncClient(timeout=10.0) as http:
-        res = await http.post(
-            f"{settings.supabase_url.rstrip('/')}/auth/v1/token",
-            params={"grant_type": "password"},
-            headers={
-                "apikey": settings.supabase_publishable_key,
-                "Content-Type": "application/json",
-            },
-            json={"email": email, "password": password},
-        )
+
+        async def sign_in() -> httpx.Response:
+            return await http.post(
+                f"{base}/auth/v1/token",
+                params={"grant_type": "password"},
+                headers=headers,
+                json=creds,
+            )
+
+        res = await sign_in()
+
+        # Create the user rather than telling a human to. This used to be a
+        # manual step in Supabase Studio, which meant a fresh clone could not run
+        # the suite and CI could not run it at all. The local stack has
+        # enable_signup with confirmations off (supabase/config.toml), so the
+        # public endpoint yields a usable, pre-confirmed user with nothing but
+        # the anon key — no service-role key, and no hand-written rows in
+        # GoTrue's private schema, which changes shape between releases.
+        #
+        # Guarded on ENV=test, and on a hosted project signups are disabled, so
+        # this cannot create users anywhere but a local stack.
+        if res.status_code == 400 and settings.env == "test":
+            await http.post(f"{base}/auth/v1/signup", headers=headers, json=creds)
+            res = await sign_in()
+
     if res.status_code != 200:
         raise RuntimeError(
-            f"Failed to sign in test user (status={res.status_code}): "
-            f"{res.text}\nConfirm the user exists in Supabase Studio and "
-            f"the credentials in app/.env match."
+            f"Failed to sign in test user (status={res.status_code}): {res.text}\n"
+            f"Is `supabase start` running, and do TEST_USER_EMAIL / "
+            f"TEST_USER_PASSWORD in app/.env match an existing user? "
+            f"(Set TEST_AUTH_MODE=local-key to run without Supabase Auth.)"
         )
     return res.json()["access_token"]
 

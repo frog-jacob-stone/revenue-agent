@@ -17,12 +17,12 @@ from uuid import UUID
 import pytest
 from httpx import AsyncClient
 
-from app.db import get_pool
 from app.agents.tools.base import AwaitingApproval, Blocked, ToolContext
 from app.agents.tools.revenue.trigger_revenue_recognition import (
     TRIGGER_REVENUE_RECOGNITION,
     _trigger_revenue_recognition,
 )
+from app.db import get_pool
 
 
 def _project(
@@ -245,7 +245,7 @@ async def test_approve_with_edited_entries(
 
     projects = [_project(name="Solo", harvest_id=301, airtable_id="recS")]
     mocks = _patch_integrations(projects=projects)
-    pool = await get_pool()
+    await get_pool()
 
     with ExitStack() as stack:
         for cm in _apply_patches(mocks):

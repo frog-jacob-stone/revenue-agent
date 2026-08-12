@@ -23,10 +23,19 @@ Track progress through implementation. Update this file as you complete modules 
 - [-] Realtime — currently polls every 15s; Supabase Realtime subscription not implemented
 
 ### Module 2: Agent Dashboard — `[-]`
-- [x] Summary cards — last run, current status, pending count, actioned today per agent
-- [-] Activity feed — renders but uses hardcoded mock data (`AUDIT_ENTRIES`), not real API
-- [x] Global status banner — error state indicator
-- [-] Quick-trigger buttons — "Reach out" (Outreach) wired to real API with HubSpot ID prompt; all other agents log to console with StubBadge
+- [-] Summary cards — real agents from `GET /agents`: name, description, active/disabled. Last-run, actioned-today, and idle/running/error status were mock-only inventions with no backing data; removed rather than faked
+- [x] Activity feed — last 10 rows from `GET /audit_log`
+- [ ] Global status banner — removed; nothing records an agent error state to banner on
+- [-] Quick-trigger buttons — all agents log to console with StubBadge (the one real trigger, "Reach out", went away with the outreach workflow)
+
+> **No mock fixtures left in the UI.** `ui/src/mocks/index.ts` — a prototype
+> fixture for five agents (`sdr-researcher`, `outreach-agent`, `content-writer`,
+> `proposal-generator`, `slide-deck-agent`) that were never in
+> `app/agents/registry.py` — was deleted on 2026-08-10, along with their five
+> unreachable config panels. Every screen now reads the real API or shows an
+> honest empty state. `ui/src/mocks/` is gone entirely — the Invoices module's
+> shared types and formatters, which were never mock data, now live at
+> `ui/src/invoicing.ts`.
 
 ### Module 3: Agent Detail Pages — `[-]`
 - [x] Agent status indicator — idle/running/paused
@@ -57,7 +66,7 @@ Track progress through implementation. Update this file as you complete modules 
 - [ ] Context attachment — no ability to paste/attach company description or deal notes
 
 ### Module 6: Knowledge Base / Memory Viewer — `[-]`
-- [-] Memory list view — UI scaffold with agent tabs and entry metadata (hardcoded mock data, no API)
+- [-] Memory list view — agent tabs are real (`GET /agents`); the entry list is an honest empty state. Both `/memories` endpoints return 501, so there is nothing to show. Previously filled with mock entries, which made an unbuilt feature look shipped
 - [-] Search input — renders with StubBadge; no filtering logic implemented
 - [-] Add memory modal — form exists (agent, content, tags); submit logs to console only, no `POST /memories`
 - [-] Delete memory entry — button renders; handler logs to console only, no `DELETE /memories/{id}`
@@ -71,7 +80,7 @@ Track progress through implementation. Update this file as you complete modules 
 - [ ] Custom date range picker — not implemented
 
 ### Module 8: Settings — `[-]`
-- [-] Integration status cards — HubSpot, Apollo, OpenAI, Slack connection indicators render (hardcoded static data)
+- [-] Integration status cards — Harvest, Airtable, OpenAI, Slack connection indicators render (hardcoded static data)
 - [-] Cron schedule table — 6 agent schedules with cron expressions display (hardcoded static data)
 - [ ] Integration connect/edit — buttons render with StubBadge; no modal or API calls
 - [ ] Cron expression editor — edit button renders with StubBadge; no editor UI
@@ -98,17 +107,8 @@ Track progress through implementation. Update this file as you complete modules 
 - [ ] Wire `get_revenue_data_slim` into the agent's `get_revenue_data` tool surface — verify the tool actually calls the slim variant, not the full pull
 - [ ] Token-budget guardrail — cap rows returned (or summarize) when a wide date range would blow context; current default is 12-month window but no row cap
 
-### Workflow B: Outreach — `[-]`
-- [x] `outreach_chain` — 10-node LangGraph with two critique loops sharing one `compose_email` node; `interrupt_before=("gmail_send",)`
-- [-] `pull_hubspot` — returns hardcoded stub data; raises `NotImplementedError` if real token present; no HubSpot integration
-- [-] `web_search` — returns hardcoded fake signals; no real web search
-- [x] `consolidate` — Anthropic LLM call via `invoke_agent("outreach-agent", ...)`
-- [-] `retrieve_kb` — hardcoded GTM blurb stub; pgvector retrieval deferred until ingestion pipeline ships
-- [x] `compose_email` — Anthropic LLM call via `invoke_agent("outreach-agent", ...)`; consumes `last_critique_feedback` on retry
-- [x] `voice_critique` — Anthropic LLM call via `invoke_agent("voice-critic", ...)`; voice profile loaded from `memories` at runtime; max 3 attempts; loops to `compose_email` on fail
-- [x] `accuracy_critique` — Anthropic LLM call via `invoke_agent("accuracy-critic", ...)`; max 2 attempts; loops to `compose_email` on fail
-- [x] `propose_send` — execution approval gate (`action_type=send_email`)
-- [ ] `gmail_send` — stub only; logs to console; no Gmail integration
+### Workflow B: Outreach — **removed**
+Deleted with the LangGraph rip-out, then finished off on 2026-08-10 when HubSpot and Apollo were removed. Nothing here survives in code. What remains of outbound is the BDR agent, which drafts from context the caller supplies and has no tools.
 
 ### Workflow C: Content Creation & Publishing — `[-]`
 - [x] `content_creation` — 4-node LangGraph; `voice_review` loops to `draft_post` on fail; no interrupt gate
@@ -120,6 +120,92 @@ Track progress through implementation. Update this file as you complete modules 
 - [-] `post_to_linkedin` — stub only; updates DB status to `published` but does not post; no LinkedIn integration
 - [x] LinkedIn agent (`linkedin`) — domain worker that owns the content tools (`create_post`, `publish_post`, etc.); invoked via `ask_agent` from the single front-door `chief-of-staff` agent. Internal LLM calls inside `create_post` (interpret_brief, draft_post, voice_review) are inlined as prompt constants in `app/agents/tools/content/_creation_prompts.py` rather than separate agent classes.
 - [x] Post state machine — `draft` → `ready` → `published | rejected` (`needs_revision` aspirational; not currently emitted)
+
+### Module 8: Invoicing (Harvest) — `[-]`
+
+Spec: `docs/prd/harvest-invoicing-requirements.md` (+ §12 amendments).
+Plan: `.agent/plans/21.harvest-invoicing-preflight.md`.
+**Drafts only.** One code path writes to Harvest — `POST /v2/invoices` for a single
+released draw. The system cannot **send**, delete, or modify an invoice; those endpoints
+are banned in CI by `tests/test_harvest_write_guardrail.py`. Everything else, including
+every monthly run, is read-only.
+
+Phase 0 — Foundation — `[x]`
+- [x] Harvest client hardening — typed exceptions per status class, contact email in User-Agent, new read methods (`list_projects_detailed`, `list_time_entries`, `list_expenses`, `list_invoices`, `get_invoice_item_categories`, `get_task_assignments`). Rev-rec's `get_time_entries` / `get_invoice_totals_by_project` contracts untouched
+- [x] Dual-bucket rate limiter (`app/integrations/harvest_limiter.py`) — general 100/15s, reports 100/15min, honors `Retry-After`; unit-tested against a fake clock
+- [x] Pagination + 2000-record `per_page` ceiling
+- [x] Migration `20250101000024_billing_invoicing.sql` — 11 tables, RLS, and the two partial unique indexes that make double-billing structurally impossible
+- [x] Config: `HARVEST_USER_AGENT_CONTACT` and credentials only. Every billing tuning value is a constant in the module that reads it — `USE_ROUNDED_HOURS` (rates), `STRAGGLER_LOOKBACK_DAYS` (estimator), `UNMAPPED_LOOKBACK_DAYS` (reconcile), `VARIANCE_PCT_THRESHOLD` (planner). `Settings` holds deployment identity; per-environment or secret only
+- [x] Write guardrail test — scans `app/` for invoice send/delete/patch/payments and `retainer_id`; fails the build if any appears
+
+Phase 1 — Config layer — `[x]`
+- [x] Harvest snapshot (clients, projects, invoice item categories, task assignments) — idempotent upsert
+- [x] Billing-group CRUD with project↔client validation at write time (the 422 caught before it can reach a run)
+- [x] Config reconciliation — unmapped projects with priced uninvoiced time (`UNMAPPED_PROJECT`, error) and without (`UNMAPPED_PROJECT_NO_TIME`, warning), type/client/currency mismatches, archived-project and exhausted-schedule checks. `manual` groups suppress both
+- [x] `app/routers/billing.py` registered with auth
+
+Phase 2 — T&M pre-flight — `[x]`
+- [x] Date resolver — arrears/advance periods, issue dates; tested across month lengths, year boundaries, leap Feb
+- [x] Due-date resolver — enum terms pass through to Harvest, `custom` computed locally
+- [x] T&M estimator — rate ladder (entry → project → task assignment), rounding config, summary types, expenses, straggler/late time
+- [x] Duplicate guard — ledger-aware, so multi-group clients don't false-positive
+- [x] Payload builder — exact `line_items_import` body, always-bounded `from`/`to`
+- [x] Flag engine — the T&M-relevant §7 catalog plus `UNRESOLVED_IN_FLIGHT` and `ALREADY_INVOICED_THIS_RUN`
+- [x] Planner + `plan_snapshot`, re-plan abandons the prior live plan (never an in-flight row)
+- [x] UI wired to live API — runs list, pre-flight, groups, group detail, health strip
+- [x] Persisted per-group approval (migration `0026`, `app/services/billing/review.py`) — nothing is approved by default, the decision survives a reload, error overrides are recorded and sticky, and `UNRESOLVED_IN_FLIGHT` is refused at the service layer
+
+Phase 4 (partial) — Recurring monthly — `[x]`
+- [x] Migration `0025` — `kind` (Harvest invoice item category) on both line-item tables, `is_placeholder` on recurring
+- [x] Recurring resolver — effective-dated line items, `{period_label}` / `{client_name}` rendering
+- [x] Free-form payload builder — literal `line_items`, each with its own `project_id`, so one invoice spans several projects
+- [x] Placeholder lines — hosting pass-through / percentage-based fees go out at $0 for manual completion on the draft; excluded from the estimate, surfaced as `PLACEHOLDER_LINE_ITEMS`
+- [x] `kind` validated against the account's categories at save time **and** plan time (`INVALID_ITEM_CATEGORY`)
+- [x] Line-item editor in the group form, with fee-type dropdown sourced from Harvest
+- [x] Fixed-fee draws — release-gated and billed one at a time from the Draws tab, never on the monthly run (plan `.agent/plans/22.fixed-fee-draws.md`). Migrations `0027` (scheduled to a day, not a month) and `0028` (release state, draw runs, the C6 index split). `app/services/billing/draws.py`; `GET /billing/draws`, `POST /billing/draws/{id}/release`, `POST /billing/draws/{id}/invoice`
+- [x] Draw double-billing guard — one live ledger row per *draw*, a partial unique index alongside the per-month one. Two milestones in one calendar month both bill; the same milestone never bills twice
+- [x] Schedule editing preserves history — `save_draws` upserts by id, refuses to change or remove an invoiced draw. A slipped date is a routine edit and must not reset delivery confirmations
+- [x] Draw invoices are computed, not staged — `GET /billing/draws/{id}/preview` returns the exact POST body and writes nothing. A ready draw expands in the queue for review and is created from there; there is no intermediate persisted invoice to discard
+- [x] `in_flight` — the fourth derived state, read from the live ledger row. Keeps a draw mid-write out of the billable queue and locks its billable fields
+- [x] `DRAW_OVERDUE` / `DRAWS_AWAITING_RELEASE` / `DRAWS_READY_TO_BILL` on the monthly run, so a delivered milestone can't sit unbilled unnoticed
+
+Phase 3 — Execution — `[~]` **the single-draw write path ships; the monthly run's does not.**
+Plan: `.agent/plans/23.draw-invoice-write-path.md`. Operator-initiated with no approval
+row ([ADR-0004](docs/adr/0004-operator-initiated-writes.md)) — the system is
+automation-first now, and the click on a screen showing the exact payload *is* the
+authorization.
+- [x] `harvest.create_invoice` + a `_post` sibling to `_request`. Retries **only** on 429 (the one status proving nothing was created); 4xx, 5xx, and timeouts propagate untouched. The write guardrail needed no loosening — it bans send/delete/patch/payments, never `POST /v2/invoices`
+- [x] §8 protocol in `draws.invoice_draw` — the `in_flight` ledger row is written **and committed** before the POST, in its own transaction. Sharing one transaction with the request would roll back the lock on a crash and leave an invoice in Harvest with no record on our side
+- [x] Four outcomes kept distinct: `created` · `failed` (a 4xx verdict, draw returns to `ready`) · **unknown** (timeout/5xx — row stays `in_flight`, nothing inferred, `DrawWriteUnknown` raised) · refused before any POST
+- [x] PRD 4.4 — `invoiced_run_id` stamped on the consumed draw in the same transaction as the ledger update
+- [x] `POST /billing/draws/{id}/invoice`, human-only. Status codes carry the §8 distinction: 200 created · 409 nothing attempted · 422 Harvest refused · 502 outcome unknown
+- [x] In-flight resolution — `app/services/billing/inflight.py`, `GET /billing/in-flight`, `POST /billing/runs/{run_id}/items/{item_id}/resolve`. Item-level, so the monthly run reuses it verbatim. Linking without an amount leaves `variance` null rather than recording an unverifiable zero
+- [x] Real resolve controls on the Draws tab and in `InFlightModal` (was a stub explaining a manual DB edit)
+- [x] `ApiError` in `ui/src/api.ts` preserves status + raw `detail`, so the 502's recovery instructions render instead of `[object Object]`
+- [x] **Dated when drafted, not when previewed.** `issue_date` defaults to today on every `preview_draw_invoice` call, so a preview from the 10th created on the 12th is issued the 12th and due the 22nd on net-10 terms. Issue and due always move together — Harvest derives the due date from the issue date for enum terms, so they cannot be decoupled without producing an invoice the client can see is wrong. The UI never caches the preview and the create response returns the dates actually used
+- [x] **Invoice notes are sent explicitly** (`payload.resolve_notes`, used by draws *and* the planner). Harvest's account-level default notes reach only invoices created in its own UI — the API neither applies them nor exposes them for reading, so the first live invoice arrived with blank notes and no remit-to instructions. The text duplicates what Harvest stores because nothing can read the original; keep them in step by hand
+- [x] **Settings → Billing** (migration `0029` `billing_settings`, `app/services/billing/settings_store.py`, `GET`/`PATCH /billing/settings`) — `default_invoice_notes` is editable in the UI with no restart, audited with the new value, and validated against a known-key allowlist. Chosen over an env var because this is copy a human edits and reads back; Harvest credentials and `HARVEST_BASE_URI` stay in env, where a wrong value is a broken deploy rather than a business decision
+- [x] **A billed draw no longer vanishes.** Three separate causes, all fixed: the in-card success banner unmounted with the card the moment the draw became `invoiced`; nothing listed billed draws; and draw runs were filtered out of the runs list by default. Now a dismissible page-level confirmation on Draws, plus `/invoices/runs?kind=draw` pre-selecting the draw filter
+- [x] **Drafted tab** (`/invoices/drafted`, `GET /billing/invoices` + `/totals`, `app/services/billing/invoices.py`) — every invoice the system created, both kinds in one list, because the ledger records both and "what have we drafted" is not a question about runs. Named "Drafted" rather than "Billed": the system pushes a draft to Harvest and stops, and billing happens when a human sends it from there. Kind-agnostic by construction: monthly rows appear once that execution ships, with no code change. Filters by kind, can show failed attempts separately, and never counts `failed` or `in_flight` as drafted. Ordered by creation with `harvest_invoice_id` as tiebreak — issue dates are backdated for monthly runs, and one transaction stamps a single `now()`
+- [x] `HARVEST_BASE_URI` for linking out to a created invoice — no API exposes the account web address. Unset, the UI omits the link rather than guessing a subdomain
+- [ ] **Decide the monthly run's dating rule before its execution ships.** `resolve_period` dates those to the period boundary (PRD §2.3), so a July-arrears run executed 3 Sep would be issued 31 Jul and already overdue on net 30. The draw behaviour above does **not** carry over automatically
+- [ ] Monthly-run execution (`create_harvest_draft_invoices` across many groups, sequential, partial-failure handling)
+- [ ] Post-run variance reconciliation
+- [ ] Candidate-invoice picker for in-flight resolution (today: paste the id from Harvest)
+
+Phase 4 — remainder — `[x]`. Every `billing_type` is handled: T&M and `recurring_monthly` plan, `fixed_fee_schedule` bills off-cycle from the Draws tab, `manual` is skipped with no ledger row.
+
+**Gate before monthly-run execution:** run the pre-flight against production Harvest
+and reconcile a full month by hand. Note the ordering trap — the estimator only counts
+time Harvest has not marked `is_billed`, so an already-invoiced month re-plans to
+empty. Plan first, invoice by hand second, compare third.
+
+The gate does **not** cover the draw path and never did: a draw's amount is a number a
+human typed into the schedule and released, so there is no estimate to reconcile.
+
+**Not built and deliberately so:** rev rec has no runner. `TRIGGER_REVENUE_RECOGNITION`
+came out of `revenue-ops` under ADR-0004 and its UI button on the Revenue page is not
+written yet. The `write_rev_rec_entries` executor is untouched and waiting.
 
 ---
 

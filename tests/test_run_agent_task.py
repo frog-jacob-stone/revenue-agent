@@ -7,19 +7,17 @@ tests use the real BDR slug which is always seeded.
 from __future__ import annotations
 
 import json
-import uuid
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from app.agents.base import Agent
+from app.agents.tools.base import ToolContext, ToolDefinition
 from app.integrations.llm import LlmResponse, ToolCall, use_provider
 from app.orchestrator import NodeContext, events
 from app.orchestrator.agent_invoke import run_agent_task
-from app.agents.tools.base import ToolContext, ToolDefinition
 from tests.fakes.llm import FakeProvider
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 

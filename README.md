@@ -13,7 +13,6 @@ FastAPI service that orchestrates AI agents for revenue operations. Every action
 - Python 3.12+
 - [Supabase CLI](https://supabase.com/docs/guides/cli) (`brew install supabase/tap/supabase`)
 - Docker Desktop
-- [Doppler CLI](https://docs.doppler.com/docs/install-cli) (`brew install dopplerhq/cli/doppler`) — agreed secret manager for both local and cloud
 
 ---
 
@@ -35,32 +34,33 @@ Note the `DB URL`, `API URL`, `service_role key`, and `anon key`.
 
 ### 2. Configure environment
 
-**Option A — Doppler (recommended, agreed standard):**
+There are three env files in this repo. Each lives next to whatever reads it, so none of them is interchangeable with the others:
+
+| File | Read by | Purpose |
+|---|---|---|
+| `app/.env` | `app/config.py`, which anchors the path to its own module | Local backend config |
+| `ui/.env` | Vite, via `loadEnv(mode, process.cwd(), …)` from `ui/` | Local frontend config |
+| `.env.production` | `scripts/*.sh` only — no running program | Production deploys ([DEPLOY.md](DEPLOY.md)) |
+
+`.env.production` sits at the root because it spans all three deploy targets — Supabase, Azure, and the Netlify build — so it belongs to no single directory. It must not be moved into `ui/`: Vite auto-loads a file by that name during a production build.
+
+Each has a tracked `*.example` template beside it; the real files are gitignored. For local development you need the first two.
 
 ```bash
-doppler setup   # select the revenue-agents project + dev config
-doppler run -- uvicorn app.main:app --reload
+cp app/.env.example app/.env
 ```
 
-Doppler injects all env vars at runtime; no `.env` file needed.
-
-**Option B — local `.env` (quick start without Doppler):**
-
-```bash
-cp .env.example .env
-```
-
-Populate `.env` with the values from `supabase status`:
+`app/.env` is the only env file the backend reads — `docker-compose.yml` points `env_file` there. Populate it; the Supabase values come from `supabase status`:
 
 | Variable | Where to find it |
 |---|---|
 | `DATABASE_URL` | DB URL from `supabase status` (port 54322) |
 | `SUPABASE_URL` | API URL from `supabase status` (port 54321) |
-| `SUPABASE_SECRET_KEY` | `service_role key` — starts with `sb_secret_` in new CLI |
 | `SUPABASE_PUBLISHABLE_KEY` | `anon key` — starts with `sb_publishable_` in new CLI |
-| `ANTHROPIC_API_KEY` | From [console.anthropic.com](https://console.anthropic.com) |
-| `HUBSPOT_TOKEN` | HubSpot private app token (optional for now) |
-| `APOLLO_API_KEY` | Apollo.io API key (optional for now) |
+| `OPENAI_API_KEY` | From [platform.openai.com](https://platform.openai.com) |
+| `HARVEST_TOKEN` | Harvest personal access token |
+| `HARVEST_ACCOUNT_ID` | Harvest account ID that pairs with the token |
+| `AIRTABLE_API_KEY` | Airtable personal access token |
 
 ### 3. Run migrations
 
@@ -95,14 +95,22 @@ UI runs at http://localhost:3000. Set `VITE_API_URL` in `ui/.env` if the API is 
 docker compose up --build
 ```
 
-> **Note:** Supabase runs separately via `supabase start`. The API container connects to it via `host.docker.internal`. Update `DATABASE_URL` in `.env` to use `host.docker.internal` instead of `127.0.0.1` when running inside Docker.
+> **Note:** Supabase runs separately via `supabase start`. The API container reaches it at `host.docker.internal`, so that is what `DATABASE_URL` and `SUPABASE_URL` in `app/.env` are set to. Compose reads that file itself and injects the values as environment variables — it is not `Settings.env_file` that supplies them in this path.
 
 #### Without Docker (development)
 
 ```bash
 pip install -e ".[test]"
+
+# app/.env is written for Docker, and `host.docker.internal` does not resolve on
+# the host — override the two host-shaped values at launch. Environment variables
+# outrank the env file, so everything else still comes from app/.env.
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres \
+SUPABASE_URL=http://127.0.0.1:54321 \
 uvicorn app.main:app --reload
 ```
+
+`Settings` reads `app/.env` regardless of the directory you launch from — the path is anchored to `app/config.py`, not to the working directory. Credentials load either way; only the two `host.docker.internal` URLs need replacing.
 
 API available at `http://localhost:8000`. Docs at `http://localhost:8000/docs`.
 
@@ -118,6 +126,12 @@ pytest -v
 ```
 
 Tests create real rows in the local DB. No cleanup is performed between runs (each run creates unique test agents), so the DB remains clean enough for repeated local runs. Use `supabase db reset` to wipe and reapply the schema if needed.
+
+---
+
+## Deploying
+
+Everything above is local development and is unaffected by deployment. For production — hosted Supabase, Azure Container Apps, and Netlify, deployed by hand with three commands — see [DEPLOY.md](DEPLOY.md).
 
 ---
 
@@ -154,7 +168,7 @@ app/
     graphs/            # one StateGraph per workflow kind
   agents/
     base.py            # BaseAgent ABC
-  integrations/        # HubSpot, Apollo, Anthropic stubs
+  integrations/        # Harvest, Airtable, Forecast, OpenAI clients
 docs/
   SCHEMA.md            # Source of truth for the DB schema
   ARCHITECTURE.md      # System architecture and agent pattern

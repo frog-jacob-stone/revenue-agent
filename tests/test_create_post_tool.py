@@ -18,13 +18,12 @@ from typing import Any
 
 import pytest
 
+from app.agents.tools.base import Done, ProgressEmitter, ToolContext
+from app.agents.tools.content.create_post import _create_post
 from app.db import get_pool
 from app.integrations.llm import LlmResponse, use_provider
 from app.services import social_posts as svc
-from app.agents.tools.base import Done, ProgressEmitter, ToolContext
-from app.agents.tools.content.create_post import _create_post
 from tests.fakes.llm import FakeProvider
-
 
 _IDEA_JSON = json.dumps({
     "idea_title": "AI agents fail in sales when they over-automate",

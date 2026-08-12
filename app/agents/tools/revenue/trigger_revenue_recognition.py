@@ -16,10 +16,6 @@ import logging
 from datetime import date, timedelta
 from typing import Any
 
-from app.config import settings
-from app.integrations import airtable, forecast, harvest
-from app.services import airtable_sync
-from app.services.revenue import calc_revenue
 from app.agents.tools.base import (
     AwaitingApproval,
     Blocked,
@@ -28,6 +24,10 @@ from app.agents.tools.base import (
     ToolDefinition,
     ToolReturn,
 )
+from app.config import settings
+from app.integrations import airtable, forecast, harvest
+from app.services import airtable_sync
+from app.services.revenue import calc_revenue
 
 logger = logging.getLogger(__name__)
 

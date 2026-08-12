@@ -23,6 +23,16 @@ test = [
     "pytest-asyncio>=0.25.0",
     "httpx>=0.28.0",
     "pytest-env>=1.1.0",
+    # tests/conftest.py loads app/.env with it. Undeclared until now, so it
+    # resolved off whatever ambient interpreter happened to have it — which
+    # works on this laptop and fails at collection on a clean checkout.
+    "python-dotenv>=1.0.0",
+]
+# Separate from `test` so the CI test job does not install a linter and the lint
+# job does not install pytest.
+dev = [
+    "revenue-agents[test]",
+    "ruff>=0.8.0",   # [tool.ruff.lint] below was configured but ruff was in no group
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -33,10 +43,21 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
+# `D:` makes these defaults rather than overrides. Without it pytest-env clobbers
+# the ambient environment, so CI could not point the suite at its own Postgres
+# without prefixing the command — which CLAUDE.md forbids. Now CI sets the
+# variable in the job's `env:` block and still runs a bare `pytest`.
 env = [
-    "ENV=test",
-    "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres_test",
+    "D:ENV=test",
+    "D:TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres_test",
 ]
+
+[tool.ruff]
+# 100, not the default 88. The codebase was written to roughly this width — at
+# 88 there were 162 violations, most of them prose in docstrings that reads worse
+# rewrapped; at 100 there were 32, all genuinely long. Picked to match the code
+# that exists rather than to make the linter quiet.
+line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]

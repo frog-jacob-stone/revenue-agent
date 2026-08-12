@@ -16,7 +16,6 @@ from __future__ import annotations
 import secrets
 from typing import Any
 
-
 # Mirror of ui/src/pages/Chat/nodeLabels.ts. Keep in sync.
 
 # Tool-step labels (ADR-0002). Used when a tool emits `tool_step_started` /

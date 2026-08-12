@@ -1,3 +1,15 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* The app is light-mode only. Pin the document surface so nothing behind the
+   AppShell (overscroll, native form controls) falls back to a dark canvas. */
+@layer base {
+  html {
+    color-scheme: light;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900;
+  }
+}

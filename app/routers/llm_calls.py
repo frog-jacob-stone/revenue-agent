@@ -93,7 +93,9 @@ async def list_llm_calls(
     from_: datetime | None = Query(default=None, alias="from"),
     to: datetime | None = None,
     limit: int = Query(default=100, le=500),
-    cursor: int | None = Query(default=None, description="Return ids strictly less than this value"),
+    cursor: int | None = Query(
+        default=None, description="Return ids strictly less than this value"
+    ),
     pool: asyncpg.Pool = Depends(_db),
 ):
     conditions: list[str] = []

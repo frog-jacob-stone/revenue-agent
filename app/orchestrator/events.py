@@ -50,6 +50,39 @@ class AuditEvent(StrEnum):
     TOOL_FAILED = "tool.failed"
     TOOL_BLOCKED = "tool.blocked"
 
+    # Billing / invoicing. Operator-initiated throughout (ADR-0004): there is no
+    # approval row behind any of these, so this vocabulary is the whole record of
+    # who authorized what. The INVOICE_* events below cover the Harvest write.
+    BILLING_SNAPSHOT_REFRESHED = "billing.snapshot.refreshed"
+    BILLING_GROUP_CREATED = "billing.group.created"
+    BILLING_GROUP_UPDATED = "billing.group.updated"
+    BILLING_GROUP_DEACTIVATED = "billing.group.deactivated"
+    BILLING_RUN_PLANNED = "billing.run.planned"
+    BILLING_RUN_ABANDONED = "billing.run.abandoned"
+    BILLING_ITEM_APPROVED = "billing.item.approved"
+    BILLING_ITEM_UNAPPROVED = "billing.item.unapproved"
+    BILLING_ITEM_OVERRIDDEN = "billing.item.overridden"
+    BILLING_DRAW_RELEASED = "billing.draw.released"
+    BILLING_DRAW_UNRELEASED = "billing.draw.unreleased"
+    # Account-level billing settings. The payload carries the new value, because
+    # this is invoice copy a client reads — "who changed the remit-to details, and
+    # to what" is the question worth answering later.
+    BILLING_SETTINGS_UPDATED = "billing.settings.updated"
+
+    # The Harvest write (PRD §8). Four outcomes, and the trail must distinguish
+    # them: ATTEMPTED is written and committed *before* the POST, so an invoice
+    # created during an outage that never returned still has a record on our side.
+    # UNKNOWN is the ambiguous one — a timeout or 5xx where the invoice may or may
+    # not exist. It is never inferred to be a failure.
+    BILLING_INVOICE_ATTEMPTED = "billing.invoice.attempted"
+    BILLING_INVOICE_CREATED = "billing.invoice.created"
+    BILLING_INVOICE_FAILED = "billing.invoice.failed"
+    BILLING_INVOICE_UNKNOWN = "billing.invoice.unknown"
+    # Human resolution of an UNKNOWN outcome: either linking the invoice that did
+    # get created, or recording that nothing did.
+    BILLING_INVOICE_RESOLVED_LINKED = "billing.invoice.resolved.linked"
+    BILLING_INVOICE_RESOLVED_FAILED = "billing.invoice.resolved.failed"
+
 
 WORKFLOW_STARTED = AuditEvent.WORKFLOW_STARTED
 WORKFLOW_COMPLETED = AuditEvent.WORKFLOW_COMPLETED
@@ -82,3 +115,22 @@ TOOL_CALLED = AuditEvent.TOOL_CALLED
 TOOL_COMPLETED = AuditEvent.TOOL_COMPLETED
 TOOL_FAILED = AuditEvent.TOOL_FAILED
 TOOL_BLOCKED = AuditEvent.TOOL_BLOCKED
+
+BILLING_SNAPSHOT_REFRESHED = AuditEvent.BILLING_SNAPSHOT_REFRESHED
+BILLING_GROUP_CREATED = AuditEvent.BILLING_GROUP_CREATED
+BILLING_GROUP_UPDATED = AuditEvent.BILLING_GROUP_UPDATED
+BILLING_GROUP_DEACTIVATED = AuditEvent.BILLING_GROUP_DEACTIVATED
+BILLING_RUN_PLANNED = AuditEvent.BILLING_RUN_PLANNED
+BILLING_RUN_ABANDONED = AuditEvent.BILLING_RUN_ABANDONED
+BILLING_ITEM_APPROVED = AuditEvent.BILLING_ITEM_APPROVED
+BILLING_ITEM_UNAPPROVED = AuditEvent.BILLING_ITEM_UNAPPROVED
+BILLING_ITEM_OVERRIDDEN = AuditEvent.BILLING_ITEM_OVERRIDDEN
+BILLING_DRAW_RELEASED = AuditEvent.BILLING_DRAW_RELEASED
+BILLING_DRAW_UNRELEASED = AuditEvent.BILLING_DRAW_UNRELEASED
+BILLING_SETTINGS_UPDATED = AuditEvent.BILLING_SETTINGS_UPDATED
+BILLING_INVOICE_ATTEMPTED = AuditEvent.BILLING_INVOICE_ATTEMPTED
+BILLING_INVOICE_CREATED = AuditEvent.BILLING_INVOICE_CREATED
+BILLING_INVOICE_FAILED = AuditEvent.BILLING_INVOICE_FAILED
+BILLING_INVOICE_UNKNOWN = AuditEvent.BILLING_INVOICE_UNKNOWN
+BILLING_INVOICE_RESOLVED_LINKED = AuditEvent.BILLING_INVOICE_RESOLVED_LINKED
+BILLING_INVOICE_RESOLVED_FAILED = AuditEvent.BILLING_INVOICE_RESOLVED_FAILED

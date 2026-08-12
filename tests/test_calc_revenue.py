@@ -9,7 +9,13 @@ import pytest
 from app.services.revenue import calc_revenue
 
 
-def _project(billing_type: str, *, contracted_fees: float = 0.0, hours_logged: float = 0.0, forecast_hours: float = 0.0) -> dict:
+def _project(
+    billing_type: str,
+    *,
+    contracted_fees: float = 0.0,
+    hours_logged: float = 0.0,
+    forecast_hours: float = 0.0,
+) -> dict:
     return {
         "Billing Type": billing_type,
         "Contracted Fees": contracted_fees,
@@ -20,7 +26,9 @@ def _project(billing_type: str, *, contracted_fees: float = 0.0, hours_logged: f
 
 class TestFixedFee:
     def test_partial_completion(self):
-        project = _project("Fixed Fee", contracted_fees=100_000, hours_logged=200, forecast_hours=300)
+        project = _project(
+            "Fixed Fee", contracted_fees=100_000, hours_logged=200, forecast_hours=300
+        )
         revenue, percent_complete, notes = calc_revenue(project, {})
 
         assert percent_complete == 0.4  # 200 / (200 + 300)
@@ -28,7 +36,9 @@ class TestFixedFee:
         assert notes == ""
 
     def test_with_billable_expenses(self):
-        project = _project("Fixed Fee", contracted_fees=100_000, hours_logged=100, forecast_hours=100)
+        project = _project(
+            "Fixed Fee", contracted_fees=100_000, hours_logged=100, forecast_hours=100
+        )
         revenue, percent_complete, notes = calc_revenue(project, {"billable_expenses": 1_500.55})
 
         assert percent_complete == 0.5

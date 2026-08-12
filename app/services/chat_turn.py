@@ -38,13 +38,13 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from app.agents.base import Agent
-from app.agents.registry import AGENTS_BY_SLUG
 from app.agents.chief_of_staff_agent import ChiefOfStaffAgent
-from app.integrations.llm import Attribution, LlmResponse, StreamDelta, dispatch_stream
+from app.agents.registry import AGENTS_BY_SLUG
+from app.agents.tools.base import ProgressEmitter
+from app.integrations.llm import Attribution, LlmResponse, dispatch_stream
 from app.orchestrator import events
 from app.services import audit
 from app.services.activity_builder import ActivityState, apply_event
-from app.agents.tools.base import ProgressEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,9 @@ async def _stream_llm_turn(
     """
     agent = _get_front_door()
 
-    msg_list: list[dict] = [{"role": "system", "content": agent.get_system_prompt()}] + list(messages)
+    msg_list: list[dict] = [
+        {"role": "system", "content": agent.get_system_prompt()}
+    ] + list(messages)
     tools = agent.get_tools()
     last_tool_used: str | None = None
     final_answer: str = ""

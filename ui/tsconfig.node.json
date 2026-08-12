@@ -1,6 +1,14 @@
 {
   "compilerOptions": {
     "composite": true,
+    // Emit outside the source tree. `composite` forces emit, and without these
+    // two settings `tsc -b` drops vite.config.js / vite.config.d.ts next to
+    // vite.config.ts — where they were previously committed. That matters more
+    // than it looks: Vite's DEFAULT_CONFIG_FILES resolves vite.config.js BEFORE
+    // vite.config.ts and stops at the first match, so a stale compiled artifact
+    // silently becomes the live config and every edit to the .ts is a no-op.
+    "outDir": "./node_modules/.tmp",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
     "skipLibCheck": true,
     "module": "ESNext",
     "moduleResolution": "bundler",

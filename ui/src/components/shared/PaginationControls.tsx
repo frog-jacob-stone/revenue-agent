@@ -25,7 +25,7 @@ export default function PaginationControls({
   const end = pageIndex * pageSize + itemsOnPage;
 
   const buttonClass =
-    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-slate-800';
+    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-slate-100';
 
   return (
     <div className="flex items-center justify-between px-1 py-1">

@@ -3,7 +3,6 @@ import { Filter, Download, ChevronDown, ChevronRight } from 'lucide-react';
 import { getAuditLog, listAgents } from '../api';
 import type { AuditLogEntry } from '../api';
 import type { AgentRecord } from '../types';
-import type { AgentId } from '../mocks';
 import AgentBadge from '../components/shared/AgentBadge';
 import ActionTypeChip from '../components/shared/ActionTypeChip';
 import StatusChip from '../components/shared/StatusChip';
@@ -39,14 +38,14 @@ export default function AuditLog() {
   }, [agentSlug, fromDate, outcome]);
 
   return (
-    <div className="p-6 space-y-4 max-w-7xl mx-auto">
+    <div className="px-6 pb-6 space-y-4 max-w-7xl mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-slate-100">Audit Log</h1>
-          <p className="text-sm text-slate-400 mt-0.5">{loading ? '…' : `${entries.length} entries`}</p>
+          <h1 className="text-xl font-semibold text-slate-900">Audit Log</h1>
+          <p className="text-sm text-slate-600 mt-0.5">{loading ? '…' : `${entries.length} entries`}</p>
         </div>
         <button
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
           onClick={() => console.log('export csv')}
         >
           <Download className="w-3.5 h-3.5" />
@@ -56,11 +55,11 @@ export default function AuditLog() {
       </div>
 
       {/* Filter bar */}
-      <div className="flex items-center gap-3 bg-slate-900 border border-slate-800 rounded-lg px-4 py-3">
+      <div className="flex items-center gap-3 bg-white border border-slate-200 rounded-lg px-4 py-3">
         <Filter className="w-4 h-4 text-slate-500" />
         <span className="text-xs text-slate-500 font-medium uppercase tracking-wide">Filters</span>
         <select
-          className="bg-slate-800 border border-slate-700 text-slate-300 text-xs rounded px-2 py-1 ml-2"
+          className="bg-slate-100 border border-slate-300 text-slate-700 text-xs rounded px-2 py-1 ml-2"
           value={agentSlug}
           onChange={e => setAgentSlug(e.target.value)}
         >
@@ -71,12 +70,12 @@ export default function AuditLog() {
         </select>
         <input
           type="date"
-          className="bg-slate-800 border border-slate-700 text-slate-300 text-xs rounded px-2 py-1"
+          className="bg-slate-100 border border-slate-300 text-slate-700 text-xs rounded px-2 py-1"
           value={fromDate}
           onChange={e => setFromDate(e.target.value)}
         />
         <select
-          className="bg-slate-800 border border-slate-700 text-slate-300 text-xs rounded px-2 py-1"
+          className="bg-slate-100 border border-slate-300 text-slate-700 text-xs rounded px-2 py-1"
           value={outcome}
           onChange={e => setOutcome(e.target.value)}
         >
@@ -89,10 +88,10 @@ export default function AuditLog() {
       </div>
 
       {/* Table */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-slate-800 text-xs text-slate-500 uppercase tracking-wide">
+            <tr className="border-b border-slate-200 text-xs text-slate-500 uppercase tracking-wide">
               <th className="w-6 px-3 py-3" />
               <th className="text-left px-4 py-3 font-medium">Timestamp</th>
               <th className="text-left px-4 py-3 font-medium">Agent</th>
@@ -115,10 +114,10 @@ export default function AuditLog() {
               <>
                 <tr
                   key={entry.id}
-                  className={`border-slate-800 hover:bg-slate-800/40 cursor-pointer transition-colors ${i < entries.length - 1 || expanded === String(entry.id) ? 'border-b' : ''}`}
+                  className={`border-slate-200 hover:bg-slate-50 cursor-pointer transition-colors ${i < entries.length - 1 || expanded === String(entry.id) ? 'border-b' : ''}`}
                   onClick={() => setExpanded(expanded === String(entry.id) ? null : String(entry.id))}
                 >
-                  <td className="px-3 py-2.5 text-slate-600">
+                  <td className="px-3 py-2.5 text-slate-400">
                     {expanded === String(entry.id)
                       ? <ChevronDown className="w-3.5 h-3.5" />
                       : <ChevronRight className="w-3.5 h-3.5" />
@@ -127,20 +126,20 @@ export default function AuditLog() {
                   <td className="px-4 py-2.5 text-xs text-slate-500 whitespace-nowrap">{fmt(entry.timestamp)}</td>
                   <td className="px-4 py-2.5">
                     {entry.agent_slug
-                      ? <AgentBadge agentId={entry.agent_slug as AgentId} />
-                      : <span className="text-xs text-slate-600">—</span>
+                      ? <AgentBadge agentId={entry.agent_slug} />
+                      : <span className="text-xs text-slate-400">—</span>
                     }
                   </td>
                   <td className="px-4 py-2.5"><ActionTypeChip type={entry.action_type ?? entry.event_type} /></td>
-                  <td className="px-4 py-2.5 text-slate-300 text-xs max-w-[200px] truncate">{entry.target ?? entry.event_type}</td>
+                  <td className="px-4 py-2.5 text-slate-700 text-xs max-w-[200px] truncate">{entry.target ?? entry.event_type}</td>
                   <td className="px-4 py-2.5"><StatusChip status={entry.outcome} /></td>
                   <td className="px-4 py-2.5 text-slate-500 text-xs max-w-[200px] truncate">{entry.reason ?? '—'}</td>
                 </tr>
                 {expanded === String(entry.id) && (
-                  <tr key={`${entry.id}-expand`} className="border-b border-slate-800 bg-slate-950/50">
+                  <tr key={`${entry.id}-expand`} className="border-b border-slate-200 bg-slate-50">
                     <td colSpan={7} className="px-8 py-4">
                       <p className="text-xs text-slate-500 uppercase tracking-wide font-semibold mb-2">Payload</p>
-                      <pre className="text-xs text-emerald-400 bg-slate-950 rounded-lg p-3 overflow-x-auto font-mono leading-relaxed">
+                      <pre className="text-xs text-emerald-700 bg-slate-50 rounded-lg p-3 overflow-x-auto font-mono leading-relaxed">
                         {JSON.stringify(entry.payload, null, 2)}
                       </pre>
                     </td>
