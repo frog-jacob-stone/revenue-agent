@@ -1,11 +1,12 @@
-# Revenue Agents API
+# Revenue Operations System
 
-FastAPI service that orchestrates AI agents for revenue operations. Every action an agent takes flows through a human-in-the-loop approval queue before execution.
+FastAPI service for Frogslayer's revenue operations: Harvest billing/invoicing automation, revenue recognition, and an audit trail over every state change — plus an approval-gated agent framework for conversational and judgment-requiring tasks. The billing/invoicing engine, the system's largest subsystem, is deliberately deterministic and has no agent in its write path; every write an agent *does* propose flows through a human-in-the-loop approval queue before execution.
 
 ## Architecture
 
 - **FastAPI + asyncpg** — async Python API backed directly by Postgres
 - **Supabase** — local Postgres (via Docker), RLS, and migrations
+- **Two write paths, one audit trail** — operator-initiated writes (billing/invoicing: a human reads the exact payload and clicks) and agent-initiated writes (proposed by a tool, gated behind human approval). See [ADR-0004](docs/adr/0004-operator-initiated-writes.md) for which applies when.
 - **Agents are scoped by coherent identity** — separate agents for write-proposing operations vs. read-only analytics, even within the same domain. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the scoping principles.
 
 ## Prerequisites
@@ -139,14 +140,15 @@ Everything above is local development and is unaffected by deployment. For produ
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/workflows` | Create a workflow (triggers `workflow.started` audit event) |
-| `GET` | `/workflows` | List workflows (filter by `status`, `kind`) |
-| `GET` | `/workflows/{id}` | Workflow detail |
-| `GET` | `/workflows/{id}/trace` | Audit-log event timeline for the workflow |
+| `GET` | `/agents` | List agents; per-agent detail and tools |
 | `GET` | `/approvals` | Approval inbox — defaults to `status=pending` |
 | `GET` | `/approvals/{id}` | Approval detail |
-| `POST` | `/approvals/{id}/approve` | Approve → resume the graph → execute (writes full audit trail) |
+| `POST` | `/approvals/{id}/approve` | Approve → invoke the registered executor → execute (writes full audit trail) |
 | `POST` | `/approvals/{id}/reject` | Reject with reason |
+| `GET` | `/audit_log` | Read-only audit feed |
+| `GET`/`POST` | `/billing/*` | The invoicing surface — billing groups, Harvest snapshot, billing runs, draws, settings, created invoices. Operator-initiated; see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). |
+| `POST` | `/chat/{agent_slug}` | Chat with an agent (SSE streaming); always routes through `chief-of-staff` |
+| `GET` | `/llm_calls` | Read-only inspector over every LLM call (summary/detail/aggregates) |
 
 ---
 
@@ -157,28 +159,38 @@ app/
   main.py              # FastAPI app + lifespan
   config.py            # Pydantic settings (reads .env)
   db.py                # asyncpg connection pool
+  auth.py              # JWT verification against Supabase JWKS
   models/              # Pydantic v2 models (one file per table)
   routers/             # FastAPI routers (thin — business logic in services/)
+    billing.py         # The invoicing surface — operator-initiated, no agent in the path
+    approvals.py       # The human-in-the-loop inbox
+    agents.py / audit_log.py / chat.py / llm_calls.py
   services/
     audit.py           # write_audit_event() — called on every state transition
     approvals.py       # approve_approval(), reject_approval()
     agent_messages.py  # turn-by-turn record of agent-to-agent exchanges
-  orchestrator/        # LangGraph runner + production graphs
-    runner.py
-    graphs/            # one StateGraph per workflow kind
+    revenue.py          # billing-type-aware revenue recognition math
+    airtable_sync.py    # Harvest -> Airtable client/project sync
+    billing/             # 18 modules: Harvest snapshot, groups, reconcile, estimator,
+                          # payload, draws, recurring, planner, settings_store, etc.
+  orchestrator/
+    agent_invoke.py     # run_agent_task() — ReAct loop for agents with tools; no graph engine
+    dispatch.py         # tool return (Done | AwaitingApproval | Blocked) -> audit + approval row
+    events.py           # audit event constants
   agents/
-    base.py            # BaseAgent ABC
-  integrations/        # Harvest, Airtable, Forecast, OpenAI clients
+    registry.py         # chief-of-staff, bdr, revenue-ops, linkedin (single agent class, ADR-0003)
+    tools/               # ask_agent, content/*, revenue/* — tools an LLM may call
+  executors/             # post_to_linkedin, write_rev_rec_entries — invoked after approval, never by an LLM
+  integrations/          # Harvest, Airtable, Forecast, LLM dispatcher clients
 docs/
   SCHEMA.md            # Source of truth for the DB schema
-  ARCHITECTURE.md      # System architecture and agent pattern
-  AGENTS.md            # Agent roster
-  BACKLOG.md           # What's next, deferred, blocked
+  ARCHITECTURE.md      # System architecture: RevOps automation + agent-framework pattern
   adr/                 # Architecture Decision Records
+  prd/                 # Feature-level requirements docs (e.g. Harvest invoicing)
 supabase/
   migrations/          # SQL migrations (apply via supabase db reset)
 tests/
   conftest.py          # Pool + client + test_agent_id fixtures
-  test_workflows.py
-  test_runner.py / test_approval_flow.py / test_agent_invoke.py / test_spawn.py
+  test_billing_*.py    # Billing/invoicing engine coverage
+  test_approval_flow.py / test_agent_invoke.py / test_no_agent_approval_tools.py
 ```

@@ -1,11 +1,13 @@
-# Supabase Schema — Revenue Agent System
+# Supabase Schema — Revenue Operations System
 
 > Source of truth for the database. Update this file when the schema changes.
 > Matches migrations: `supabase/migrations/20250101000001_initial_schema.sql` through `20250101000029_billing_settings.sql`
 
 ## Overview
 
-Nine core tables plus pgvector. Every table has RLS enabled from day one so policies can be added without a migration later.
+Two groups of tables, plus pgvector. Every table has RLS enabled from day one so policies can be added without a migration later.
+
+**Agent framework** (nine core tables):
 
 ```
 agents           → registry of agent definitions (slug-keyed identity rows; metadata lives on the Python class)
@@ -18,6 +20,23 @@ agent_messages   → turn-by-turn record of agent-to-agent exchanges
 llm_calls        → per-request audit log of LLM provider calls
 chat_sessions    → human-to-agent conversation containers (multi-chat sidebar)
 chat_messages    → turn-by-turn log of human chat with assistant placeholders
+```
+
+**Revenue operations automation** (billing/invoicing, migrations `0024`–`0029` — no agent in the write path to any of these):
+
+```
+harvest_clients                 → cached Harvest client list (read-through)
+harvest_projects                → cached Harvest project list, incl. billing_type
+harvest_invoice_item_categories → cached Harvest invoice line-item categories
+harvest_task_assignments        → cached Harvest task/rate assignments
+billing_groups                  → config: one group → exactly one Harvest invoice per run
+billing_group_projects          → project↔group membership (a project belongs to at most one active group)
+fixed_fee_schedule_items        → a fixed-fee group's draws — schedule, release state
+recurring_line_items            → effective-dated recurring/retainer line items
+billing_runs                    → a monthly or draw billing run
+billing_run_items               → per-group/per-draw ledger row: planned → approved → in_flight → created | failed
+billing_run_flags               → error/warning/info catalog surfaced on a run
+billing_settings                → account-level billing preferences (e.g. default invoice notes)
 ```
 
 ## Design Principles

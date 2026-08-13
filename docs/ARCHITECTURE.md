@@ -2,6 +2,8 @@
 
 The durable shape of the system. Update this when boundaries, layering, or integration flow change.
 
+The system has two coequal pillars. **Revenue operations automation** — Harvest billing/invoicing (`app/services/billing/`) and revenue recognition (`app/services/revenue.py`) — is deterministic and has no agent or LLM anywhere in its write path; see "Billing / invoicing" below. The **agent framework** — `chief-of-staff` and its domain agents, the approval inbox, executors — handles conversational and judgment-requiring tasks under the Propose/Approve/Execute pattern. Neither is layered on top of the other; a new reader should not assume agents are the primary mechanism just because the framework is documented first below.
+
 ## Stack
 
 | Layer | Tool |

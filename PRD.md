@@ -1,28 +1,28 @@
-# Revenue Agents Masterclass — PRD
+# Revenue Operations System — PRD
 
 ## What We're Building
 
-An AI-powered revenue operations system — agents replace an entire revenue team. There are two primary surfaces:
+An internal Revenue Operations platform for Frogslayer. It automates the recurring mechanics of running revenue operations — Harvest billing/invoicing, revenue recognition, and (planned) revenue reporting — and gives Jacob a single control plane to manage them. There are two primary surfaces:
 
-1. **Agent Control Center** (UI) — Monitor agents, review and approve proposed actions, chat with agents conversationally, inspect the audit trail
-2. **Agentic Workflows** (Backend) — Multi-step chains that research, draft, critique, and execute with a human approval gate before any write
+1. **Operator Control Plane** (UI) — the invoicing workspace (billing groups, runs, draws, drafted invoices), the approval inbox, an audit trail, and chat with agents for conversational/judgment tasks
+2. **Automation Engines** (Backend) — a deterministic Harvest billing/invoicing engine (no agent in its write path) and a revenue-recognition pipeline (Harvest → compute → Airtable), plus an approval-gated agent framework for tasks that need judgment rather than a fixed procedure
 
-This is **not** a chatbot or a demo. Every create/update/delete operation flows through an approval inbox. Agents propose; humans decide; the system executes.
+This is **not** a chatbot or an agent demo. The billing/invoicing engine — the system's largest and most mature subsystem — is deliberately non-agentic: a human reads the exact computed payload and clicks to create a draft invoice in Harvest. Where agents *are* used (drafting, conversational Q&A over revenue data, content), every create/update/delete they propose flows through an approval inbox. Agents propose; humans decide; the system executes.
 
 ## Target Users
 
-Technical professionals (revenue ops, sales leaders, founders) who want to build production AI agent systems using Claude Code. They don't need to write every line — that's the AI's job.
+Jacob, VP of Revenue at Frogslayer, managing revenue operations day-to-day: closing the books each month, keeping client invoicing accurate and on schedule, and (as this system grows) tracking project completion and revenue by project type without hand-built spreadsheets.
 
-**They need to understand:**
-- The propose/approve/execute pattern — why it exists and when to enforce it
-- Multi-step chain design — LLM steps, tool calls, critique loops, checkpoints
-- How to wire agents to real business data (Harvest, Airtable)
-- How to direct AI coding tools to build, extend, and debug agentic systems
+**The system needs to:**
+- Automate Harvest invoicing without ever risking a duplicate, wrong, or unauthorized send — the write path is deterministic and every write is either operator-clicked or approval-gated
+- Compute revenue recognition correctly across billing types (Fixed Fee, T&M, MSF, Hosting, Retainer) and write it to the Airtable ledger
+- Surface an honest, current picture of what's happening — via the audit log today, and via revenue/project reporting once built
+- Support agent-assisted tasks (BDR drafting, LinkedIn content, conversational revenue Q&A) without ever letting an LLM hold a write capability
 
 ## Scope
 
 ### In Scope
-- ✅ Approval inbox with payload editing and workflow trace
+- ✅ Approval inbox with payload editing and event trace
 - ✅ Agent dashboard (status cards, activity feed, manual triggers)
 - ✅ Per-agent detail pages with run history and config panels
 - ✅ Audit log with full event history
@@ -32,8 +32,11 @@ Technical professionals (revenue ops, sales leaders, founders) who want to build
 - ✅ Settings (integrations, cron schedules, preferences)
 - ✅ Revenue recognition workflow (Harvest → compute → Airtable)
 - ✅ Content creation + publishing workflow (brief → strategy → draft → voice review → LinkedIn)
-- ✅ Critique loops with retry budgets and rewind logic
+- ✅ Harvest billing/invoicing automation — billing groups, Harvest snapshot sync, T&M estimation, duplicate-invoice guarding, fixed-fee draw scheduling/release, plan → approve → execute ledger. Operator-initiated per [ADR-0004](docs/adr/0004-operator-initiated-writes.md); no agent in the write path.
 - ✅ Append-only audit log with full state machine coverage
+- 🔲 **Planned — Revenue dashboard.** A business-facing view of revenue (not the existing agent-status dashboard), tracked in `PROGRESS.md` under "Revenue Reporting & Project Tracking." Not yet designed or built.
+- 🔲 **Planned — Project-completion tracking.** No `projects`-level completion concept exists in the schema today (only the Harvest project cache). Tracked in `PROGRESS.md`; not yet designed or built.
+- 🔲 **Planned — Revenue-per-project-type reporting.** Closest existing concept is `billing_type` (T&M / fixed_fee_schedule / recurring_monthly / manual) as a config enum — no reporting is built on top of it yet. Tracked in `PROGRESS.md`; not yet designed or built.
 
 ### Out of Scope
 - ❌ CRM and prospecting integrations — HubSpot and Apollo were removed on 2026-08-10; Frogslayer no longer uses either. This retired the outreach workflow (was: CRM pull → draft → critique × 2 → Gmail) and left the BDR agent toolless, drafting from context the caller supplies.
@@ -42,7 +45,7 @@ Technical professionals (revenue ops, sales leaders, founders) who want to build
 - ❌ Document ingestion pipeline (SharePoint → pgvector)
 - ❌ Brand research workflow (deferred — needs ingestion first)
 - ❌ Real-time worker queue (Arq + Redis) — FastAPI BackgroundTasks for now
-- 🔨 Invoice operations — **in progress.** Monthly Harvest draft-invoice creation, specified in `docs/prd/harvest-invoicing-requirements.md`. Pre-flight planning is built and read-only; draft creation (Phase 3) and fixed-fee/recurring billing types (Phase 4) are not. The system never sends, deletes, or modifies an invoice — enforced by a CI guardrail test, not convention.
+- ❌ Monthly-run invoice execution — the single-draw write path ships; batch execution across many groups (`create_harvest_draft_invoices`), post-run variance reconciliation, and a candidate-invoice picker for in-flight resolution are not yet built. Tracked in `PROGRESS.md`.
 - ❌ Agent self-modification of system prompts at runtime
 
 ## Stack
@@ -52,17 +55,17 @@ Technical professionals (revenue ops, sales leaders, founders) who want to build
 | Frontend | React + TypeScript + Vite + Tailwind |
 | Backend | FastAPI + Python 3.12 |
 | Database | Supabase (Postgres + pgvector + Realtime) |
-| Orchestration | LangGraph (graphs, conditional edges, checkpointer); migration in progress per `.agent/plans/3.langgraph-multi-agent-rearchitecture.md` |
+| Orchestration | Tools, not graphs — a tool returns `Done \| AwaitingApproval \| Blocked`; loops, retries, and conditional branches are inline Python. No graph engine. See [ADR-0002](docs/adr/0002-tools-not-graphs.md). |
 | LLM | Anthropic + OpenAI (raw SDKs; no LangChain) |
 | Integration bus | n8n (triggers + third-party I/O only; no business logic) |
-| Integrations | Harvest, Airtable, Forecast, Gmail |
+| Integrations | Harvest, Airtable, Forecast |
 | Secrets | Gitignored env files (`app/.env`, `.env.production`) |
 
 ## Constraints
 
-- **No write without an approved action row** — every CUD operation flows through `proposed → approved → executing → completed` (v1) or `pending → approved → executed` on the `approvals` table (v2)
-- Agents never call Harvest / Gmail / Airtable directly — only services execute after approval
-- LangGraph is the orchestration layer (graphs, state, checkpointer, interrupts). LLM calls inside nodes use raw `anthropic` / `openai` SDKs — no LangChain runtime.
+- **No write without a human authorizing that specific payload.** Agent-initiated writes flow through `tool returns AwaitingApproval → approval (pending) → human approves → executor runs → executed | failed`. Operator-initiated writes (billing/invoicing) skip the approval row when the exact payload is shown before the click, the endpoint is human-only, and the transition writes `audit_log`. See [ADR-0004](docs/adr/0004-operator-initiated-writes.md).
+- Agents never call Harvest / Gmail / Airtable directly — only services execute, either after approval or as an operator-initiated write
+- Executors live in a registry separate from tools and are never in any agent's `allowed_tools` — the trust boundary is structural, enforced by `tests/test_no_agent_approval_tools.py`
 - Async everywhere; every state-changing service function calls `write_audit_event()`
 - Schema changes go through `supabase/migrations/` — never edit the DB by hand
 - Routers validate and call services; services hold business logic; agents only propose
@@ -71,30 +74,30 @@ Technical professionals (revenue ops, sales leaders, founders) who want to build
 
 ## Module 1: Approval Inbox
 
-**Build:** Action list view with agent/type/status filter dropdowns wired to backend query params; per-row payload previews (rev rec shows entries table; outreach shows email stub); inline approve and reject flows with free-text rejection reason; action detail view with full JSON payload; Edit & Approve (inline payload editing via `EditBodyModal` before approval, `Modified` badge, diff stored as `executed_payload`); workflow trace component (chain execution tree, retry attempts indented under root, critiques expandable); pending badge with live count; empty state; Supabase Realtime subscription for new items without page refresh
-
-**Learn:** The approval inbox as a universal operator surface — one UI, every agent, every action type. How `proposed_payload` vs. `executed_payload` preserves the agent's original draft while allowing human correction. The action state machine. The step-kind filter: only `checkpoint` and `execution` steps appear in the inbox; `tool_call`, `llm_step`, and `critique` auto-progress silently.
+**Build:** Action list view with agent/type/status filter dropdowns wired to backend query params; per-row payload previews (rev rec shows entries table; outreach shows email stub); inline approve and reject flows with free-text rejection reason; action detail view with full JSON payload; Edit & Approve (inline payload editing via `EditBodyModal` before approval, `Modified` badge, diff stored as `executed_payload`); event trace component (chain execution tree, retry attempts indented under root, critiques expandable); pending badge with live count; empty state; Supabase Realtime subscription for new items without page refresh
 
 ---
 
 ## Architectural Decision: Propose / Approve / Execute
 
-The load-bearing pattern of the entire system. No agent may execute a create, update, or delete without a prior approved action row.
+The load-bearing pattern for agent-initiated writes. No agent may execute a create, update, or delete without a prior approved approval row.
 
 ```
-agent proposes → action (proposed) → human approves → system executes → completed | failed
+agent proposes → approval (pending) → human approves → executor runs → executed | failed
 ```
 
-Every state transition writes a row to `audit_log`. The inbox is the canonical review surface.
+Every state transition writes a row to `audit_log`. The inbox is the canonical review surface for agent-initiated work.
 
-**The decision you need to make:** How much context do you surface in the list row?
+Operator-initiated writes (billing/invoicing) follow a parallel pattern with the same invariant — no write without a human authorizing that specific payload — but skip the approval row per [ADR-0004](docs/adr/0004-operator-initiated-writes.md), because the human is already looking at the payload in the UI and the click is the authorization.
+
+**The decision made for the inbox:** How much context do you surface in the list row?
 
 | Option | Approach | Pros | Cons |
 |--------|----------|------|------|
 | **A: Summary only** | Show summary text + risk level; full detail on click-through | Fast to build, low noise | Every approval requires a page navigation |
 | **B: Inline type-specific previews** | Show a compact, action-type-aware payload preview in the list row | High-density review without click-through | More complex list component; per-type rendering logic |
 
-**In this masterclass, we chose Option B** — action-type-specific inline previews in the list row (rev rec shows a mini entries table with totals; outreach shows the email subject and body stub), with full JSON editing in the detail view. This is a real design decision with tradeoffs; you'll need to keep the inline previews in sync as new action types are added.
+**Chosen: Option B** — action-type-specific inline previews in the list row (rev rec shows a mini entries table with totals; outreach shows the email subject and body stub), with full JSON editing in the detail view. Inline previews need to stay in sync as new action types are added.
 
 ---
 
@@ -102,15 +105,11 @@ Every state transition writes a row to `audit_log`. The inbox is the canonical r
 
 **Build:** Agent status cards grid (agent name, color indicator, status chip, last run time, pending approval count, actions taken today); global error banner when any agent is in error state; recent activity feed (last 10–20 actions across all agents, with agent, type, target, outcome); manual trigger buttons per agent
 
-**Learn:** Agent status as a runtime concept — idle, running, paused. How a dashboard button triggers an orchestrated backend workflow without blocking the HTTP response (async 202 + BackgroundTasks pattern). Designing for operator trust: the dashboard's job is to answer "is everything working?" at a glance, not to expose implementation details.
-
 ---
 
 ## Module 3: Agent Detail Pages
 
 **Build:** Per-agent status indicator (idle/running/paused); enable/disable toggle wired to `setAgentActive()` API call; last run summary (timestamp + outcome); pending approvals mini-panel with inline approve/reject icons; run history table (last N actions, outcome, reasoning); manual trigger button with error handling; agent tools list from the registry.
-
-**Learn:** Agent identity — one coherent job, one audit trail, one approval context. Why read-only analytics agents and write-proposing operations agents are separate even when they work on the same data.
 
 ---
 
@@ -118,15 +117,11 @@ Every state transition writes a row to `audit_log`. The inbox is the canonical r
 
 **Build:** Chronological event table (timestamp, agent, action type, target, outcome, reason); filter bar (agent dropdown, date input, outcome dropdown) — all params sent to `GET /audit_log`; expandable rows revealing full JSON payload; loading spinner and empty state; CSV export button
 
-**Learn:** Why audit logs are non-negotiable in agentic systems. Append-only design enforced at the DB role level — no UPDATE or DELETE on `audit_log`. How to use the log to reconstruct what happened when an agent fails. The event taxonomy: `workflow.started`, `action.proposed`, `action.approved`, `action.rejected`, `action.completed`, `workflow.cancelled`.
-
 ---
 
 ## Module 5: Agent Chat Interface
 
 **Build:** Conversational chat UI with message bubbles; the user only chats with `chief-of-staff` (the single front door); typing indicator (animated dots); auto-scroll to latest message; "Actions from this chat route to your Approval Inbox" routing notice; message history in component state (max 20); Markdown rendering for structured agent responses; `agentChat()` API call wired to `POST /chat/{agent_slug}`
-
-**Learn:** Chat as an interface, not an agent type. The same agent (revenue-ops) is triggered by webhook, schedule, or chat — all paths that propose writes flow through the same approval inbox. Message history management when the LLM API is stateless — the component owns the conversation context. Why conversational agents are a subset of all agents (only agents with `is_conversational=True` appear in the sidebar).
 
 ---
 
@@ -134,37 +129,29 @@ Every state transition writes a row to `audit_log`. The inbox is the canonical r
 
 **Build:** Memory list view with per-agent tabs and entry metadata (content, source, date, tags); search filtering wired to API; add memory modal (agent selector, content textarea, comma-separated tags) wired to `POST /memories`; delete memory entry wired to `DELETE /memories/{id}`; full backend integration for all read/write operations
 
-**Learn:** Two memory primitives: **memories** (what agents learn — emergent, runtime-written) vs. **knowledge base** (what you give them — curated, human-managed). Memory scoping: `company:123`, `deal:456`, `global` — why scope matters for multi-agent retrieval. How voice profiles are stored as `kind=preference` memories and loaded at chain runtime without a deploy. The `memories.embedding` column (pgvector 1536-dim) as the foundation for semantic search.
-
 ---
 
 ## Module 7: Analytics
 
 **Build:** Summary stat cards (accounts researched, outreach sent, proposals generated, approval rate, avg time-to-approve, most active agent); agent runs per day line chart (multi-agent, real API data); approval rate by agent bar chart (real API data); date range selector (7 / 30 / 90 days + custom date range picker) — all wired to `GET /analytics?days=N`
 
-**Learn:** What metrics matter in an agentic system and why: volume (is it working?), approval rate (are the drafts good?), time-to-approve (are humans a bottleneck?). Building analytics on top of `audit_log` as a fact table — the log already captures everything needed. Why the analytics agent and the operations agent for the same domain are separate agents (different audit trails, different inbox behavior, read-only vs. write-proposing).
-
 ---
 
 ## Module 8: Settings
 
-**Build:** Integration status cards (Harvest, Airtable, OpenAI, Slack — connected/not-configured indicators with edit/connect modals); cron schedule table (6 agents × cron expression + description, with expression editor); timezone preference selector with save handler; integration connect/edit flows with credential input fields
-
-**Learn:** Integration management at the operator layer. How cron schedules map to n8n trigger configurations (n8n calls FastAPI; FastAPI does not call n8n). Why credentials live in the environment and are never stored in the DB. When to surface integration health in the UI vs. relying on alerting. The boundary between what belongs in Settings vs. what belongs in agent config panels.
+**Build:** Integration status cards (Harvest, Airtable, OpenAI, Slack — connected/not-configured indicators with edit/connect modals); cron schedule table (agent schedules with cron expression + description, with expression editor); timezone preference selector with save handler; integration connect/edit flows with credential input fields
 
 ---
 
-## Agentic Workflows
+## Revenue Operations Automation
 
-These are backend capabilities that the UI above operates on. Each is a self-contained module with its own chain definition, step sequence, and integration dependencies.
+These are backend capabilities the Operator Control Plane operates on. Each is a self-contained module with its own step sequence and integration dependencies. Detailed build status for all of these lives in `PROGRESS.md`.
 
 ---
 
 ## Workflow A: Revenue Recognition
 
-**Build:** Monthly `rev_rec_monthly` chain (`supervised_automation` pattern): `_sync_and_validate` (sync Harvest projects → Airtable, validate completeness) → `_propose_configure` checkpoint (surfaces incomplete projects; `on_approve` requeues a fresh validation cycle) — **skipped** when data is complete → `_compute_entries` (Harvest invoice totals + Forecast scheduled hours; Fixed Fee: `contracted_fees × logged_hours / total_hours`; T&M/MSF/Hosting: `total_invoiced`) → `_propose_write` execution approval → `_write_entries` (batch upsert to Airtable). Duplicate guard (refuses to run twice for the same period).
-
-**Learn:** `supervised_automation` pattern — deterministic pipeline with a single human checkpoint near the end. `skip_if` predicates: how one chain handles two paths (complete data vs. incomplete data) without forking into separate chains. `CheckpointStep.on_approve` callbacks: how the "fix data externally, then re-trigger" loop is wired. Harvest + Airtable as the integration pair — Harvest as source of truth for time and invoices; Airtable as the revenue recognition ledger.
+**Build:** Monthly `rev_rec_monthly` pipeline: sync Harvest projects → Airtable, validate completeness → surface incomplete projects for a fix-and-retrigger loop (skipped when data is complete) → compute entries (Harvest invoice totals + Forecast scheduled hours; Fixed Fee: `contracted_fees × logged_hours / total_hours`; T&M/MSF/Hosting: `total_invoiced`) → execution approval → batch upsert to Airtable. Duplicate guard refuses to run twice for the same period. Harvest is the source of truth for time and invoices; Airtable is the revenue recognition ledger.
 
 ---
 
@@ -174,26 +161,27 @@ Retired on 2026-08-10 along with the HubSpot integration. The chain began with a
 
 What the BDR agent retains is the drafting half: hand it a name, role, company, and a signal, and it returns a first-touch draft in the Frogslayer voice. It cannot look anything up.
 
-**Still worth learning from it:** the critique-loop pattern this workflow demonstrated — rewind-and-retry with `retry_of_action_id` chains, `attempt_number` increments, and a `max_attempts` budget, where exhaustion fails the workflow rather than silently skipping. Separate voice and accuracy critics, because they catch different failure modes and deserve different retry budgets. That pattern is now inline Python in tools per [ADR-0002](docs/adr/0002-tools-not-graphs.md), not a graph.
-
 ---
 
 ## Workflow C: Content Creation & Publishing
 
-**Build:** Two chains: **content_creation** (`prompt_chain_action`): `_interpret_brief` (LLM: strategy idea with title, angle, target, type) → `_draft_post` (LLM: post text, hook, CTA; writes `social_posts` row) → `_voice_review` (PersonalVoiceAgent critique; max 3 attempts; on pass: status → `ready`; on exhaustion: status → `needs_revision`, workflow → `failed`). **content_publish** (`supervised_automation`): `_propose_linkedin_post` execution approval → `_linkedin_post_stub` (stub; status → `published`). The LinkedIn agent (`linkedin`) owns the content tools and is invoked by `chief-of-staff` via `ask_agent` — users never see the chains. Post state machine: `draft` → `needs_revision` → `ready` → `published | rejected`.
+**Build:** Two chains: **content_creation**: interpret brief (LLM: strategy idea with title, angle, target, type) → draft post (LLM: post text, hook, CTA; writes `social_posts` row) → voice review (critique; max 3 attempts; on pass: status → `ready`; on exhaustion: status → `needs_revision`, workflow → `failed`). **content_publish**: execution approval → post to LinkedIn (stub; status → `published`). The LinkedIn agent (`linkedin`) owns the content tools and is invoked by `chief-of-staff` via `ask_agent` — users never see the chains directly. Post state machine: `draft` → `needs_revision` → `ready` → `published | rejected`.
 
-**Learn:** Conversational approval — how a chat agent drives an orchestrated chain without exposing chain internals to the user. Two-chain composition: create and publish are separate chains with separate approval gates, not one long chain. Social post state machine design: why `needs_revision` is a distinct state from `draft` (it carries critique context). All LLM calls use OpenAI — gpt-4o for reasoning-heavy steps, gpt-4o-mini for drafting and critique steps where latency matters more than depth.
+---
+
+## Workflow D: Harvest Billing / Invoicing
+
+**Build:** Harvest snapshot sync (clients, projects, rates) → billing-group config (one Harvest client → one invoice, an abstraction Harvest itself lacks) → reconciliation (every billable project maps to exactly one active group) → T&M estimation from uninvoiced time, or fixed-fee draw / recurring line-item resolution → duplicate guard → plan → per-group approval on the ledger → operator clicks to create a draft invoice in Harvest. No agent or LLM anywhere in this path — deterministic by design, per [ADR-0004](docs/adr/0004-operator-initiated-writes.md). Full phase-by-phase status (T&M pre-flight complete, single-draw execution shipped, monthly-run execution not yet built) is tracked in `PROGRESS.md`.
 
 ---
 
 ## Success Criteria
 
-By the end, you should have:
+The system should deliver:
 
-- ✅ A running revenue operations system connected to real business data (Harvest, Airtable)
-- ✅ Deep understanding of the propose/approve/execute pattern — why it exists and how to enforce it
-- ✅ Ability to design multi-step chains with LLM steps, tool calls, critique loops, and conditional paths
-- ✅ Full schema fluency — `actions`, `workflows`, `memories`, `audit_log`, `social_posts`, `knowledge_base`
-- ✅ Experience with conversational agents that route writes through the same approval inbox as automated workflows
-- ✅ Ability to direct Claude Code to add new agents, new action types, and new chains without breaking existing patterns
-- ✅ A real operator control plane you can hand to a revenue team
+- ✅ A running revenue operations platform connected to real business data (Harvest, Airtable)
+- ✅ Reliable, auditable Harvest invoicing with no duplicate or unauthorized writes
+- ✅ Correct revenue recognition across all billing types, written to the Airtable ledger
+- ✅ A single approval inbox for every agent-initiated write, and a clear audit trail for every operator-initiated one
+- 🔲 Revenue and project reporting (dashboard, project-completion tracking, revenue-per-project-type) — planned, not yet built
+- ✅ Agent-assisted conversational and drafting tasks (BDR, LinkedIn, revenue Q&A) that can never hold a write capability directly

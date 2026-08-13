@@ -1,9 +1,9 @@
-# CLAUDE.md — Revenue Agent System
+# CLAUDE.md — Revenue Operations System
 
-AI-powered revenue operations for Frogslayer. Agents replace an entire revenue team — operational infrastructure, not a personal assistant.
+Operational infrastructure for Frogslayer's revenue operations — Harvest billing/invoicing automation, revenue recognition, and (planned) revenue reporting — with an approval-gated agent framework layered in for conversational and judgment-requiring tasks. Not a personal assistant, and not primarily an agent framework: the largest, most mature subsystem (billing/invoicing) is deliberately deterministic and has no agent in its path.
 
 Reference docs:
-- `docs/ARCHITECTURE.md` — system architecture and agent pattern
+- `docs/ARCHITECTURE.md` — system architecture, the RevOps automation and agent-framework pattern
 - `docs/SCHEMA.md` — database (mirror of `supabase/migrations/`)
 
 ## Unbreakable Rules

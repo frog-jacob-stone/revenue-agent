@@ -1,8 +1,40 @@
-# Revenue Agents
+# Revenue Operations System
 
 Project-specific vocabulary. Use these terms exactly in code, prompts, docs, and PR descriptions. When a term is missing, add it here rather than improvising. General programming concepts (timeouts, retries, error types) don't belong here even if the project uses them.
 
 ## Language
+
+### Billing & Invoicing
+
+The deterministic core of the system (`app/services/billing/`) — no agent or LLM anywhere in this vocabulary's write path. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [ADR-0004](docs/adr/0004-operator-initiated-writes.md).
+
+**Billing group**:
+The unit that produces exactly one Harvest invoice — one group maps to exactly one Harvest client. Harvest has no such concept; it lives entirely in `app/services/billing/groups.py`. Config is validated at write time (project↔client mismatch is a 422, not a surprise at plan time).
+_Avoid_: client, account, invoice group.
+
+**Billing run**:
+A row in `billing_runs` — either `kind=monthly` (T&M/recurring, plans across every group) or `kind=draw` (a single fixed-fee milestone, billed off-cycle). Read-only pre-flight planning produces `planned` ledger rows in `billing_run_items`; nothing reaches Harvest until a human acts.
+_Avoid_: workflow, invoice batch, billing cycle. (`workflows` is a retired table name — do not reintroduce it.)
+
+**Draw**:
+One scheduled payment on a `fixed_fee_schedule` group's contract (e.g. "30% on signing, 40% at UAT, 30% at go-live"), tracked in `fixed_fee_schedule_items`. A draw's date is a schedule commitment; dates never bill anything — a human must **release** a draw (confirm delivery) before it can be invoiced, and it bills one at a time from the Draws tab, never on the monthly run.
+_Avoid_: milestone (fine in prose, not in code/schema), installment.
+
+**T&M estimate**:
+The Time & Materials estimate computed from uninvoiced Harvest time and expenses (`app/services/billing/estimator.py`). Computed independently of Harvest's own invoice generation, so it will not always match to the penny — time rounding, rate resolution order, and mid-period rate changes all diverge. Expected and acceptable; not a bug to chase.
+_Avoid_: quote, projection.
+
+**Reconciliation**:
+The check that every active billable project maps to exactly one billing group (`app/services/billing/reconcile.py`) — the highest-value check in the pipeline, because a project belonging to no group accrues time nobody will ever invoice, and nothing downstream would notice.
+_Avoid_: validation (too generic — reconciliation is specifically the project↔group mapping check), matching.
+
+**Duplicate guard**:
+Two-layer defense against double-billing (`app/services/billing/duplicate_guard.py`): an unresolved `in_flight` ledger row blocks planning outright (unknown whether Harvest already created the invoice); partial-unique indexes on the ledger make a second live row for the same group/period or same draw structurally impossible to insert.
+_Avoid_: idempotency check (too generic), lock.
+
+**In-flight resolution**:
+Human-only recovery for a ledger row where a `POST` to Harvest never returned a verdict (`app/services/billing/inflight.py`) — timeout or 5xx, so the system does not know whether the invoice was created. No retry, no inference, no timeout-means-failure: it escalates to a person, who links the row to the real Harvest invoice (or confirms none was created) before the group unlocks.
+_Avoid_: retry, cleanup, auto-resolve.
 
 ### Agents
 

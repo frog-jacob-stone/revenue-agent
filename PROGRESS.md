@@ -7,6 +7,12 @@ Track progress through implementation. Update this file as you complete modules 
 - `[-]` = In progress / partial
 - `[x]` = Completed
 
+This file tracks two tracks: **Revenue Operations Automation** (billing/invoicing, revenue recognition, and planned revenue/project reporting — deterministic, no agent in the write path) and **Agent Framework** (the approval-gated conversational/drafting layer). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the two relate.
+
+---
+
+## Agent Framework
+
 ## Modules
 
 ### Module 1: Approval Inbox — `[-]`
@@ -90,6 +96,24 @@ Track progress through implementation. Update this file as you complete modules 
 
 ## Agentic Workflows
 
+### Workflow B: Outreach — **removed**
+Deleted with the LangGraph rip-out, then finished off on 2026-08-10 when HubSpot and Apollo were removed. Nothing here survives in code. What remains of outbound is the BDR agent, which drafts from context the caller supplies and has no tools.
+
+### Workflow C: Content Creation & Publishing — `[-]`
+- [x] `content_creation` — 4-node LangGraph; `voice_review` loops to `draft_post` on fail; no interrupt gate
+- [x] `interpret_brief` — direct OpenAI call (`ContentStrategyAgent` system prompt; title, angle, target, type)
+- [x] `draft_post` — direct OpenAI call (`LinkedInWritingAgent`); writes/updates `social_posts` row
+- [x] `voice_review` — direct OpenAI call (`PersonalVoiceAgent`); max 3 attempts; pass → `social_posts.status=ready`; exhausted → `failed_terminal` (post stays at `status=draft`; future: surface as `needs_revision` once the inbox supports it)
+- [x] `content_publish` — 2-node LangGraph; `propose_post` → [interrupt_before] → `post_to_linkedin`
+- [x] `propose_post` — execution approval gate (`action_type=post_to_linkedin`)
+- [-] `post_to_linkedin` — stub only; updates DB status to `published` but does not post; no LinkedIn integration
+- [x] LinkedIn agent (`linkedin`) — domain worker that owns the content tools (`create_post`, `publish_post`, etc.); invoked via `ask_agent` from the single front-door `chief-of-staff` agent. Internal LLM calls inside `create_post` (interpret_brief, draft_post, voice_review) are inlined as prompt constants in `app/agents/tools/content/_creation_prompts.py` rather than separate agent classes.
+- [x] Post state machine — `draft` → `ready` → `published | rejected` (`needs_revision` aspirational; not currently emitted)
+
+---
+
+## Revenue Operations Automation
+
 ### Workflow A: Revenue Recognition — `[-]`
 - [x] `rev_rec_monthly` chain — `supervised_automation` pattern
 - [x] `_sync_and_validate` — real Harvest → Airtable sync; completeness validation
@@ -107,19 +131,11 @@ Track progress through implementation. Update this file as you complete modules 
 - [ ] Wire `get_revenue_data_slim` into the agent's `get_revenue_data` tool surface — verify the tool actually calls the slim variant, not the full pull
 - [ ] Token-budget guardrail — cap rows returned (or summarize) when a wide date range would blow context; current default is 12-month window but no row cap
 
-### Workflow B: Outreach — **removed**
-Deleted with the LangGraph rip-out, then finished off on 2026-08-10 when HubSpot and Apollo were removed. Nothing here survives in code. What remains of outbound is the BDR agent, which drafts from context the caller supplies and has no tools.
-
-### Workflow C: Content Creation & Publishing — `[-]`
-- [x] `content_creation` — 4-node LangGraph; `voice_review` loops to `draft_post` on fail; no interrupt gate
-- [x] `interpret_brief` — direct OpenAI call (`ContentStrategyAgent` system prompt; title, angle, target, type)
-- [x] `draft_post` — direct OpenAI call (`LinkedInWritingAgent`); writes/updates `social_posts` row
-- [x] `voice_review` — direct OpenAI call (`PersonalVoiceAgent`); max 3 attempts; pass → `social_posts.status=ready`; exhausted → `failed_terminal` (post stays at `status=draft`; future: surface as `needs_revision` once the inbox supports it)
-- [x] `content_publish` — 2-node LangGraph; `propose_post` → [interrupt_before] → `post_to_linkedin`
-- [x] `propose_post` — execution approval gate (`action_type=post_to_linkedin`)
-- [-] `post_to_linkedin` — stub only; updates DB status to `published` but does not post; no LinkedIn integration
-- [x] LinkedIn agent (`linkedin`) — domain worker that owns the content tools (`create_post`, `publish_post`, etc.); invoked via `ask_agent` from the single front-door `chief-of-staff` agent. Internal LLM calls inside `create_post` (interpret_brief, draft_post, voice_review) are inlined as prompt constants in `app/agents/tools/content/_creation_prompts.py` rather than separate agent classes.
-- [x] Post state machine — `draft` → `ready` → `published | rejected` (`needs_revision` aspirational; not currently emitted)
+### Revenue Reporting & Project Tracking — `[ ]` (not started)
+None of this exists in code or schema today — confirmed via full-repo search: no `projects` table beyond the Harvest cache (`harvest_projects`), no revenue-per-type view, no business-facing revenue dashboard (the existing `Dashboard.tsx` shows agent status, not revenue). Added to scope in `PRD.md`; not yet designed.
+- [ ] Revenue dashboard — business-facing revenue metrics, distinct from the agent-status dashboard in Module 2
+- [ ] Project-completion tracking — no schema concept of "complete" beyond Harvest's own project-archived flag
+- [ ] Revenue-per-project-type reporting — `billing_type` exists as a config enum (T&M / fixed_fee_schedule / recurring_monthly / manual) but nothing reports revenue rolled up by it
 
 ### Module 8: Invoicing (Harvest) — `[-]`
 
@@ -211,23 +227,23 @@ written yet. The `write_rev_rec_entries` executor is untouched and waiting.
 
 ## Tooling
 
-### Workflow Visualizer — `[ ]` (Backlogged)
-LangGraph exposes `get_graph().draw_mermaid()` natively. A read-only `/workflows/{id}/diagram` endpoint plus a UI overlay highlighting active/traversed nodes is on the backlog.
+### Workflow Visualizer — `[ ]` (Backlogged, stale)
+Originally scoped around LangGraph's `get_graph().draw_mermaid()`. LangGraph was removed per [ADR-0002](docs/adr/0002-tools-not-graphs.md) — there is no graph object left to draw. A read-only trace view over tool-based workflows (event timeline, not a graph diagram) would need to be re-scoped from scratch if this is still wanted.
 
 ---
 
 ## Architecture status
 
-One orchestrator (`app/orchestrator/`) backed by LangGraph + `AsyncPostgresSaver`. One approval surface (`/approvals`). One inbox type (`Approval`). One conversational agent (`chief-of-staff`) sitting in front of three worker agents (`bdr`, `revenue-ops`, `linkedin`). The chat-turn module (`app/services/chat_turn.py`) owns the LLM tool-call loop, turn lifecycle, and persistence; `app/services/chat_sessions.py` is pure CRUD. Single-turn LLM calls made by graph nodes (consolidate, draft, voice critique, accuracy critique, voice review, idea interpretation, post drafting) live inline in their graph modules as `MODEL` + `SYSTEM_PROMPT` constants — not as agent classes. Every LLM call (single-turn or streaming) flows through the dispatcher at `app/integrations/llm.py`, which absorbs provider details, the `llm_calls` row write, and attribution (`Attribution(agent_slug, purpose, ...)` — required argument, not a contextvar). Chat turns emit `CHAT_TURN_STARTED` / `CHAT_TURN_COMPLETED` / `CHAT_TURN_FAILED` audit events. Test suite: ~132 tests covering runner, approval flow, agent invocation, sub-workflow spawn, agent messaging, chat turn lifecycle, the LLM dispatcher in isolation, and end-to-end graph tests for all four production workflows.
+One orchestrator (`app/orchestrator/`) — `run_agent_task` drives a ReAct loop for agents with tools; prescribed workflows are tools returning `Done | AwaitingApproval | Blocked`, with loops/retries as inline Python, not a graph engine (LangGraph was removed; see [ADR-0002](docs/adr/0002-tools-not-graphs.md) and [ADR-0003](docs/adr/0003-single-agent-class-structural-delegation.md)). One approval surface (`/approvals`). One inbox type (`Approval`). One conversational agent (`chief-of-staff`) sitting in front of three worker agents (`bdr`, `revenue-ops`, `linkedin`). The chat-turn module (`app/services/chat_turn.py`) owns the LLM tool-call loop, turn lifecycle, and persistence; `app/services/chat_sessions.py` is pure CRUD. Single-turn LLM calls for sub-steps (consolidate, draft, voice critique, accuracy critique, voice review, idea interpretation, post drafting) live inline in their tool modules as `MODEL` + `SYSTEM_PROMPT` constants — not as agent classes. Every LLM call (single-turn or streaming) flows through the dispatcher at `app/integrations/llm.py`, which absorbs provider details, the `llm_calls` row write, and attribution (`Attribution(agent_slug, purpose, ...)` — required argument, not a contextvar). Chat turns emit `CHAT_TURN_STARTED` / `CHAT_TURN_COMPLETED` / `CHAT_TURN_FAILED` audit events. Test suite covers runner, approval flow, agent invocation, sub-workflow spawn, agent messaging, chat turn lifecycle, the LLM dispatcher in isolation, and the production tool-based workflows end-to-end.
 
 Known gaps (tracked in Backlog):
 - Multi-turn thread context in `ask_agent`
 - Anthropic provider adapter (lands behind the existing dispatcher seam; no caller changes)
-- Workflow visualizer (Mermaid) endpoint and UI overlay
+- Workflow visualizer — backlogged, and stale: it assumed a LangGraph `get_graph().draw_mermaid()` call that no longer exists post-ADR-0002. Needs re-scoping against tool-based workflows before it's buildable, if still wanted.
 
 ---
 
 ## Backlog
 
-- [ ] **Workflow visualizer (LangGraph)** — `GET /workflows/{id}/diagram` returns the graph's Mermaid (LangGraph provides this natively via `get_graph().draw_mermaid()`) with the active node highlighted from the latest checkpoint and traversed edges colored by completion / failure. UI: live polling on workflow detail.
-- [ ] **Diagrams-as-code** — `make diagrams` regenerates `docs/graphs/*.mmd` from registered graphs; useful for PR review of graph changes.
+- [ ] **Workflow visualizer** — stale as scoped (assumed LangGraph's `get_graph().draw_mermaid()`, removed per ADR-0002). If still wanted, re-scope as a trace view over tool-based workflows instead of a graph diagram.
+- [ ] **Diagrams-as-code** — stale as scoped (`make diagrams` assumed registered LangGraph graphs, which no longer exist). Drop or re-scope against the current tool/executor structure.
