@@ -253,6 +253,15 @@ Each carries `synced_at` and is upserted by Harvest id.
 
 **Owned, not synced** — sits alongside the cache but is not part of it.
 
+`forecast_project_schedule` — the delivery forecast, one row per project:
+`last_scheduled_on`, the last day a **person** is booked in Forecast (placeholder
+bookings are capacity, not someone, and do not count). Keyed on the *Harvest*
+project id — Forecast projects carry a `harvest_id`, so the join is resolved once
+at sync time. Derived rather than raw: Forecast returns ~7,700 assignment rows
+for a five-year window and the Projects tab needs one date. A cache, safe to
+truncate and re-sync. `assignment_count` distinguishes "synced, nobody booked"
+(hosting, retainers) from "never synced", which a null date alone cannot.
+
 `excluded_harvest_clients` — Harvest clients this system treats as not-a-client,
 keyed on `harvest_client_id` with a `reason` and who set it. One row hides every
 project under that client, present and future, from the Projects roster and from
@@ -515,6 +524,8 @@ Migrations run in filename order; each is idempotent.
 30. `20250101000030_harvest_project_dates.sql` — adds `starts_on` and `ends_on` (both nullable `date`) to `harvest_projects`. Harvest has always returned these on `/v2/projects` and `list_projects_detailed` has always fetched them; the snapshot upsert simply discarded both, so the Projects tab had no dates to show and ran on a fixture. Nullable because Harvest treats them as optional and plenty of projects leave one or both blank — a missing date is not a zero date. No backfill is possible (nothing local held the values); they populate on the next snapshot refresh. Note `ends_on` is freely editable in Harvest and moves when a project slips, so it is the *current* end date, not a contractual commitment — a committed end needs a project record this system owns
 
 31. `20250101000031_excluded_harvest_clients.sql` — adds `excluded_harvest_clients`, the account-wide "this Harvest client is not a client" list. Frogslayer is the motivating case: our own company is a Harvest client, and some of its internal projects (Olympus, Trident) are flagged *billable*, so no automatic rule catches them. This had been handled by hand with a `manual` billing group named "Frogslayer - Exclusion" whose only job was to stop reconciliation flagging two internal projects as unmapped — project-level, so it needed upkeep every time an internal project was created. Keyed on the client instead, so one row covers every present and future project underneath. A table this system owns rather than a column on `harvest_clients`, because that cache is documented as safe to truncate and re-sync and operator intent must outlive that; no FK for the same reason. Not seeded — which clients are "us" is account-specific, and a hardcoded id or name in a migration is the thing this replaces
+
+32. `20250101000032_forecast_project_schedule.sql` — adds `forecast_project_schedule`, the per-project delivery forecast from Forecast: the last day a person is booked. This is the "projected end" the Projects tab mockup always had and could not source — Harvest's `ends_on` is the *planned* end and goes stale, while Forecast knows who is actually on the calendar. The gap between them is the point: 8 of 29 live projects are booked past their Harvest end date, one by five months. Stores a derivation rather than the ~7,700 raw assignment rows, since one date per project is what is read; the raw endpoint remains if staffing analytics ever wants it. Refreshed by `POST /projects/refresh`, which pulls Harvest *and* Forecast in one action — nothing schedules either
 
 ## Open Questions
 

@@ -77,6 +77,10 @@ class AuditEvent(StrEnum):
     CLIENT_EXCLUDED = "client.excluded"
     CLIENT_EXCLUSION_REMOVED = "client.exclusion.removed"
 
+    # Forecast. Read-only against the vendor; the event records that the local
+    # delivery-forecast cache was rebuilt and what it found.
+    FORECAST_SCHEDULE_REFRESHED = "forecast.schedule.refreshed"
+
     # The Harvest write (PRD §8). Four outcomes, and the trail must distinguish
     # them: ATTEMPTED is written and committed *before* the POST, so an invoice
     # created during an outage that never returned still has a record on our side.
@@ -138,6 +142,7 @@ BILLING_DRAW_UNRELEASED = AuditEvent.BILLING_DRAW_UNRELEASED
 BILLING_SETTINGS_UPDATED = AuditEvent.BILLING_SETTINGS_UPDATED
 CLIENT_EXCLUDED = AuditEvent.CLIENT_EXCLUDED
 CLIENT_EXCLUSION_REMOVED = AuditEvent.CLIENT_EXCLUSION_REMOVED
+FORECAST_SCHEDULE_REFRESHED = AuditEvent.FORECAST_SCHEDULE_REFRESHED
 BILLING_INVOICE_ATTEMPTED = AuditEvent.BILLING_INVOICE_ATTEMPTED
 BILLING_INVOICE_CREATED = AuditEvent.BILLING_INVOICE_CREATED
 BILLING_INVOICE_FAILED = AuditEvent.BILLING_INVOICE_FAILED

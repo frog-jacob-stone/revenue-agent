@@ -679,9 +679,43 @@ export interface ProjectSummary {
    *  current end rather than what was committed. */
   starts_on: string | null;
   ends_on: string | null;
+  /** From Forecast: the last day a person is booked. Null when nobody is
+   *  scheduled (hosting, retainers) or Forecast has not been synced. */
+  projected_end_date: string | null;
   is_active: boolean;
   /** When the Harvest snapshot last ran. This reads a cache, not Harvest. */
   synced_at: string;
+}
+
+export interface ForecastRefreshResponse {
+  projects: number;
+  with_schedule: number;
+  without_schedule: number;
+  pruned: number;
+}
+
+export interface ProjectRefreshResponse {
+  harvest: {
+    clients: number;
+    projects: number;
+    invoice_item_categories: number;
+    task_assignments: number;
+  };
+  /** Null when Forecast did not run — `forecast_error` says why. The Harvest
+   *  half still committed, so this is a partial result, not a failure. */
+  forecast: ForecastRefreshResponse | null;
+  forecast_error: string | null;
+}
+
+/**
+ * Re-read both sources behind the Projects tab: Harvest (name, client, start,
+ * end) then Forecast (projected end). Read-only against both.
+ *
+ * Takes a few seconds — the Harvest half costs one request per billable active
+ * project — so the caller should show a pending state.
+ */
+export function refreshProjects(): Promise<ProjectRefreshResponse> {
+  return apiFetch<ProjectRefreshResponse>('/projects/refresh', { method: 'POST' });
 }
 
 /** Running engagements, or closed ones. The two are disjoint — `archived`

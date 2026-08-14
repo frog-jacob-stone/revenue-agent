@@ -10,8 +10,10 @@ from __future__ import annotations
 import asyncpg
 from fastapi import APIRouter, Depends, Query
 
+from app.auth import AuthUser, get_current_user
+from app.config import settings
 from app.db import get_pool
-from app.models.projects import ProjectSummary
+from app.models.projects import ProjectRefreshResponse, ProjectSummary
 from app.services import projects
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -39,3 +41,24 @@ async def list_projects(
     """
     rows = await projects.list_projects(pool, archived=archived)
     return [ProjectSummary.model_validate(r) for r in rows]
+
+
+@router.post("/refresh", response_model=ProjectRefreshResponse)
+async def refresh_projects(
+    pool: asyncpg.Pool = Depends(_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Re-read both sources behind this tab: Harvest, then Forecast.
+
+    Read-only against both vendors, operator-initiated, and audited once per
+    source. Nothing schedules this — the caches are only as fresh as the last
+    time someone asked.
+
+    A few seconds: the Harvest snapshot costs one request per billable active
+    project for task assignments, which the rate limiter pipelines.
+    """
+    return ProjectRefreshResponse.model_validate(
+        await projects.refresh_sources(
+            pool, settings, actor=user.email or str(user.id)
+        )
+    )
