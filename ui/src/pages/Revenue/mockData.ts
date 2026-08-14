@@ -170,6 +170,19 @@ const PROJECTS: ProjectSeed[] = [
   },
 ];
 
+export interface MockProject {
+  name: string;
+  harvest_id: number;
+  billing_type: BillingType;
+}
+
+/** The sample roster, shared with the Projects tab's mock so the two mockups
+ *  cannot disagree about which engagements exist. Identity only — dates and
+ *  delivery state belong to `pages/Projects/mockData.ts`. */
+export const MOCK_PROJECTS: MockProject[] = PROJECTS.map(
+  ({ name, harvest_id, billing_type }) => ({ name, harvest_id, billing_type }),
+);
+
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /** Billable-hour multiplier by calendar month (Jan–Dec). Holiday weeks and
@@ -227,7 +240,10 @@ export function generateMockRevenueData(today = new Date()): MockRevenueData {
         // The final month lands exactly on `pct_to` — jitter that leaves a
         // project at 99% would contradict a seed note saying it closed out.
         const last = monthIndex === months.length - 1;
-        const jittered = last ? p.pct_to! : target + (rand() - 0.5) * 0.05;
+        // Kept small: hours barely move on a fixed-fee month while earned value
+        // arrives in lumps, so pct jitter lands almost undamped on the
+        // revenue-per-hour grid. Wide jitter there reads as a broken metric.
+        const jittered = last ? p.pct_to! : target + (rand() - 0.5) * 0.03;
         const next = Math.min(p.pct_to!, Math.max(pct.get(p.name)!, round2(jittered)));
         const prior = pct.get(p.name)!;
         pct.set(p.name, next);
@@ -240,7 +256,11 @@ export function generateMockRevenueData(today = new Date()): MockRevenueData {
         // visualisation reads at all.
         const calendarMonth = Number(month.key.slice(5, 7)) - 1;
         loggedHours = round2(p.hours! * SEASONAL[calendarMonth] * (0.82 + rand() * 0.36));
-        delta = round2(loggedHours * p.rate!);
+        // Realisation, not the card rate: staffing mix, discounts, and written-
+        // off hours move the effective rate a few points either way. Billing
+        // hours at exactly the contract rate would peg revenue-per-hour flat
+        // for every T&M project, which is the one row worth watching.
+        delta = round2(loggedHours * p.rate! * (0.94 + rand() * 0.13));
       } else {
         // MSF, Hosting, Retainer: flat by contract, only small true-ups move it.
         delta = round2(p.monthly! * (0.97 + rand() * 0.06));

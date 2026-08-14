@@ -18,7 +18,7 @@ import RevenueLayout from './pages/Revenue/RevenueLayout';
 import RevenueOverview from './pages/Revenue/Overview';
 import RevenueRuns from './pages/Revenue/Runs';
 import RevenueEntries from './pages/Revenue/Entries';
-import Projects from './pages/Projects';
+import Projects from './pages/Projects/ProjectList';
 import Contracts from './pages/Contracts';
 import AuditLog from './pages/AuditLog';
 import ChatLayout from './pages/Chat/ChatLayout';
@@ -67,7 +67,8 @@ export default function App() {
             <Route path="runs" element={<RevenueRuns />} />
             <Route path="entries" element={<RevenueEntries />} />
           </Route>
-          {/* Nav destinations ahead of their features — see PlaceholderPage. */}
+          {/* Both are nav destinations ahead of their features: Projects is a
+              sample-data stub, Contracts a bare PlaceholderPage. */}
           <Route path="/projects" element={<Projects />} />
           <Route path="/contracts" element={<Contracts />} />
           <Route path="/chat" element={<ChatLayout />} />
