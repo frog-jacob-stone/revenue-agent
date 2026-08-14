@@ -247,9 +247,19 @@ Each carries `synced_at` and is upserted by Harvest id.
 | Table | Contents |
 |---|---|
 | `harvest_clients` | id, name, currency, is_active |
-| `harvest_projects` | id, name, code, client, currency, `is_billable`, `is_fixed_fee`, `bill_by`, `hourly_rate`, fee/budget fields, is_active |
+| `harvest_projects` | id, name, code, client, currency, `is_billable`, `is_fixed_fee`, `bill_by`, `hourly_rate`, fee/budget fields, is_active, `starts_on`, `ends_on` |
 | `harvest_invoice_item_categories` | valid `kind` values for free-form line items |
 | `harvest_task_assignments` | per-project task rates — the last rung of the rate-resolution ladder |
+
+**Owned, not synced** — sits alongside the cache but is not part of it.
+
+`excluded_harvest_clients` — Harvest clients this system treats as not-a-client,
+keyed on `harvest_client_id` with a `reason` and who set it. One row hides every
+project under that client, present and future, from the Projects roster and from
+config reconciliation. Deliberately *not* a flag on `harvest_clients`: that table
+is safe to truncate and re-sync, and operator intent must survive that. No FK to
+it either, so an exclusion outlives a cache rebuild or a client deleted in
+Harvest.
 
 **Configuration**
 
@@ -502,6 +512,9 @@ Migrations run in filename order; each is idempotent.
 27. `20250101000027_draw_scheduled_date.sql` — renames `fixed_fee_schedule_items.scheduled_month` to `scheduled_date` and drops the first-of-month check. A contract payment schedule commits to dates ("30% on 15 Sep"), and draws are billed individually on the day delivery is confirmed rather than swept up by a monthly run, so month granularity was modelling a billing shape that doesn't exist. Deliberately the opposite call to `recurring_line_items.effective_from` / `effective_to`, which stay month-granular because a recurring line is billed *for* a month
 28. `20250101000028_fixed_fee_draws.sql` — makes fixed-fee draws billable: `released_at` / `released_by` on `fixed_fee_schedule_items`, `billing_run_kind` (`monthly` | `draw`) on `billing_runs`, and `fixed_fee_schedule_item_id` on `billing_run_items`. Splits the C6 index in two — see the billing tables section
 29. `20250101000029_billing_settings.sql` — adds `billing_settings`, a key/value table for account-level billing config a human edits in the UI, seeded with `default_invoice_notes`. Exists because Harvest's account-level default invoice notes are applied only to invoices created through Harvest's own UI: the API neither applies them nor exposes them for reading (`GET /v2/company` has no such field), so the first live draw invoice went to a client with blank notes and no remit-to instructions. Key/value rather than one column per setting, to avoid a migration per setting; the known-key allowlist lives in `app/services/billing/settings_store.py` and an unknown key is refused rather than stored. Deliberately *not* env config — this is copy a human edits and reads back, and it is audited (`billing.settings.updated`) with the new value, since it is text a client will read
+30. `20250101000030_harvest_project_dates.sql` — adds `starts_on` and `ends_on` (both nullable `date`) to `harvest_projects`. Harvest has always returned these on `/v2/projects` and `list_projects_detailed` has always fetched them; the snapshot upsert simply discarded both, so the Projects tab had no dates to show and ran on a fixture. Nullable because Harvest treats them as optional and plenty of projects leave one or both blank — a missing date is not a zero date. No backfill is possible (nothing local held the values); they populate on the next snapshot refresh. Note `ends_on` is freely editable in Harvest and moves when a project slips, so it is the *current* end date, not a contractual commitment — a committed end needs a project record this system owns
+
+31. `20250101000031_excluded_harvest_clients.sql` — adds `excluded_harvest_clients`, the account-wide "this Harvest client is not a client" list. Frogslayer is the motivating case: our own company is a Harvest client, and some of its internal projects (Olympus, Trident) are flagged *billable*, so no automatic rule catches them. This had been handled by hand with a `manual` billing group named "Frogslayer - Exclusion" whose only job was to stop reconciliation flagging two internal projects as unmapped — project-level, so it needed upkeep every time an internal project was created. Keyed on the client instead, so one row covers every present and future project underneath. A table this system owns rather than a column on `harvest_clients`, because that cache is documented as safe to truncate and re-sync and operator intent must outlive that; no FK for the same reason. Not seeded — which clients are "us" is account-specific, and a hardcoded id or name in a migration is the thing this replaces
 
 ## Open Questions
 

@@ -148,8 +148,18 @@ async def list_invoice_item_categories(pool: asyncpg.Pool = Depends(_db)):
 
 
 @router.get("/harvest/clients", response_model=list[HarvestClientOption])
-async def list_harvest_clients(pool: asyncpg.Pool = Depends(_db)):
-    rows = await catalog.list_clients(pool)
+async def list_harvest_clients(
+    include_excluded: bool = Query(
+        False,
+        description=(
+            "Include clients on the account-wide exclusion list. Off for new "
+            "config; the edit form turns it on so a group whose client was "
+            "excluded after it was built stays editable."
+        ),
+    ),
+    pool: asyncpg.Pool = Depends(_db),
+):
+    rows = await catalog.list_clients(pool, include_excluded=include_excluded)
     return [HarvestClientOption.model_validate(r) for r in rows]
 
 
@@ -157,6 +167,10 @@ async def list_harvest_clients(pool: asyncpg.Pool = Depends(_db)):
 async def list_harvest_projects(
     client_id: int | None = None,
     include_inactive: bool = False,
+    include_excluded: bool = Query(
+        False,
+        description="Include projects of clients on the account-wide exclusion list.",
+    ),
     exclude_group_id: UUID | None = Query(
         None,
         description=(
@@ -170,6 +184,7 @@ async def list_harvest_projects(
         pool,
         client_id=client_id,
         include_inactive=include_inactive,
+        include_excluded=include_excluded,
         exclude_group_id=exclude_group_id,
     )
     return [HarvestProjectOption.model_validate(r) for r in rows]

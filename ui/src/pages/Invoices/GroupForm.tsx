@@ -82,9 +82,14 @@ export default function GroupForm() {
   const set = <K extends keyof BillingGroupInput>(k: K, v: BillingGroupInput[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
+  // Excluded clients are not offered for new config, but an existing group
+  // must keep rendering its own client even if it was excluded afterwards —
+  // this select is editable, and a missing option would blank the field and
+  // let a save wipe it. The flag is in the key because the two calls fetch
+  // different sets; sharing one key would let either masquerade as the other.
   const { data: clients = [] } = useQuery({
-    queryKey: ['harvest-clients'],
-    queryFn: getHarvestClients,
+    queryKey: ['harvest-clients', isEdit ? 'all' : 'selectable'],
+    queryFn: () => getHarvestClients({ include_excluded: isEdit }),
   });
 
   const {
@@ -148,10 +153,13 @@ export default function GroupForm() {
   }, [existing]);
 
   const { data: projects = [] } = useQuery({
+    // `groupId` already distinguishes the edit key from the create one, so the
+    // include_excluded flag needs no separate entry.
     queryKey: ['harvest-projects', form.harvest_client_id, groupId],
     queryFn: () => getHarvestProjects({
       client_id: form.harvest_client_id,
       exclude_group_id: groupId,
+      include_excluded: isEdit,
     }),
     enabled: form.harvest_client_id > 0,
   });

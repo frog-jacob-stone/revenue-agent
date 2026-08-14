@@ -24,6 +24,7 @@ from app.config import Settings
 from app.integrations import harvest
 from app.services.billing import rates
 from app.services.billing.harvest_snapshot import get_snapshot_info
+from app.services.client_exclusions import not_excluded_sql
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +48,19 @@ async def _unmapped_candidates(pool: asyncpg.Pool) -> list[dict[str, Any]]:
 
     Projects in a `manual` group are excluded — being manually invoiced is a
     valid answer to "where does this project bill?".
+
+    So are projects of an excluded client. "Where does this bill?" has no answer
+    for our own internal work because it never bills, and the question should
+    not be asked. This is what the `manual` group named "Frogslayer - Exclusion"
+    was standing in for; once a client is excluded here, that group can go.
     """
     rows = await pool.fetch(
-        """
+        f"""
         SELECT p.harvest_id, p.name, p.client_name, p.client_id, p.is_active
         FROM harvest_projects p
         WHERE p.is_billable
           AND p.is_active
+          AND {not_excluded_sql()}
           AND NOT EXISTS (
               SELECT 1 FROM billing_group_projects bgp
               WHERE bgp.harvest_project_id = p.harvest_id
@@ -126,6 +133,29 @@ async def _currency_mismatches(pool: asyncpg.Pool) -> list[dict[str, Any]]:
         WHERE bg.is_active AND p.client_currency IS NOT NULL
         GROUP BY bg.id, bg.name
         HAVING count(DISTINCT p.client_currency) > 1
+        """
+    )
+    return [dict(r) for r in rows]
+
+
+async def _excluded_with_active_group(pool: asyncpg.Pool) -> list[dict[str, Any]]:
+    """Excluded clients that still have active billing config.
+
+    The one genuinely dangerous combination. Exclusion hides a client from the
+    Projects roster and from the unmapped check, but it does not stop a run
+    invoicing it — so this state means invoices keep going out for a client the
+    account has been told is not a client. Silent otherwise: excluding is done
+    on a Settings screen that knows nothing about billing groups.
+    """
+    rows = await pool.fetch(
+        """
+        SELECT x.harvest_client_id, c.name AS client_name,
+               bg.id AS group_id, bg.name AS group_name
+        FROM excluded_harvest_clients x
+        JOIN billing_groups bg
+          ON bg.harvest_client_id = x.harvest_client_id AND bg.is_active
+        LEFT JOIN harvest_clients c ON c.harvest_id = x.harvest_client_id
+        ORDER BY bg.name
         """
     )
     return [dict(r) for r in rows]
@@ -289,6 +319,18 @@ async def reconcile_config(
             f"{r['client_name']} — {r['name']} (#{r['harvest_id']}) is archived "
             f"but still sits in an active billing group.",
             harvest_project_id=r["harvest_id"],
+        ))
+
+    for r in await _excluded_with_active_group(pool):
+        name = r["client_name"] or f"#{r['harvest_client_id']}"
+        flags.append(_flag(
+            "EXCLUDED_CLIENT_HAS_ACTIVE_GROUP", "error",
+            f"{name} is on the exclusion list but still has the active billing "
+            f"group '{r['group_name']}'. Exclusion hides a client from reporting; "
+            f"it does not stop it billing, so invoices will still go out. "
+            f"Deactivate the group or remove the exclusion.",
+            billing_group_id=str(r["group_id"]),
+            harvest_client_id=r["harvest_client_id"],
         ))
 
     for r in await _exhausted_schedules(pool):

@@ -637,16 +637,96 @@ export function getInvoiceItemCategories(): Promise<InvoiceItemCategory[]> {
   return apiFetch<InvoiceItemCategory[]>('/billing/harvest/item-categories');
 }
 
-export function getHarvestClients(): Promise<HarvestClientOption[]> {
-  return apiFetch<HarvestClientOption[]>('/billing/harvest/clients');
+/** Excluded clients are omitted unless asked for. The group *edit* form asks,
+ *  so a group whose client was excluded after it was built stays editable. */
+export function getHarvestClients(
+  opts: { include_excluded?: boolean } = {},
+): Promise<HarvestClientOption[]> {
+  const qs = opts.include_excluded ? '?include_excluded=true' : '';
+  return apiFetch<HarvestClientOption[]>(`/billing/harvest/clients${qs}`);
 }
 
 export function getHarvestProjects(
-  opts: { client_id?: number; exclude_group_id?: string } = {},
+  opts: {
+    client_id?: number;
+    exclude_group_id?: string;
+    include_excluded?: boolean;
+  } = {},
 ): Promise<HarvestProjectOption[]> {
   const params = new URLSearchParams();
   if (opts.client_id !== undefined) params.set('client_id', String(opts.client_id));
   if (opts.exclude_group_id) params.set('exclude_group_id', opts.exclude_group_id);
+  if (opts.include_excluded) params.set('include_excluded', 'true');
   const qs = params.toString();
   return apiFetch<HarvestProjectOption[]>(`/billing/harvest/projects${qs ? `?${qs}` : ''}`);
+}
+
+// ── Projects ────────────────────────────────────────────────────────────────
+
+/**
+ * One engagement on the Projects tab.
+ *
+ * Distinct from `HarvestProjectOption`, which exists to populate the billing
+ * group form and carries the group assignment. This is the delivery view: who
+ * the work is for and when it runs.
+ */
+export interface ProjectSummary {
+  harvest_id: number;
+  name: string;
+  client_name: string | null;
+  /** Harvest's own dates, both optional there — null means no date was set,
+   *  not a date of zero. `ends_on` is editable in Harvest, so it tracks the
+   *  current end rather than what was committed. */
+  starts_on: string | null;
+  ends_on: string | null;
+  is_active: boolean;
+  /** When the Harvest snapshot last ran. This reads a cache, not Harvest. */
+  synced_at: string;
+}
+
+/** Running engagements, or closed ones. The two are disjoint — `archived`
+ *  swaps the list rather than extending it. */
+export function getProjects(archived = false): Promise<ProjectSummary[]> {
+  return apiFetch<ProjectSummary[]>(`/projects${archived ? '?archived=true' : ''}`);
+}
+
+// ── Client exclusions ───────────────────────────────────────────────────────
+
+/**
+ * A Harvest client this system treats as not-a-client — our own company, a
+ * defunct test account. Account-wide: hidden from the Projects roster and
+ * skipped by billing config reconciliation alike.
+ */
+export interface ExcludedClient {
+  harvest_client_id: number;
+  /** Null when the Harvest snapshot has no row for this id. The exclusion
+   *  still stands — it outlives the cache it names. */
+  client_name: string | null;
+  reason: string | null;
+  project_count: number;
+  excluded_at: string;
+  excluded_by: string;
+}
+
+export function getClientExclusions(): Promise<ExcludedClient[]> {
+  return apiFetch<ExcludedClient[]>('/client-exclusions');
+}
+
+/** Idempotent — re-posting an already-excluded client updates its reason.
+ *  All three return the whole list, so callers re-render from the server. */
+export function excludeClient(
+  harvest_client_id: number,
+  reason: string | null,
+): Promise<ExcludedClient[]> {
+  return apiFetch<ExcludedClient[]>('/client-exclusions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ harvest_client_id, reason }),
+  });
+}
+
+export function unexcludeClient(harvest_client_id: number): Promise<ExcludedClient[]> {
+  return apiFetch<ExcludedClient[]>(`/client-exclusions/${harvest_client_id}`, {
+    method: 'DELETE',
+  });
 }

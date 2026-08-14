@@ -2,6 +2,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 
 const TABS = [
   { to: '/settings/billing', label: 'Billing', end: false },
+  { to: '/settings/excluded-clients', label: 'Excluded Clients', end: false },
   { to: '/settings/agents', label: 'Agents', end: false },
   { to: '/settings/audit', label: 'Audit Log', end: false },
   { to: '/settings/llm-calls', label: 'LLM Calls', end: false },

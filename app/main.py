@@ -14,7 +14,9 @@ from app.routers import (
     audit_log,
     billing,
     chat,
+    client_exclusions,
     llm_calls,
+    projects,
 )
 from app.seed import seed_agents
 from app.services.chat_sessions import mark_orphaned_streaming_failed
@@ -69,6 +71,8 @@ app.include_router(llm_calls.router, dependencies=_auth)
 app.include_router(chat.router, dependencies=_auth)
 app.include_router(approvals.router, dependencies=_auth)
 app.include_router(billing.router, dependencies=_auth)
+app.include_router(projects.router, dependencies=_auth)
+app.include_router(client_exclusions.router, dependencies=_auth)
 
 
 @app.get("/healthz")

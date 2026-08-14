@@ -25,6 +25,7 @@ import ChatLayout from './pages/Chat/ChatLayout';
 import LlmCalls from './pages/LlmCalls';
 import SettingsLayout from './pages/Settings/SettingsLayout';
 import SettingsBilling from './pages/Settings/Billing';
+import SettingsExcludedClients from './pages/Settings/ExcludedClients';
 import Login from './pages/Login';
 
 export default function App() {
@@ -82,6 +83,7 @@ export default function App() {
                 is the first tab that does something. */}
             <Route index element={<Navigate to="billing" replace />} />
             <Route path="billing" element={<SettingsBilling />} />
+            <Route path="excluded-clients" element={<SettingsExcludedClients />} />
             <Route path="agents" element={<AgentList />} />
             <Route path="agents/:agentId" element={<AgentDetail />} />
             <Route path="audit" element={<AuditLog />} />

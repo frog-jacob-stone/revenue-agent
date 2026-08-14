@@ -69,6 +69,14 @@ class AuditEvent(StrEnum):
     # to what" is the question worth answering later.
     BILLING_SETTINGS_UPDATED = "billing.settings.updated"
 
+    # Client exclusions. Account-wide, not billing-scoped — an excluded client
+    # disappears from the Projects roster and from config reconciliation alike,
+    # so the trail records the standing instruction rather than one screen's
+    # filter. The reason rides along: "why is this client hidden" is the whole
+    # question a year later.
+    CLIENT_EXCLUDED = "client.excluded"
+    CLIENT_EXCLUSION_REMOVED = "client.exclusion.removed"
+
     # The Harvest write (PRD §8). Four outcomes, and the trail must distinguish
     # them: ATTEMPTED is written and committed *before* the POST, so an invoice
     # created during an outage that never returned still has a record on our side.
@@ -128,6 +136,8 @@ BILLING_ITEM_OVERRIDDEN = AuditEvent.BILLING_ITEM_OVERRIDDEN
 BILLING_DRAW_RELEASED = AuditEvent.BILLING_DRAW_RELEASED
 BILLING_DRAW_UNRELEASED = AuditEvent.BILLING_DRAW_UNRELEASED
 BILLING_SETTINGS_UPDATED = AuditEvent.BILLING_SETTINGS_UPDATED
+CLIENT_EXCLUDED = AuditEvent.CLIENT_EXCLUDED
+CLIENT_EXCLUSION_REMOVED = AuditEvent.CLIENT_EXCLUSION_REMOVED
 BILLING_INVOICE_ATTEMPTED = AuditEvent.BILLING_INVOICE_ATTEMPTED
 BILLING_INVOICE_CREATED = AuditEvent.BILLING_INVOICE_CREATED
 BILLING_INVOICE_FAILED = AuditEvent.BILLING_INVOICE_FAILED

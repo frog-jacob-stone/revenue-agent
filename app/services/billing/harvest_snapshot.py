@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import date
 from typing import Any
 
 import asyncpg
@@ -30,6 +31,21 @@ def _num(value: Any) -> float | None:
     try:
         return float(value)
     except (TypeError, ValueError):
+        return None
+
+
+def _date(value: Any) -> date | None:
+    """Harvest's date-only strings ("2025-02-03") to a `date`.
+
+    asyncpg will not coerce a string into a `date` column, so this is load-
+    bearing rather than tidiness. Unparseable values become null: a date we
+    cannot read is a date we do not have.
+    """
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
         return None
 
 
@@ -59,9 +75,10 @@ async def _upsert_projects(conn: asyncpg.Connection, projects: list[dict]) -> in
             INSERT INTO harvest_projects (
                 harvest_id, name, code, client_id, client_name, client_currency,
                 is_billable, is_fixed_fee, bill_by, hourly_rate, fee, budget,
-                budget_by, budget_is_monthly, is_active, synced_at
+                budget_by, budget_is_monthly, is_active, starts_on, ends_on,
+                synced_at
             )
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, now())
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, now())
             ON CONFLICT (harvest_id) DO UPDATE SET
                 name = EXCLUDED.name,
                 code = EXCLUDED.code,
@@ -77,6 +94,8 @@ async def _upsert_projects(conn: asyncpg.Connection, projects: list[dict]) -> in
                 budget_by = EXCLUDED.budget_by,
                 budget_is_monthly = EXCLUDED.budget_is_monthly,
                 is_active = EXCLUDED.is_active,
+                starts_on = EXCLUDED.starts_on,
+                ends_on = EXCLUDED.ends_on,
                 synced_at = now()
             """,
             int(p["id"]), p.get("name") or "", p.get("code"),
@@ -85,6 +104,7 @@ async def _upsert_projects(conn: asyncpg.Connection, projects: list[dict]) -> in
             p.get("bill_by"), _num(p.get("hourly_rate")), _num(p.get("fee")),
             _num(p.get("budget")), p.get("budget_by"), p.get("budget_is_monthly"),
             bool(p.get("is_active", True)),
+            _date(p.get("starts_on")), _date(p.get("ends_on")),
         )
     return len(projects)
 

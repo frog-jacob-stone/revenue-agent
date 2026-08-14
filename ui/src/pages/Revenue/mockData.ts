@@ -170,19 +170,6 @@ const PROJECTS: ProjectSeed[] = [
   },
 ];
 
-export interface MockProject {
-  name: string;
-  harvest_id: number;
-  billing_type: BillingType;
-}
-
-/** The sample roster, shared with the Projects tab's mock so the two mockups
- *  cannot disagree about which engagements exist. Identity only — dates and
- *  delivery state belong to `pages/Projects/mockData.ts`. */
-export const MOCK_PROJECTS: MockProject[] = PROJECTS.map(
-  ({ name, harvest_id, billing_type }) => ({ name, harvest_id, billing_type }),
-);
-
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /** Billable-hour multiplier by calendar month (Jan–Dec). Holiday weeks and
