@@ -14,6 +14,12 @@ import GroupDetail from './pages/Invoices/GroupDetail';
 import GroupForm from './pages/Invoices/GroupForm';
 import Draws from './pages/Invoices/Draws';
 import Drafted from './pages/Invoices/Drafted';
+import RevenueLayout from './pages/Revenue/RevenueLayout';
+import RevenueOverview from './pages/Revenue/Overview';
+import RevenueRuns from './pages/Revenue/Runs';
+import RevenueEntries from './pages/Revenue/Entries';
+import Projects from './pages/Projects';
+import Contracts from './pages/Contracts';
 import AuditLog from './pages/AuditLog';
 import ChatLayout from './pages/Chat/ChatLayout';
 import LlmCalls from './pages/LlmCalls';
@@ -53,6 +59,17 @@ export default function App() {
           <Route path="/invoices/groups/new" element={<GroupForm />} />
           <Route path="/invoices/groups/:groupId/edit" element={<GroupForm />} />
           <Route path="/invoices/groups/:groupId" element={<GroupDetail />} />
+          {/* Mockup only — every figure under here comes from
+              pages/Revenue/mockData.ts. See RevenueLayout. */}
+          <Route path="/revenue" element={<RevenueLayout />}>
+            <Route index element={<Navigate to="overview" replace />} />
+            <Route path="overview" element={<RevenueOverview />} />
+            <Route path="runs" element={<RevenueRuns />} />
+            <Route path="entries" element={<RevenueEntries />} />
+          </Route>
+          {/* Nav destinations ahead of their features — see PlaceholderPage. */}
+          <Route path="/projects" element={<Projects />} />
+          <Route path="/contracts" element={<Contracts />} />
           <Route path="/chat" element={<ChatLayout />} />
           <Route path="/chat/:agentId" element={<ChatLayout />} />
           <Route path="/chat/:agentId/:sessionId" element={<ChatLayout />} />

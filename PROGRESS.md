@@ -131,11 +131,23 @@ Deleted with the LangGraph rip-out, then finished off on 2026-08-10 when HubSpot
 - [ ] Wire `get_revenue_data_slim` into the agent's `get_revenue_data` tool surface — verify the tool actually calls the slim variant, not the full pull
 - [ ] Token-budget guardrail — cap rows returned (or summarize) when a wide date range would blow context; current default is 12-month window but no row cap
 
-### Revenue Reporting & Project Tracking — `[ ]` (not started)
-None of this exists in code or schema today — confirmed via full-repo search: no `projects` table beyond the Harvest cache (`harvest_projects`), no revenue-per-type view, no business-facing revenue dashboard (the existing `Dashboard.tsx` shows agent status, not revenue). Added to scope in `PRD.md`; not yet designed.
-- [ ] Revenue dashboard — business-facing revenue metrics, distinct from the agent-status dashboard in Module 2
-- [ ] Project-completion tracking — no schema concept of "complete" beyond Harvest's own project-archived flag
+### Revenue Reporting & Project Tracking — `[ ]` (not started; UI mocked)
+Nothing here is built in code or schema: no `projects` table beyond the Harvest cache (`harvest_projects`), no revenue-per-type view, no Postgres-backed rev-rec data, and no rev-rec endpoints in `ui/src/api.ts`. Recognised revenue still lives only in Airtable. Added to scope in `PRD.md`.
+
+A **non-functional UI mockup** now exists at `/revenue` (`ui/src/pages/Revenue/`, plan `.claude/tasks/24.revenue-tab-mockup.md`) — Overview / Runs / Entries, built to the Invoices tab's conventions so the shape can be reviewed before the backend is designed. Every figure comes from `pages/Revenue/mockData.ts`, whose types deliberately mirror the real slim schema (`app/services/revenue.py::_SLIM_FIELDS`) so live wiring replaces that one file rather than redesigning the screens. An amber "sample data — not live" banner renders once in `RevenueLayout`. Recharts was added to `ui/package.json` for the TTM bar chart; it is the app's only chart library.
+- [ ] Revenue dashboard — business-facing revenue metrics, distinct from the agent-status dashboard in Module 2. Mocked, not built: needs a rev-rec data source in Postgres and an API before the mockup can be wired
+- [ ] Project-completion tracking — no schema concept of "complete" beyond Harvest's own project-archived flag. A placeholder tab exists at `/projects` (`ui/src/pages/Projects.tsx`); it renders a "not built yet" card and reads nothing
 - [ ] Revenue-per-project-type reporting — `billing_type` exists as a config enum (T&M / fixed_fee_schedule / recurring_monthly / manual) but nothing reports revenue rolled up by it
+
+### Contracts — `[ ]` (not started, not scoped)
+New in the sidebar on 2026-08-14 as a placeholder tab only (`ui/src/pages/Contracts.tsx`). Nothing models a contract anywhere in the repo. The terms that behave like contract terms are split between `contracted_fees` in the Airtable rev rec ledger and the payment terms / billing type / draw schedules in billing group config. Whether Contracts becomes its own record or a view over what exists is undecided.
+- [ ] Decide the shape — own record vs. view over billing groups + Airtable terms
+- [ ] Everything else — no schema, no API, no design
+
+> **Placeholder tabs are not features.** `/projects` and `/contracts` are nav destinations that
+> exist ahead of their backends. Both render `components/shared/PlaceholderPage.tsx`, which
+> carries a `NOT IMPLEMENTED` badge and states what has to exist first. Deliberately not
+> `EmptyState` — "no items yet" would imply the screen works and simply has no rows.
 
 ### Module 8: Invoicing (Harvest) — `[-]`
 
@@ -220,8 +232,10 @@ The gate does **not** cover the draw path and never did: a draw's amount is a nu
 human typed into the schedule and released, so there is no estimate to reconcile.
 
 **Not built and deliberately so:** rev rec has no runner. `TRIGGER_REVENUE_RECOGNITION`
-came out of `revenue-ops` under ADR-0004 and its UI button on the Revenue page is not
-written yet. The `write_rev_rec_entries` executor is untouched and waiting.
+came out of `revenue-ops` under ADR-0004 and no operator-initiated endpoint has replaced
+it. The Revenue tab's "Run Revenue Recognition" button exists but is a mockup control —
+permanently disabled and badged `NOT IMPLEMENTED`, wired to nothing. The
+`write_rev_rec_entries` executor is untouched and waiting.
 
 ---
 

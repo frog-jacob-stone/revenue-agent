@@ -2,7 +2,8 @@ import { NavLink } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   LayoutDashboard, Inbox, MessageSquare,
-  Settings, ChevronLeft, ChevronRight, Zap, Receipt,
+  Settings, ChevronLeft, ChevronRight, Zap, Receipt, TrendingUp,
+  FolderKanban, FileSignature,
 } from 'lucide-react';
 import { getApprovals, getDraws } from '../../api';
 import { drawsNeedingAttention } from '../../invoicing';
@@ -16,7 +17,13 @@ interface Props {
 // nav — see pages/Settings/SettingsLayout.tsx.
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, exact: true },
+  // Ordered by what the business asks about, widest first: revenue earned, the
+  // work that earned it, what was billed for it, and the agreements behind it.
+  // Revenue and Projects are mockup/placeholder — each screen says so itself.
+  { to: '/revenue', label: 'Revenue', icon: TrendingUp },
+  { to: '/projects', label: 'Projects', icon: FolderKanban },
   { to: '/invoices', label: 'Invoices', icon: Receipt, drawsBadge: true },
+  { to: '/contracts', label: 'Contracts', icon: FileSignature },
   { to: '/chat', label: 'Chat', icon: MessageSquare },
   { to: '/inbox', label: 'Approval Inbox', icon: Inbox, inboxBadge: true },
   { to: '/settings', label: 'Settings', icon: Settings },
