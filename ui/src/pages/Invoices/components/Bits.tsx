@@ -70,15 +70,28 @@ const DRAW_STATE_STYLES: Record<DrawState, string> = {
   invoiced: 'bg-slate-100 text-slate-500 border-slate-300',
 };
 
-export function DrawStateChip({ state, overdue }: { state: DrawState; overdue?: boolean }) {
-  // Overdue is a property of a pending draw, not a state of its own — it says
-  // the scheduled date passed, not that anything changed about the draw.
+export function DrawStateChip({
+  state, overdue, due,
+}: {
+  state: DrawState;
+  overdue?: boolean;
+  due?: boolean;
+}) {
+  // Overdue and due-today are properties of a pending draw, not states of their
+  // own — they say where the scheduled date sits relative to today, not that
+  // anything changed about the draw. Overdue wins if both are somehow passed:
+  // a slipped commitment is the louder fact.
+  //
+  // Due-today is green, not amber. Nothing is wrong — the date the contract
+  // committed to has arrived, and that is the system working.
   const style = overdue
     ? 'bg-amber-400/15 text-amber-700 border-amber-400/50'
-    : DRAW_STATE_STYLES[state];
+    : due
+      ? 'bg-emerald-500/15 text-emerald-700 border-emerald-500/40'
+      : DRAW_STATE_STYLES[state];
   return (
     <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-semibold uppercase tracking-wide ${style}`}>
-      {overdue ? 'Overdue' : DRAW_STATE_LABEL[state]}
+      {overdue ? 'Overdue' : due ? 'Due' : DRAW_STATE_LABEL[state]}
     </span>
   );
 }

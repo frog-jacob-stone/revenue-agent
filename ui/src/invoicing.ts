@@ -544,10 +544,11 @@ export function drawState(
 /**
  * How many draws are asking for something right now.
  *
- * Ready to draft plus past its scheduled date — money sitting uncollected, and
- * a commitment that has slipped. Both are things only a human can move, which
- * is what makes them worth a counter; everything else in the queue is waiting
- * on delivery and will get there on its own.
+ * Ready to draft, due today, or past its scheduled date — money sitting
+ * uncollected, a commitment coming due, and one that has slipped. All three are
+ * things only a human can move, which is what makes them worth a counter;
+ * everything else in the queue is waiting on delivery and will get there on its
+ * own.
  */
 export function drawsNeedingAttention(
   draws: Pick<
@@ -557,7 +558,10 @@ export function drawsNeedingAttention(
   today = new Date(),
 ): number {
   return draws.filter(
-    (d) => drawState(d) === 'ready' || drawIsOverdue(d, today),
+    (d) =>
+      drawState(d) === 'ready' ||
+      drawIsOverdue(d, today) ||
+      drawIsDueToday(d, today),
   ).length;
 }
 
@@ -575,4 +579,15 @@ export function drawIsOverdue(
 ): boolean {
   if (drawState(d) !== 'pending') return false;
   return d.scheduled_date.slice(0, 10) < isoDate(today);
+}
+
+/** The scheduled date is today and delivery isn't confirmed yet. The day a draw
+ *  earns its invoice, not a warning — mutually exclusive with overdue, since a
+ *  date cannot be both today and in the past. */
+export function drawIsDueToday(
+  d: Pick<ScheduleItem, 'scheduled_date' | 'released_at' | 'invoiced_run_id'>,
+  today = new Date(),
+): boolean {
+  if (drawState(d) !== 'pending') return false;
+  return d.scheduled_date.slice(0, 10) === isoDate(today);
 }

@@ -12,7 +12,8 @@ import {
   getInFlightItems, resolveInFlight, getBillingHealth,
 } from '../../api';
 import {
-  money, shortDate, dateTime, drawState, drawIsOverdue, harvestInvoiceUrl,
+  money, shortDate, dateTime, drawState, drawIsOverdue, drawIsDueToday,
+  harvestInvoiceUrl,
 } from '../../invoicing';
 import type {
   Draw, DrawInvoiceResult, InFlightItem, UnknownWriteDetail,
@@ -411,18 +412,25 @@ function PendingRow({
   onConfirm: () => void;
 }) {
   const overdue = drawIsOverdue(draw);
+  const due = drawIsDueToday(draw);
   return (
     <div className={`flex items-center gap-3 border rounded-xl px-4 py-3 ${
-      overdue ? 'border-amber-400/40 bg-amber-400/5' : 'border-slate-200 bg-white'
+      overdue
+        ? 'border-amber-400/40 bg-amber-400/5'
+        : due
+          ? 'border-emerald-500/40 bg-emerald-500/5'
+          : 'border-slate-200 bg-white'
     }`}>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm text-slate-800">{draw.description}</span>
-          <DrawStateChip state="pending" overdue={overdue} />
+          <DrawStateChip state="pending" overdue={overdue} due={due} />
         </div>
         <p className="text-xs text-slate-500 mt-0.5">
           {draw.harvest_client_name} · {draw.harvest_project_name} ·{' '}
-          <span className={overdue ? 'text-amber-700 font-medium' : undefined}>
+          <span className={
+            overdue ? 'text-amber-700 font-medium' : due ? 'text-emerald-700 font-medium' : undefined
+          }>
             scheduled {shortDate(draw.scheduled_date)}
           </span>
         </p>
