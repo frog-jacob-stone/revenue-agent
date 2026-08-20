@@ -503,11 +503,13 @@ async def preview_draw_invoice(
                    g.harvest_client_name, g.payment_term, g.custom_net_days,
                    g.subject_template, g.notes_template, g.purchase_order,
                    g.is_active,
+                   p.name AS harvest_project_name,
                    (SELECT count(*) FROM fixed_fee_schedule_items x
                      WHERE x.billing_group_id = d.billing_group_id)
                        AS schedule_length
             FROM fixed_fee_schedule_items d
             JOIN billing_groups g ON g.id = d.billing_group_id
+            LEFT JOIN harvest_projects p ON p.harvest_id = d.harvest_project_id
             {_LIVE_JOIN}
             WHERE d.id = $1
             """,
@@ -602,6 +604,7 @@ async def preview_draw_invoice(
             "unit": "ea",
             "unit_price": amount,
             "amount": amount,
+            "project_name": draw["harvest_project_name"],
         }],
         "planned_payload": body,
         "flags": [f.as_dict() for f in preview_flags],

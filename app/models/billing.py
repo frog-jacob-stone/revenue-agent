@@ -456,6 +456,7 @@ class EstimatedLineItem(ORMBase):
     unit: str
     unit_price: float
     amount: float
+    project_name: str | None = None
 
 
 class RunItemResponse(ORMBase):

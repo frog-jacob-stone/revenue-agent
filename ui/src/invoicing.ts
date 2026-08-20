@@ -352,6 +352,7 @@ export interface EstimatedLineItem {
   unit: string;
   unit_price: number;
   amount: number;
+  project_name?: string | null;
 }
 
 export interface RunItem {

@@ -176,6 +176,9 @@ function ReadyCard({
                             {li.detail && (
                               <span className="text-slate-400 block text-[11px]">{li.detail}</span>
                             )}
+                            {li.project_name && (
+                              <span className="text-slate-400 block text-[11px]">{li.project_name}</span>
+                            )}
                           </td>
                           <td className="px-3 py-2 text-right text-slate-600 tabular-nums">
                             {li.quantity} {li.unit}
