@@ -255,30 +255,57 @@ async def _replace_projects(
         )
 
 
-async def _replace_recurring_items(
+async def _save_recurring_items(
     conn: asyncpg.Connection, group_id: UUID, items: list[dict[str, Any]]
 ) -> None:
-    """Full replace, mirroring how the form submits.
+    """Upsert a group's line items, preserving row identity.
+
+    Was a delete-and-reinsert, on the reasoning that these rows are pure config
+    and so their ids carry no meaning. That stopped being true when placeholder
+    resolutions arrived: `recurring_line_item_resolutions` keys the operator's
+    per-month amount on the line's id, so re-minting ids on every save would
+    discard this month's entered amounts as a side effect of editing an
+    unrelated fee — silently, and in the direction of under-billing.
+
+    So rows are matched on `id`, rows without one are inserted, and rows in the
+    table but absent from the submission are deleted (taking their resolutions
+    with them, via `on delete cascade` — removing a fee should remove the
+    decisions about it).
+
+    Unlike a draw, nothing here needs locking once billing has begun. A
+    resolution is a decision about a month, not an invoice; the ledger row holds
+    its own frozen copy of the payload, so a later config edit cannot rewrite
+    what was already planned.
 
     Effective dating still earns its keep for history: a superseded fee keeps
     its row as long as the caller sends it back with an `effective_to` rather
-    than dropping it.
+    than dropping it — and now keeps its id too, so its resolution history
+    stays attached.
     """
-    await conn.execute(
-        "DELETE FROM recurring_line_items WHERE billing_group_id = $1", group_id
-    )
+    existing = {
+        r["id"] for r in await conn.fetch(
+            "SELECT id FROM recurring_line_items WHERE billing_group_id = $1",
+            group_id,
+        )
+    }
+
+    submitted_ids: set[UUID] = set()
     # Position in the submitted list is authoritative. A caller that sends
     # sort_order=0 on every row (or omits it) still gets stable ordering.
     for order, it in enumerate(items, start=1):
-        await conn.execute(
-            """
-            INSERT INTO recurring_line_items
-                (billing_group_id, harvest_project_id, description, quantity,
-                 unit_price, kind, is_placeholder, sort_order,
-                 effective_from, effective_to)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-            """,
-            group_id,
+        raw_id = it.get("id")
+        line_id = UUID(str(raw_id)) if raw_id else None
+
+        if line_id is not None and line_id not in existing:
+            # Either a stale id from a concurrent edit, or another group's row.
+            # Refusing beats inserting a duplicate under a new id, which would
+            # leave the operator with two copies of one fee.
+            raise BillingConfigError(
+                f"Line item {line_id} does not belong to this billing group. "
+                "Reload the group and try again."
+            )
+
+        params = (
             int(it["harvest_project_id"]),
             it["description"],
             it.get("quantity", 1),
@@ -288,6 +315,36 @@ async def _replace_recurring_items(
             order,
             it.get("effective_from"),
             it.get("effective_to"),
+        )
+
+        if line_id is not None:
+            submitted_ids.add(line_id)
+            await conn.execute(
+                """
+                UPDATE recurring_line_items
+                SET harvest_project_id = $2, description = $3, quantity = $4,
+                    unit_price = $5, kind = $6, is_placeholder = $7,
+                    sort_order = $8, effective_from = $9, effective_to = $10
+                WHERE id = $1
+                """,
+                line_id, *params,
+            )
+        else:
+            await conn.execute(
+                """
+                INSERT INTO recurring_line_items
+                    (billing_group_id, harvest_project_id, description, quantity,
+                     unit_price, kind, is_placeholder, sort_order,
+                     effective_from, effective_to)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                """,
+                group_id, *params,
+            )
+
+    removed = [line_id for line_id in existing if line_id not in submitted_ids]
+    if removed:
+        await conn.execute(
+            "DELETE FROM recurring_line_items WHERE id = ANY($1::uuid[])", removed
         )
 
 
@@ -378,7 +435,7 @@ async def create_group(
             )
             await _replace_projects(conn, row["id"], projects)
             if recurring_items:
-                await _replace_recurring_items(conn, row["id"], recurring_items)
+                await _save_recurring_items(conn, row["id"], recurring_items)
             if schedule_items:
                 await draws.save_draws(conn, row["id"], schedule_items)
             await audit.write_audit_event(
@@ -456,7 +513,7 @@ async def update_group(
             if "projects" in data:
                 await _replace_projects(conn, group_id, data["projects"])
             if "recurring_items" in data:
-                await _replace_recurring_items(
+                await _save_recurring_items(
                     conn, group_id, data["recurring_items"] or []
                 )
             if "schedule_items" in data:

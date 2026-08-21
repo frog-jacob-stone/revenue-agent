@@ -384,6 +384,7 @@ import type {
   DrawInvoiceResult,
   DrawPreview,
   InFlightItem,
+  PlaceholderResolutionInput,
   ResolveInFlightRequest,
   ResolveInFlightResult,
   SnapshotRefreshResult,
@@ -593,6 +594,39 @@ export function setItemApproval(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+}
+
+/** Price one placeholder line, or omit it for this run month.
+ *
+ *  Rebuilds the planned payload server-side, so the response is the whole run
+ *  and becomes the new cache entry. If the group was already approved, that
+ *  approval is withdrawn — the payload it described has changed.
+ */
+export function setPlaceholderResolution(
+  runId: string,
+  itemId: string,
+  lineItemId: string,
+  body: PlaceholderResolutionInput,
+): Promise<BillingRunDetail> {
+  return apiFetch<BillingRunDetail>(
+    `/billing/runs/${runId}/items/${itemId}/placeholders/${lineItemId}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+/** Withdraw a decision, returning the line to undecided at $0 — and to
+ *  blocking approval, which is the point. */
+export function clearPlaceholderResolution(
+  runId: string, itemId: string, lineItemId: string,
+): Promise<BillingRunDetail> {
+  return apiFetch<BillingRunDetail>(
+    `/billing/runs/${runId}/items/${itemId}/placeholders/${lineItemId}`,
+    { method: 'DELETE' },
+  );
 }
 
 /** Approve every already-approvable group, or clear every approval. */

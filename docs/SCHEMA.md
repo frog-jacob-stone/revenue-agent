@@ -304,14 +304,38 @@ another). `kind` is the Harvest invoice item category — validated against
 `harvest_invoice_item_categories` both at save time and at plan time, so an
 invalid value can never become a 422 mid-execution. `is_placeholder` marks a
 line whose amount is only knowable after the fact (hosting pass-through, a
-percentage-based tooling fee): it goes out at $0 so the draft carries the right
-scaffolding, is excluded from the pre-flight total, and raises
-`PLACEHOLDER_LINE_ITEMS`. `effective_from` / `effective_to` let a fee change
+percentage-based tooling fee, a retainer overage): the operator decides it per
+month on the pre-flight — see `recurring_line_item_resolutions` below — and
+until they do, the line plans at $0, is excluded from `planned_amount`, and
+blocks approval. `effective_from` / `effective_to` let a fee change
 without erasing history — supersede the old row rather than editing it. Both are
 compared **month-granular** (`date_trunc('month', …)`): any day within a month
 means that whole month, because billing is monthly and the UI presents these as
 "first / last month billed". Storing a mid-month date must not skip the month it
 names.
+
+`recurring_line_item_resolutions` — one operator decision about one placeholder
+line for one run month: an entered amount (`resolution = 'amount'`, with
+`unit_price` and an optional `quantity` override) or an explicit omit
+(`resolution = 'omitted'`). Named for its parent so it sorts beside it; there is
+no constraint expressing "only for a placeholder line", because a foreign key
+cannot see a column on the row it points at and the flag can be toggled
+afterwards — `app/services/billing/placeholders.py` enforces it, and a
+resolution on a line that is no longer a placeholder is ignored rather than
+rejected.
+
+Keyed on `(recurring_line_item_id, run_month)` rather than the ledger row, which
+is the whole design: a resolution is a fact about a month ("hosting for August
+2026 was $1,240"), so it survives Re-plan. Keyed on `billing_run_items` instead,
+the ordinary act of fixing a config problem and re-planning would silently
+discard every amount already entered. That is also why `recurring_line_items.id`
+must be stable across a group save — see migration `33`.
+
+`omitted` is a first-class resolution, not an absence. A retainer overage is
+configured precisely so it comes up every month; most months there is none, and
+"no overage in August" is a decision worth recording rather than a question left
+undecided. An omitted line leaves the Harvest payload but stays on the
+pre-flight, struck through.
 
 `fixed_fee_schedule_items` — config for the one billing type whose planning
 logic is still unbuilt (PRD Phase 4). The table exists so config can be entered
@@ -342,7 +366,21 @@ what makes an unresolved in-flight row a hard block until a human clears it.
 
 `actual_amount` is the amount **at creation**, not what the client was billed —
 drafts are edited in Harvest before sending. Do not build reporting that assumes
-otherwise.
+otherwise. (Placeholder resolution narrows that gap without closing it: the
+amounts that used to be typed into the draft are now settled before it exists,
+but a draft remains freely editable afterwards.)
+
+`estimated_line_items` is not purely display. For a `recurring_monthly` group
+each entry also carries `recurring_line_item_id`, `harvest_project_id`, `kind`,
+`is_placeholder`, and `placeholder_state`, which makes it a complete description
+of every line — enough that `planned_payload["line_items"]` can be rebuilt from
+it. That is what lets a placeholder be resolved against the plan the operator
+reviewed rather than against config as it stands now; re-deriving from live
+config would fold in any edit made since planning. All five are null for T&M and
+draw entries, which have no config row behind them. `placeholder_state` is also
+the live approval gate: `review.py` counts `unresolved` entries in this array
+rather than reading a flag, because flags are frozen at plan time and this
+changes as the operator works.
 
 **Draws hold their own index, not the month's** (`0028`). C6 above is scoped to
 non-draw rows (`fixed_fee_schedule_item_id is null`), and draws get an analogous
@@ -526,6 +564,8 @@ Migrations run in filename order; each is idempotent.
 31. `20250101000031_excluded_harvest_clients.sql` — adds `excluded_harvest_clients`, the account-wide "this Harvest client is not a client" list. Frogslayer is the motivating case: our own company is a Harvest client, and some of its internal projects (Olympus, Trident) are flagged *billable*, so no automatic rule catches them. This had been handled by hand with a `manual` billing group named "Frogslayer - Exclusion" whose only job was to stop reconciliation flagging two internal projects as unmapped — project-level, so it needed upkeep every time an internal project was created. Keyed on the client instead, so one row covers every present and future project underneath. A table this system owns rather than a column on `harvest_clients`, because that cache is documented as safe to truncate and re-sync and operator intent must outlive that; no FK for the same reason. Not seeded — which clients are "us" is account-specific, and a hardcoded id or name in a migration is the thing this replaces
 
 32. `20250101000032_forecast_project_schedule.sql` — adds `forecast_project_schedule`, the per-project delivery forecast from Forecast: the last day a person is booked. This is the "projected end" the Projects tab mockup always had and could not source — Harvest's `ends_on` is the *planned* end and goes stale, while Forecast knows who is actually on the calendar. The gap between them is the point: 8 of 29 live projects are booked past their Harvest end date, one by five months. Stores a derivation rather than the ~7,700 raw assignment rows, since one date per project is what is read; the raw endpoint remains if staffing analytics ever wants it. Refreshed by `POST /projects/refresh`, which pulls Harvest *and* Forecast in one action — nothing schedules either
+
+33. `20250101000033_recurring_line_item_resolutions.sql` — adds `recurring_line_item_resolutions`, the operator's per-month decision about a placeholder line: an amount, or an explicit omit. Migration `0025` introduced `is_placeholder` on the understanding that the operator would complete the line by hand in the Harvest draft (PRD §10, §13). That put the last step of an invoice in a system this one cannot read, so nothing could notice when it was skipped — the invoice went out short while `planned_amount` still read as correct, precisely because placeholders were excluded from it. Keyed on `(recurring_line_item_id, run_month)` rather than the ledger row, so a decision survives Re-plan; that in turn is why `groups._save_recurring_items` became an upsert-by-id in the same change, since the previous delete-and-reinsert re-minted the ids these rows point at and would have discarded the month's amounts as a side effect of editing an unrelated fee. Also rewrites `0025`'s `is_placeholder` column comment, which described the workflow this replaces
 
 ## Open Questions
 

@@ -32,6 +32,10 @@ _Avoid_: validation (too generic — reconciliation is specifically the project�
 Two-layer defense against double-billing (`app/services/billing/duplicate_guard.py`): an unresolved `in_flight` ledger row blocks planning outright (unknown whether Harvest already created the invoice); partial-unique indexes on the ledger make a second live row for the same group/period or same draw structurally impossible to insert.
 _Avoid_: idempotency check (too generic), lock.
 
+**Placeholder resolution**:
+The operator's per-month decision about a `recurring_line_items` placeholder — an entered amount, or an explicit omit (`recurring_line_item_resolutions`, `app/services/billing/placeholders.py`). Keyed on the line and the run month, not the ledger row, so it survives a Re-plan. An undecided placeholder blocks approval and is **not** overridable: the point of a placeholder is to be impossible to forget, and an override is a way to forget it with a click. Omitting is a decision, not an absence — the line leaves this month's payload, stays on screen struck through, and returns next month.
+_Avoid_: override, line-item edit, adjustment, "filling it in in Harvest" (the retired workflow).
+
 **In-flight resolution**:
 Human-only recovery for a ledger row where a `POST` to Harvest never returned a verdict (`app/services/billing/inflight.py`) — timeout or 5xx, so the system does not know whether the invoice was created. No retry, no inference, no timeout-means-failure: it escalates to a person, who links the row to the real Harvest invoice (or confirms none was created) before the group unlocks.
 _Avoid_: retry, cleanup, auto-resolve.

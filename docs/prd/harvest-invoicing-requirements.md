@@ -716,3 +716,67 @@ else (migration `0028`).
 month" can never fire under this model. Added: `DRAW_OVERDUE` (warning),
 `DRAWS_AWAITING_RELEASE` (info), `DRAWS_READY_TO_BILL` (info). §6's Phase 6
 "milestone-driven fixed fee" is now the primary model, not a deferred variant.
+
+---
+
+## 14. Amendment — placeholder amounts are entered on the pre-flight, not in Harvest
+
+Supersedes §10 ("Overages are added by hand… the operator opens it in Harvest
+and adds overage lines before sending") and §13 ("the operator fills in the
+amount in Harvest before sending") on this one point. Both sections are left
+unedited above so the original reasoning stays legible.
+
+**Why it moved.** §13 introduced `is_placeholder` so a deliberately-zero line
+would not read as a bug in the pre-flight estimate. That solved the reporting
+problem and left the operational one: the last step of the invoice lived in a
+system this one cannot read, so nothing could notice when it was skipped. The
+failure is quiet and always in the same direction — the invoice goes out short,
+and `planned_amount` still reads as correct, *because* the placeholder was
+excluded from it. Nothing downstream disagrees.
+
+So the decision moves to the pre-flight, and approval is gated on it. Two
+answers, both decisions:
+
+- **an amount** — `unit_price`, with an optional `quantity` override for the
+  cases that are quantity-shaped (12 overage hours at $175, not a flat sum);
+- **omit for this month** — the line leaves this month's payload and the
+  template stays put, so it returns next month.
+
+**Omitting is the half §10 and §13 never modelled.** A retainer overage is
+configured precisely so that it comes up every month, and most months there is
+no overage. Without an omit, the only ways to clear the gate would be to bill $0
+(a line on the client's invoice saying nothing happened) or to delete the line
+from config (losing the reminder). "No overage in August" is a decision worth
+recording, and the `note` field is where the operator says why.
+
+**The gate is not a flag, and not overridable.** `PLACEHOLDER_LINE_ITEMS` stays
+`info` and stays a frozen record of what the plan contained. Making it `error`
+would have reused §7's existing machinery, but it would also have handed over
+the `error_override` escape hatch — and an override is exactly the click that
+loses the invoice line. It would additionally have required rewriting flags
+after plan time, breaking them as a faithful record. The block therefore lives
+in `review.py`, derived live from the ledger row's own `estimated_line_items`.
+This makes it the second non-overridable gate after `UNRESOLVED_IN_FLIGHT`, and
+like that one the UI offers *resolution* where it would otherwise offer
+*override*.
+
+**A resolution is a fact about a month, not about a run.** Keyed on
+`(recurring_line_item_id, run_month)`, so it survives Re-plan — which matters
+because Re-plan is the ordinary response to fixing a config problem, and
+retyping every amount afterwards would reintroduce the forgetting this closes.
+Keying it there required making `recurring_line_items.id` stable across a group
+save; it had been delete-and-reinsert, so editing one fee would have silently
+discarded the month's other amounts.
+
+**What this does not change.** §10 is still right that `actual_amount` is the
+amount **at creation** and not what the client was ultimately billed: a Harvest
+draft remains freely editable after we create it, and nothing here detects a
+later edit. This narrows the gap — the amounts that used to be typed into the
+draft are now settled before it exists — rather than closing it. Do not build
+reporting that assumes `actual_amount` is what was sent.
+
+**Deferred, and cheap when wanted.** The `(line, month)` key already allows a
+value to be recorded before a run exists ("next month's hosting is $1,240"),
+from the group page. That needs a surface, not a schema change. §6's Phase 6
+"Retainer overage automation" is no longer the deferred item it was — the
+overage is now entered here; only *deriving* it automatically remains open.

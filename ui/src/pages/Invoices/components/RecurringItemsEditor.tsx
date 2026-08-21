@@ -30,6 +30,8 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
 
 function blankItem(projectId: number): RecurringItemInput {
   return {
+    // No id — the server inserts a new row and mints one.
+    id: null,
     harvest_project_id: projectId,
     description: '',
     quantity: 1,
@@ -64,9 +66,11 @@ const fromMonthInput = (v: string) => (v ? `${v}-01` : null);
  * save time and again at plan time.
  *
  * Lines whose amount is only knowable after the fact — hosting pass-through, a
- * tooling fee that's a percentage of it — are marked **entered in Harvest**.
- * They're created at $0 so the draft carries the right scaffolding, and are
- * excluded from the pre-flight total rather than dragging it down silently.
+ * tooling fee that's a percentage of it, a retainer overage — are marked as
+ * placeholders. This screen sets everything about them *except* the amount; that
+ * is entered on the pre-flight each month, and until it is the invoice cannot be
+ * approved. A placeholder is therefore a standing monthly reminder, which is why
+ * omitting one for a month is a decision recorded there rather than an edit here.
  */
 export default function RecurringItemsEditor({ items, onChange, projects }: Props) {
   // Effective dates are collapsed by default: most lines bill every month, and
@@ -198,7 +202,7 @@ export default function RecurringItemsEditor({ items, onChange, projects }: Prop
                     </FieldLabel>
                     {item.is_placeholder ? (
                       <div className="w-full border border-dashed border-amber-400/60 rounded px-2 py-1 text-sm text-amber-700 bg-amber-50/60">
-                        set in Harvest
+                        set each month
                       </div>
                     ) : (
                       <div className="relative">
@@ -258,10 +262,12 @@ export default function RecurringItemsEditor({ items, onChange, projects }: Prop
                   className="w-3.5 h-3.5 rounded accent-amber-500 mt-0.5"
                 />
                 <span>
-                  Amount varies — I'll enter it in Harvest
+                  Amount varies — I'll enter it each month
                   <span className="block text-slate-400">
-                    The line is created at $0 with this description, fee type, and project,
-                    ready for you to fill in on the draft. Excluded from the estimate.
+                    The description, fee type, and project are set here; the amount is
+                    entered on the pre-flight each month, before the draft is created.
+                    The invoice can't be approved until you enter it or omit the line
+                    for that month.
                   </span>
                 </span>
               </label>
@@ -353,7 +359,7 @@ export default function RecurringItemsEditor({ items, onChange, projects }: Prop
             <span className="font-semibold text-slate-900 tabular-nums">{money(fixedTotal)}</span>
             {placeholderCount > 0 && (
               <span className="text-amber-600">
-                {' '}+ {placeholderCount} entered in Harvest
+                {' '}+ {placeholderCount} entered each month
               </span>
             )}
           </span>

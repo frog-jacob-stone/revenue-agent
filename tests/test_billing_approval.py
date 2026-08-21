@@ -342,3 +342,186 @@ async def test_api_refuses_a_non_overridable_approval_with_409(run, client):
     )
     assert res.status_code == 409
     assert "UNRESOLVED_IN_FLIGHT" in res.json()["detail"]
+
+
+# ── Undecided placeholders block approval, with no way through ──────────────
+
+
+async def _placeholder_group(pool, name: str, project_id: int):
+    """A group with one fixed line and one placeholder."""
+    return await groups_service.create_group(pool, {
+        "name": name,
+        "harvest_client_id": CLIENT,
+        "billing_type": "recurring_monthly",
+        "billing_timing": "advance",
+        "payment_term": "net 30",
+        "projects": [{"harvest_project_id": project_id}],
+        "recurring_items": [
+            {
+                "harvest_project_id": project_id,
+                "description": "Monthly fee",
+                "quantity": 1, "unit_price": 1500,
+                "kind": "Service", "is_placeholder": False,
+            },
+            {
+                "harvest_project_id": project_id,
+                "description": "Hosting pass-through",
+                "quantity": 1, "unit_price": 0,
+                "kind": "Billable Expense", "is_placeholder": True,
+            },
+        ],
+    })
+
+
+@pytest.fixture
+async def placeholder_run(fake):
+    """One group carrying an undecided placeholder, and one clean group."""
+    pool = await get_pool()
+    await _placeholder_group(pool, "Brightline — Hosting", HOSTING)
+    await _group(pool, "Brightline — App", APP, 4200)
+    run_id = await planner.plan_run(pool, settings, run_month=AUGUST)
+    return await planner.get_run(pool, run_id)
+
+
+def _by_name(detail, name: str) -> dict:
+    return next(i for i in detail["items"] if i["billing_group_name"] == name)
+
+
+def _line_id(item, label: str) -> str:
+    return next(
+        li["recurring_line_item_id"] for li in item["estimated_line_items"]
+        if li["label"] == label
+    )
+
+
+async def test_an_undecided_placeholder_refuses_approval(placeholder_run):
+    pool = await get_pool()
+    item = _by_name(placeholder_run, "Brightline — Hosting")
+
+    with pytest.raises(review.ApprovalError, match="Hosting pass-through"):
+        await review.set_item_approval(
+            pool, placeholder_run["id"], item["id"], approved=True,
+        )
+
+
+async def test_an_override_does_not_unlock_a_placeholder(placeholder_run):
+    """The one gate with no override path. An override is a way to forget with a
+    click, and not forgetting is the whole purpose of a placeholder."""
+    pool = await get_pool()
+    item = _by_name(placeholder_run, "Brightline — Hosting")
+
+    await review.set_item_approval(
+        pool, placeholder_run["id"], item["id"], override=True,
+    )
+    with pytest.raises(review.ApprovalError, match="Not overridable"):
+        await review.set_item_approval(
+            pool, placeholder_run["id"], item["id"], approved=True,
+        )
+
+
+async def test_pricing_the_placeholder_unlocks_approval(placeholder_run):
+    pool = await get_pool()
+    from app.services.billing import placeholders
+
+    item = _by_name(placeholder_run, "Brightline — Hosting")
+    await placeholders.set_resolution(
+        pool, placeholder_run["id"], item["id"],
+        _line_id(item, "Hosting pass-through"),
+        resolution="amount", unit_price=1240,
+    )
+
+    assert await review.set_item_approval(
+        pool, placeholder_run["id"], item["id"], approved=True, actor="jacob",
+    )
+    fresh = _by_name(
+        await planner.get_run(pool, placeholder_run["id"]), "Brightline — Hosting"
+    )
+    assert fresh["status"] == "approved"
+
+
+async def test_omitting_the_placeholder_also_unlocks_approval(placeholder_run):
+    """Omitting is a decision, so it satisfies the gate just as a price does."""
+    pool = await get_pool()
+    from app.services.billing import placeholders
+
+    item = _by_name(placeholder_run, "Brightline — Hosting")
+    await placeholders.set_resolution(
+        pool, placeholder_run["id"], item["id"],
+        _line_id(item, "Hosting pass-through"), resolution="omitted",
+    )
+
+    assert await review.set_item_approval(
+        pool, placeholder_run["id"], item["id"], approved=True, actor="jacob",
+    )
+
+
+async def test_clearing_a_decision_re_blocks_approval(placeholder_run):
+    pool = await get_pool()
+    from app.services.billing import placeholders
+
+    item = _by_name(placeholder_run, "Brightline — Hosting")
+    line_id = _line_id(item, "Hosting pass-through")
+    await placeholders.set_resolution(
+        pool, placeholder_run["id"], item["id"], line_id,
+        resolution="amount", unit_price=1240,
+    )
+    await placeholders.clear_resolution(
+        pool, placeholder_run["id"], item["id"], line_id,
+    )
+
+    with pytest.raises(review.ApprovalError, match="placeholder line item"):
+        await review.set_item_approval(
+            pool, placeholder_run["id"], item["id"], approved=True,
+        )
+
+
+async def test_bulk_approve_skips_the_blocked_group_and_approves_the_rest(
+    placeholder_run,
+):
+    """Consistent with how bulk already treats an un-overridden error flag: it
+    approves what is approvable rather than failing the whole batch."""
+    pool = await get_pool()
+
+    changed = await review.set_all_approvals(
+        pool, placeholder_run["id"], approved=True, actor="jacob",
+    )
+    assert changed == 1
+
+    detail = await planner.get_run(pool, placeholder_run["id"])
+    assert _by_name(detail, "Brightline — Hosting")["status"] == "planned"
+    assert _by_name(detail, "Brightline — App")["status"] == "approved"
+
+
+async def test_un_approving_is_never_blocked(placeholder_run):
+    """You can always retreat. Only moving *to* approved is gated."""
+    pool = await get_pool()
+    from app.services.billing import placeholders
+
+    item = _by_name(placeholder_run, "Brightline — Hosting")
+    line_id = _line_id(item, "Hosting pass-through")
+    await placeholders.set_resolution(
+        pool, placeholder_run["id"], item["id"], line_id,
+        resolution="amount", unit_price=1240,
+    )
+    await review.set_item_approval(
+        pool, placeholder_run["id"], item["id"], approved=True, actor="jacob",
+    )
+    await placeholders.clear_resolution(
+        pool, placeholder_run["id"], item["id"], line_id,
+    )
+
+    # Resolving already un-approved it; un-approving again is a no-op, not an error.
+    assert await review.set_item_approval(
+        pool, placeholder_run["id"], item["id"], approved=False,
+    )
+
+
+async def test_api_refuses_an_undecided_placeholder_with_409(placeholder_run, client):
+    item = _by_name(placeholder_run, "Brightline — Hosting")
+
+    res = await client.post(
+        f"/billing/runs/{placeholder_run['id']}/items/{item['id']}/approval",
+        json={"approved": True},
+    )
+    assert res.status_code == 409
+    assert "Hosting pass-through" in res.json()["detail"]

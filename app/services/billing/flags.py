@@ -103,14 +103,44 @@ def invalid_item_category(*, offenders: list[dict[str, Any]], valid: list[str]) 
     )
 
 
-def placeholder_line_items(*, placeholders: list[dict[str, Any]]) -> Flag:
-    listed = ", ".join(f"“{p['description']}”" for p in placeholders)
-    n = len(placeholders)
+def placeholder_line_items(
+    *,
+    unresolved: list[dict[str, Any]],
+    resolved: list[dict[str, Any]],
+    omitted: list[dict[str, Any]],
+) -> Flag:
+    """A record of what this plan contained, not the thing that blocks approval.
+
+    Deliberately `info`, and deliberately frozen. Making it `error` would reuse
+    the existing gate machinery but hand over the `error_override` escape hatch,
+    which is the escape a placeholder exists to close; and it would then need
+    rewriting every time the operator resolves one, which would stop flags being
+    a faithful record of the plan as it stood. The block is a live check in
+    `review.py`, derived from the ledger row's own line items.
+    """
+    total = len(unresolved) + len(resolved) + len(omitted)
+    listed = ", ".join(f"“{p['description']}”" for p in unresolved)
+    if unresolved:
+        n = len(unresolved)
+        message = (
+            f"{n} of {total} placeholder line item{'' if total == 1 else 's'} "
+            f"still need{'s' if n == 1 else ''} an amount, or an explicit omit "
+            f"for this month: {listed}. This invoice cannot be approved until "
+            f"each one is decided."
+        )
+    else:
+        parts = []
+        if resolved:
+            parts.append(f"{len(resolved)} priced")
+        if omitted:
+            parts.append(f"{len(omitted)} omitted for this month")
+        message = (
+            f"{total} placeholder line item{'' if total == 1 else 's'}, all "
+            f"decided — {', '.join(parts)}."
+        )
     return flag(
-        "PLACEHOLDER_LINE_ITEMS", INFO,
-        f"{n} line item{'' if n == 1 else 's'} will be created at $0 for you to "
-        f"complete in the Harvest draft before sending: {listed}.",
-        placeholders=placeholders,
+        "PLACEHOLDER_LINE_ITEMS", INFO, message,
+        unresolved=unresolved, resolved=resolved, omitted=omitted,
     )
 
 

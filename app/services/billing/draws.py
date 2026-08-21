@@ -181,15 +181,16 @@ async def save_draws(
 ) -> None:
     """Upsert a group's schedule, preserving identity and history.
 
-    Deliberately **not** the delete-and-reinsert used for recurring line items.
-    Those rows are pure config; a draw carries state — `released_at`,
-    `invoiced_run_id`, and a foreign key from `billing_run_items` — so replacing
+    Rows are matched on `id`, new rows are inserted, removed rows are deleted
+    only while still pending, and an invoiced draw may not be modified or
+    deleted at all. Its amount and description are on a real invoice.
+
+    A draw needs this more strongly than a recurring line item does (which is
+    upserted too, in `groups._save_recurring_items`): it carries `released_at`,
+    `invoiced_run_id`, and a foreign key from `billing_run_items`, so replacing
     the set wholesale would erase billing history and orphan ledger rows. Since
     a slipped date means editing the schedule, that would happen routinely.
-
-    So: rows are matched on `id`, new rows are inserted, removed rows are
-    deleted only while still pending, and an invoiced draw may not be modified
-    or deleted at all. Its amount and description are on a real invoice.
+    Hence the locking below, which the recurring path has no need of.
 
     A draw with a live ledger row is guarded the same way for the same reason
     one step earlier: execution has begun against these exact values, so

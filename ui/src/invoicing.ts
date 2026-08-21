@@ -276,7 +276,8 @@ export interface RecurringLineItem {
   unit_price: number;
   /** Harvest invoice item category — "Service", "Billable Expense", … */
   kind: string;
-  /** Created at $0 for you to complete in the Harvest draft. */
+  /** Amount is entered on the pre-flight each month, not here. Plans at $0
+   *  until then, and blocks approval of the invoice. */
   is_placeholder: boolean;
   sort_order: number;
   effective_from: string | null;
@@ -285,6 +286,9 @@ export interface RecurringLineItem {
 
 /** One recurring line item as submitted by the group form. */
 export interface RecurringItemInput {
+  /** Present when editing an existing line, null for a new one. Must be
+   *  round-tripped: placeholder resolutions are keyed on it. */
+  id?: string | null;
   harvest_project_id: number;
   description: string;
   quantity: number;
@@ -345,6 +349,15 @@ export interface BillingGroupInput {
   schedule_items?: DrawInput[];
 }
 
+export type PlaceholderState = 'unresolved' | 'resolved' | 'omitted';
+
+/** One row of the pre-flight table.
+ *
+ *  For a `recurring_monthly` group the last five fields make the entry a
+ *  complete description of the line, so the Harvest payload can be rebuilt from
+ *  the array. They are null for T&M and draw entries, which have no config row
+ *  behind them.
+ */
 export interface EstimatedLineItem {
   label: string;
   detail: string | null;
@@ -353,6 +366,15 @@ export interface EstimatedLineItem {
   unit_price: number;
   amount: number;
   project_name?: string | null;
+
+  recurring_line_item_id?: string | null;
+  harvest_project_id?: number | null;
+  /** Harvest invoice item category name. */
+  kind?: string | null;
+  is_placeholder?: boolean;
+  /** `unresolved` blocks approval; `omitted` drops the line from the payload
+   *  while keeping it on screen. Null when the line is not a placeholder. */
+  placeholder_state?: PlaceholderState | null;
 }
 
 export interface RunItem {
@@ -403,6 +425,21 @@ export interface BillingRunSummary {
   skipped_count: number;
   planned_total: number;
   flag_counts: Record<string, number>;
+}
+
+/** The operator's decision about one placeholder line, for one run month.
+ *
+ *  `amount` requires `unit_price`. `quantity` is optional and falls back to the
+ *  template's — present when the placeholder is quantity-shaped (12 overage
+ *  hours at $175 rather than a flat sum). `omitted` needs neither: it drops the
+ *  line from this month's invoice and leaves the template alone, so it returns
+ *  next month.
+ */
+export interface PlaceholderResolutionInput {
+  resolution: 'amount' | 'omitted';
+  unit_price?: number | null;
+  quantity?: number | null;
+  note?: string | null;
 }
 
 export interface BillingRunDetail extends BillingRunSummary {
@@ -488,6 +525,24 @@ export function hasError(item: RunItem) {
 
 export function blockingFlag(item: RunItem): Flag | undefined {
   return item.flags.find((f) => NON_OVERRIDABLE_FLAGS.has(f.code));
+}
+
+/** Every placeholder line on this invoice, in invoice order. */
+export function placeholderLines(item: RunItem): EstimatedLineItem[] {
+  return item.estimated_line_items.filter((li) => li.is_placeholder);
+}
+
+/** Placeholders still awaiting an amount or an explicit omit.
+ *
+ *  Derived from the line items rather than from a flag, matching the server:
+ *  flags are frozen at plan time and this changes as the operator works. Any
+ *  of these blocks approval, and unlike an error flag there is no override —
+ *  a placeholder exists precisely so it can't be forgotten.
+ */
+export function unresolvedPlaceholders(item: RunItem): EstimatedLineItem[] {
+  return item.estimated_line_items.filter(
+    (li) => li.placeholder_state === 'unresolved',
+  );
 }
 
 export function money(n: number | null | undefined) {

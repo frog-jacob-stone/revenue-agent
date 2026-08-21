@@ -285,3 +285,156 @@ async def test_catalog_requires_auth(unauthed_client):
     for path in ("/billing/harvest/clients", "/billing/harvest/projects"):
         res = await unauthed_client.get(path)
         assert res.status_code in (401, 403), f"{path} was not protected"
+
+
+# ── Placeholder resolution endpoints ────────────────────────────────────────
+
+
+async def _placeholder_run(client, pool):
+    """A recurring group with one fixed line and one placeholder, planned."""
+    await _seed(pool)
+    res = await client.post("/billing/groups", json={
+        "name": "Acme — Managed",
+        "harvest_client_id": ACME,
+        "billing_type": "recurring_monthly",
+        "billing_timing": "advance",
+        "payment_term": "net 30",
+        "projects": [{"harvest_project_id": 14307913}],
+        "recurring_items": [
+            {
+                "harvest_project_id": 14307913, "description": "Management fee",
+                "quantity": 1, "unit_price": 1500, "kind": "Service",
+                "is_placeholder": False,
+            },
+            {
+                "harvest_project_id": 14307913, "description": "Hosting",
+                "quantity": 1, "unit_price": 0, "kind": "Service",
+                "is_placeholder": True,
+            },
+        ],
+    })
+    assert res.status_code == 201, res.text
+
+    res = await client.post("/billing/runs", json={"run_month": "2026-08-01"})
+    assert res.status_code == 201, res.text
+    run = res.json()
+    item = next(
+        i for i in run["items"] if i["billing_group_name"] == "Acme — Managed"
+    )
+    line_id = next(
+        li["recurring_line_item_id"] for li in item["estimated_line_items"]
+        if li["label"] == "Hosting"
+    )
+    return run, item, line_id
+
+
+def _path(run, item, line_id):
+    return f"/billing/runs/{run['id']}/items/{item['id']}/placeholders/{line_id}"
+
+
+async def test_pricing_a_placeholder_returns_the_fresh_run(client):
+    pool = await get_pool()
+    run, item, line_id = await _placeholder_run(client, pool)
+
+    res = await client.post(
+        _path(run, item, line_id),
+        json={"resolution": "amount", "unit_price": 1240},
+    )
+    assert res.status_code == 200, res.text
+
+    fresh = next(i for i in res.json()["items"] if i["id"] == item["id"])
+    assert fresh["planned_amount"] == 2740
+    hosting = next(
+        li for li in fresh["planned_payload"]["line_items"]
+        if li["description"] == "Hosting"
+    )
+    assert hosting["unit_price"] == 1240
+
+
+async def test_omitting_a_placeholder_drops_it_from_the_payload(client):
+    pool = await get_pool()
+    run, item, line_id = await _placeholder_run(client, pool)
+
+    res = await client.post(
+        _path(run, item, line_id),
+        json={"resolution": "omitted", "note": "no overage in August"},
+    )
+    assert res.status_code == 200, res.text
+
+    fresh = next(i for i in res.json()["items"] if i["id"] == item["id"])
+    assert fresh["planned_amount"] == 1500
+    assert [
+        li["description"] for li in fresh["planned_payload"]["line_items"]
+    ] == ["Management fee"]
+
+
+async def test_clearing_a_placeholder_returns_it_to_undecided(client):
+    pool = await get_pool()
+    run, item, line_id = await _placeholder_run(client, pool)
+    await client.post(
+        _path(run, item, line_id),
+        json={"resolution": "amount", "unit_price": 1240},
+    )
+
+    res = await client.delete(_path(run, item, line_id))
+    assert res.status_code == 200, res.text
+
+    fresh = next(i for i in res.json()["items"] if i["id"] == item["id"])
+    assert fresh["planned_amount"] == 1500
+    hosting = next(
+        li for li in fresh["estimated_line_items"] if li["label"] == "Hosting"
+    )
+    assert hosting["placeholder_state"] == "unresolved"
+
+
+async def test_an_amount_with_no_price_is_a_409(client):
+    pool = await get_pool()
+    run, item, line_id = await _placeholder_run(client, pool)
+
+    res = await client.post(_path(run, item, line_id), json={"resolution": "amount"})
+    assert res.status_code == 409
+    assert "unit price" in res.json()["detail"]
+
+
+async def test_an_unknown_line_is_a_404(client):
+    from uuid import uuid4
+    pool = await get_pool()
+    run, item, _ = await _placeholder_run(client, pool)
+
+    res = await client.post(
+        _path(run, item, uuid4()),
+        json={"resolution": "amount", "unit_price": 100},
+    )
+    assert res.status_code == 404
+
+
+async def test_a_nonsense_resolution_is_a_422(client):
+    """Caught by the request model, before any service logic runs."""
+    pool = await get_pool()
+    run, item, line_id = await _placeholder_run(client, pool)
+
+    res = await client.post(_path(run, item, line_id), json={"resolution": "maybe"})
+    assert res.status_code == 422
+
+
+async def test_an_abandoned_run_is_a_409(client):
+    pool = await get_pool()
+    run, item, line_id = await _placeholder_run(client, pool)
+    await client.post(f"/billing/runs/{run['id']}/abandon")
+
+    res = await client.post(
+        _path(run, item, line_id),
+        json={"resolution": "amount", "unit_price": 1240},
+    )
+    assert res.status_code == 409
+    assert "under review" in res.json()["detail"]
+
+
+async def test_placeholder_endpoints_require_auth(unauthed_client):
+    from uuid import uuid4
+    path = f"/billing/runs/{uuid4()}/items/{uuid4()}/placeholders/{uuid4()}"
+
+    res = await unauthed_client.post(path, json={"resolution": "omitted"})
+    assert res.status_code in (401, 403)
+    res = await unauthed_client.delete(path)
+    assert res.status_code in (401, 403)

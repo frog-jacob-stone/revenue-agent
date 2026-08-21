@@ -46,6 +46,7 @@ from app.models.billing import (
     InFlightItem,
     InvoiceItemCategory,
     ItemApprovalRequest,
+    PlaceholderResolutionRequest,
     PlanRunRequest,
     ResolveInFlightRequest,
     ResolveInFlightResponse,
@@ -57,6 +58,7 @@ from app.services.billing import (
     harvest_snapshot,
     inflight,
     invoices,
+    placeholders,
     planner,
     reconcile,
     review,
@@ -538,6 +540,82 @@ async def set_item_approval(
         )
     except review.ApprovalError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    if not found:
+        raise HTTPException(status_code=404, detail="Billing run item not found")
+    return BillingRunDetail.model_validate(await planner.get_run(pool, run_id))
+
+
+@router.post(
+    "/runs/{run_id}/items/{item_id}/placeholders/{line_item_id}",
+    response_model=BillingRunDetail,
+)
+async def set_placeholder_resolution(
+    run_id: UUID,
+    item_id: UUID,
+    line_item_id: UUID,
+    body: PlaceholderResolutionRequest,
+    pool: asyncpg.Pool = Depends(_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Price one placeholder line, or omit it for this run month. Human-only.
+
+    Writes nothing to Harvest — this settles what the eventual draft will say,
+    which is why it has to happen before approval rather than in the Harvest
+    draft afterwards. Rebuilds `planned_payload` from the ledger row, so the
+    payload on screen stays the payload that would be sent (ADR-0004 condition
+    1); if the group was already approved, that approval is withdrawn, because
+    it described the old numbers.
+
+    Idempotent on `(item, line, month)` — re-submitting an amount replaces the
+    decision rather than recording a second one — but `POST` rather than `PUT`,
+    matching every other state change in this router. `POST .../approval` is the
+    direct precedent: also idempotent, also a decision recorded against one
+    ledger row. `PUT` would additionally be the app's only one, and the CORS
+    middleware's `allow_methods` does not list it.
+    """
+    try:
+        found = await placeholders.set_resolution(
+            pool, run_id, item_id, line_item_id,
+            resolution=body.resolution,
+            unit_price=body.unit_price,
+            quantity=body.quantity,
+            note=body.note,
+            actor=user.email or str(user.id),
+        )
+    except placeholders.PlaceholderError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except placeholders.PlaceholderNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    if not found:
+        raise HTTPException(status_code=404, detail="Billing run item not found")
+    return BillingRunDetail.model_validate(await planner.get_run(pool, run_id))
+
+
+@router.delete(
+    "/runs/{run_id}/items/{item_id}/placeholders/{line_item_id}",
+    response_model=BillingRunDetail,
+)
+async def clear_placeholder_resolution(
+    run_id: UUID,
+    item_id: UUID,
+    line_item_id: UUID,
+    pool: asyncpg.Pool = Depends(_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Withdraw a decision, returning the line to undecided at $0. Human-only.
+
+    The line blocks approval again, which is the point: this is the retreat from
+    a number entered by mistake, not a way to skip the question.
+    """
+    try:
+        found = await placeholders.clear_resolution(
+            pool, run_id, item_id, line_item_id,
+            actor=user.email or str(user.id),
+        )
+    except placeholders.PlaceholderError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except placeholders.PlaceholderNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     if not found:
         raise HTTPException(status_code=404, detail="Billing run item not found")
     return BillingRunDetail.model_validate(await planner.get_run(pool, run_id))

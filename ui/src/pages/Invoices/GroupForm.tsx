@@ -125,7 +125,11 @@ export default function GroupForm() {
       currency: existing.currency,
     });
     setPicked(existing.projects.map((p) => p.harvest_project_id));
+    // Line items keep their id for the same reason draws do: placeholder
+    // resolutions are keyed on it, so dropping it here would make saving an
+    // unrelated fee discard the amounts already entered for this month.
     setLineItems((existing.recurring_items ?? []).map((r) => ({
+      id: r.id,
       harvest_project_id: r.harvest_project_id,
       description: r.description,
       quantity: r.quantity,

@@ -90,12 +90,35 @@ estimator        → T&M line-item estimates from uninvoiced time and expenses
 payload          → the exact POST /v2/invoices body
 duplicate_guard  → ledger-aware detection of invoices already created
 flags            → the §7 flag catalog
+recurring        → the literal monthly lines, with placeholder state applied
 planner          → orchestrates a run and writes the ledger
 review           → per-group approval of a planned run (persisted, human-only)
+placeholders     → pricing or omitting a placeholder line for one month
 draws            → fixed-fee contract draws, billed off-cycle one at a time,
                    and `invoice_draw` — the only Harvest write in the system
 inflight         → resolving a write whose outcome is unknown (human-only)
 ```
+
+**A ledger row's payload is no longer write-once.** The planner freezes
+`planned_payload` and `estimated_line_items` at plan time, and for most of the
+pipeline they stay frozen. `placeholders.set_resolution` is the single exception:
+a recurring group's placeholder lines carry no amount at plan time, and the
+operator settles each one before the invoice can be approved.
+
+Two constraints keep that from eroding what freezing was for. It **rebuilds from
+the row, never from live config** — re-running `recurring.resolve` would fold in
+any group edited since planning, turning one operator gesture into an unreviewed
+re-plan; so `estimated_line_items` carries enough per-line detail
+(`recurring_line_item_id`, `harvest_project_id`, `kind`) to reconstruct the
+payload from itself. And it **withdraws any approval on the row**, because an
+approval describes a payload, and ADR-0004 condition 1 requires the operator to
+have seen the exact one.
+
+The gate itself is derived rather than stored: `review.py` counts `unresolved`
+entries in `estimated_line_items`. A flag would have been the smaller change and
+the wrong one — flags are frozen at plan time while this changes as the operator
+works, and `error` severity would have exposed the `error_override` escape hatch
+to the one condition that must not have one.
 
 **The write, and its one ordering rule.** `draws.invoice_draw` commits the
 `in_flight` ledger row *before* it POSTs, in a separate transaction:

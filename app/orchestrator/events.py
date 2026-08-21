@@ -62,6 +62,12 @@ class AuditEvent(StrEnum):
     BILLING_ITEM_APPROVED = "billing.item.approved"
     BILLING_ITEM_UNAPPROVED = "billing.item.unapproved"
     BILLING_ITEM_OVERRIDDEN = "billing.item.overridden"
+    # Placeholder resolution. The payload carries the amount, because this is
+    # the one number on a recurring invoice that no config row can account for
+    # — "who said August's hosting was $1,240" is the question worth answering
+    # later. An omit is recorded just as loudly: it is a decision, not a gap.
+    BILLING_PLACEHOLDER_RESOLVED = "billing.placeholder.resolved"
+    BILLING_PLACEHOLDER_CLEARED = "billing.placeholder.cleared"
     BILLING_DRAW_RELEASED = "billing.draw.released"
     BILLING_DRAW_UNRELEASED = "billing.draw.unreleased"
     # Account-level billing settings. The payload carries the new value, because
@@ -137,6 +143,8 @@ BILLING_RUN_ABANDONED = AuditEvent.BILLING_RUN_ABANDONED
 BILLING_ITEM_APPROVED = AuditEvent.BILLING_ITEM_APPROVED
 BILLING_ITEM_UNAPPROVED = AuditEvent.BILLING_ITEM_UNAPPROVED
 BILLING_ITEM_OVERRIDDEN = AuditEvent.BILLING_ITEM_OVERRIDDEN
+BILLING_PLACEHOLDER_RESOLVED = AuditEvent.BILLING_PLACEHOLDER_RESOLVED
+BILLING_PLACEHOLDER_CLEARED = AuditEvent.BILLING_PLACEHOLDER_CLEARED
 BILLING_DRAW_RELEASED = AuditEvent.BILLING_DRAW_RELEASED
 BILLING_DRAW_UNRELEASED = AuditEvent.BILLING_DRAW_UNRELEASED
 BILLING_SETTINGS_UPDATED = AuditEvent.BILLING_SETTINGS_UPDATED

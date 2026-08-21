@@ -107,13 +107,17 @@ async def test_multi_project_invoice_with_fixed_and_placeholder_lines(fake):
     # {period_label} is rendered at plan time, not stored rendered.
     assert lines[0]["description"] == "Hosting — August 2026"
     assert lines[1]["unit_price"] == 1500
-    # Placeholders go out at zero so the draft carries the scaffolding.
+    # An undecided placeholder still goes out at zero, so the shape of the
+    # invoice is visible before any amount is known. It cannot reach Harvest
+    # that way — approval is blocked while it is unresolved.
     assert lines[0]["unit_price"] == 0
     assert lines[2]["unit_price"] == 0
 
     assert "PLACEHOLDER_LINE_ITEMS" in _codes(item)
     ph = next(f for f in item["flags"] if f["code"] == "PLACEHOLDER_LINE_ITEMS")
-    assert len(ph["context"]["placeholders"]) == 2
+    assert len(ph["context"]["unresolved"]) == 2
+    assert ph["context"]["resolved"] == []
+    assert ph["context"]["omitted"] == []
 
 
 async def test_advance_timing_bills_the_current_month(fake):
@@ -154,8 +158,9 @@ async def test_group_with_no_line_items_is_skipped(fake):
 
 
 async def test_all_placeholder_group_still_plans(fake):
-    """A group whose every line is completed in Harvest is worth creating — the
-    draft is the scaffolding. It must not be mistaken for an empty group."""
+    """A group whose every line is a placeholder is worth planning — the shape
+    of the invoice is real even before any amount is. It must not be mistaken
+    for an empty group and skipped."""
     pool = await get_pool()
     group = await _make_group(pool, [
         _line(HOSTING, "Hosting", kind="Billable Expense", is_placeholder=True),
@@ -272,6 +277,201 @@ async def test_update_replaces_line_items(fake):
         ],
     })
     assert {r["description"] for r in updated["recurring_items"]} == {"New A", "New B"}
+
+
+# ── Placeholder resolution applied at plan time ─────────────────────────────
+
+
+async def _resolve(pool, group_id, description: str, run_month=AUGUST, **fields):
+    """Record a resolution the way the operator's click eventually will."""
+    line_id = await pool.fetchval(
+        "SELECT id FROM recurring_line_items "
+        "WHERE billing_group_id = $1 AND description = $2",
+        group_id, description,
+    )
+    await pool.execute(
+        """
+        INSERT INTO recurring_line_item_resolutions
+            (recurring_line_item_id, run_month, resolution, unit_price, quantity)
+        VALUES ($1, $2, $3::recurring_line_item_resolution, $4, $5)
+        """,
+        line_id, run_month, fields.get("resolution", "amount"),
+        fields.get("unit_price"), fields.get("quantity"),
+    )
+    return line_id
+
+
+def _line_by(item, label: str):
+    return next(li for li in item["estimated_line_items"] if li["label"] == label)
+
+
+async def test_a_resolved_placeholder_bills_at_its_entered_price(fake):
+    pool = await get_pool()
+    group = await _make_group(pool, [
+        _line(HOSTING, "Hosting", kind="Billable Expense", is_placeholder=True),
+        _line(APP, "Service fee", unit_price=4200),
+    ])
+    await _resolve(pool, group["id"], "Hosting", unit_price=1240)
+
+    run = await planner.get_run(
+        pool, await planner.plan_run(pool, settings, run_month=AUGUST)
+    )
+    item = _item(run, group["id"])
+
+    # The total is now a forecast, not a floor: 4200 + 1240.
+    assert float(item["planned_amount"]) == pytest.approx(5440.0)
+    hosting = next(
+        li for li in item["planned_payload"]["line_items"]
+        if li["description"] == "Hosting"
+    )
+    assert hosting["unit_price"] == 1240
+    assert _line_by(item, "Hosting")["placeholder_state"] == "resolved"
+
+    ph = next(f for f in item["flags"] if f["code"] == "PLACEHOLDER_LINE_ITEMS")
+    assert ph["context"]["unresolved"] == []
+    assert len(ph["context"]["resolved"]) == 1
+
+
+async def test_an_omitted_placeholder_leaves_the_payload_but_stays_on_screen(fake):
+    """The point of omitting rather than deleting: next month it is back,
+    asking again."""
+    pool = await get_pool()
+    group = await _make_group(pool, [
+        _line(HOSTING, "Retainer overage", is_placeholder=True),
+        _line(APP, "Service fee", unit_price=4200),
+    ])
+    await _resolve(pool, group["id"], "Retainer overage", resolution="omitted")
+
+    run = await planner.get_run(
+        pool, await planner.plan_run(pool, settings, run_month=AUGUST)
+    )
+    item = _item(run, group["id"])
+
+    assert float(item["planned_amount"]) == pytest.approx(4200.0)
+    descriptions = [li["description"] for li in item["planned_payload"]["line_items"]]
+    assert descriptions == ["Service fee"]
+    # Still in the pre-flight table, so the reminder survives the omission.
+    omitted = _line_by(item, "Retainer overage")
+    assert omitted["placeholder_state"] == "omitted"
+    assert "omitted for August 2026" in omitted["detail"]
+
+
+async def test_a_resolution_may_override_the_quantity(fake):
+    """An overage is often quantity-shaped — 12 hours at $175, not a flat sum."""
+    pool = await get_pool()
+    group = await _make_group(pool, [
+        _line(HOSTING, "Overage hours", is_placeholder=True),
+    ])
+    await _resolve(pool, group["id"], "Overage hours", unit_price=175, quantity=12)
+
+    run = await planner.get_run(
+        pool, await planner.plan_run(pool, settings, run_month=AUGUST)
+    )
+    item = _item(run, group["id"])
+
+    assert float(item["planned_amount"]) == pytest.approx(2100.0)
+    line = item["planned_payload"]["line_items"][0]
+    assert line["quantity"] == 12
+    assert line["unit_price"] == 175
+
+
+async def test_a_resolution_for_another_month_does_not_apply(fake):
+    """The key is the month. July's hosting figure must not bill in August."""
+    pool = await get_pool()
+    group = await _make_group(pool, [
+        _line(HOSTING, "Hosting", kind="Billable Expense", is_placeholder=True),
+    ])
+    await _resolve(pool, group["id"], "Hosting",
+                   run_month=date(2026, 7, 1), unit_price=1180)
+
+    run = await planner.get_run(
+        pool, await planner.plan_run(pool, settings, run_month=AUGUST)
+    )
+    item = _item(run, group["id"])
+
+    assert float(item["planned_amount"]) == 0.0
+    assert _line_by(item, "Hosting")["placeholder_state"] == "unresolved"
+
+
+async def test_a_group_whose_every_line_is_omitted_is_skipped(fake):
+    """No lines means no invoice — but the reason must say what happened, not
+    send the operator looking for missing config."""
+    pool = await get_pool()
+    group = await _make_group(pool, [
+        _line(HOSTING, "Retainer overage", is_placeholder=True),
+    ])
+    await _resolve(pool, group["id"], "Retainer overage", resolution="omitted")
+
+    run = await planner.get_run(
+        pool, await planner.plan_run(pool, settings, run_month=AUGUST)
+    )
+    item = _item(run, group["id"])
+
+    assert item["status"] == "skipped"
+    assert "omitted for August 2026" in item["skip_reason"]
+
+
+async def test_a_resolution_is_ignored_once_the_line_is_no_longer_a_placeholder(fake):
+    """Turning the flag off in config means the configured price is the honest
+    answer. The resolution row stays, in case the flag comes back on."""
+    pool = await get_pool()
+    group = await _make_group(pool, [
+        _line(HOSTING, "Hosting", kind="Billable Expense", is_placeholder=True),
+    ])
+    line_id = await _resolve(pool, group["id"], "Hosting", unit_price=1240)
+
+    await groups_service.update_group(pool, group["id"], {
+        "recurring_items": [
+            {**_line(HOSTING, "Hosting", kind="Billable Expense",
+                     is_placeholder=False, unit_price=900),
+             "id": line_id},
+        ],
+    })
+
+    run = await planner.get_run(
+        pool, await planner.plan_run(pool, settings, run_month=AUGUST)
+    )
+    item = _item(run, group["id"])
+
+    assert float(item["planned_amount"]) == pytest.approx(900.0)
+    assert _line_by(item, "Hosting")["placeholder_state"] is None
+    assert "PLACEHOLDER_LINE_ITEMS" not in _codes(item)
+    # The decision is still on record.
+    assert await pool.fetchval(
+        "SELECT count(*) FROM recurring_line_item_resolutions "
+        "WHERE recurring_line_item_id = $1", line_id,
+    ) == 1
+
+
+async def test_the_payload_is_rebuildable_from_the_estimated_line_items(fake):
+    """The property the annotation exists for. Resolving a placeholder rebuilds
+    the payload from the ledger row alone, so the row has to describe every
+    line completely — project, category, rendered description, and price."""
+    pool = await get_pool()
+    group = await _make_group(pool, [
+        _line(HOSTING, "Hosting — {period_label}", kind="Billable Expense",
+              is_placeholder=True),
+        _line(APP, "Service fee", unit_price=4200, quantity=2),
+    ])
+    await _resolve(pool, group["id"], "Hosting — {period_label}", unit_price=1240)
+
+    run = await planner.get_run(
+        pool, await planner.plan_run(pool, settings, run_month=AUGUST)
+    )
+    item = _item(run, group["id"])
+
+    rebuilt = [
+        {
+            "project_id": li["harvest_project_id"],
+            "kind": li["kind"],
+            "description": li["label"],
+            "quantity": li["quantity"],
+            "unit_price": li["unit_price"],
+        }
+        for li in item["estimated_line_items"]
+        if li["placeholder_state"] != "omitted"
+    ]
+    assert rebuilt == item["planned_payload"]["line_items"]
 
 
 async def test_placeholder_price_is_forced_to_zero_on_save(fake):

@@ -242,6 +242,7 @@ async def _plan_group(
             conn,
             billing_group_id=group_id,
             period=period,
+            run_month=run_month,
             client_name=group["harvest_client_name"] or "",
             group_project_ids=project_ids,
             valid_kinds=valid_kinds,
@@ -257,17 +258,29 @@ async def _plan_group(
             ))
         if res.placeholders:
             group_flags.append(flags.placeholder_line_items(
-                placeholders=res.placeholders
+                unresolved=res.unresolved_placeholders,
+                resolved=res.resolved_placeholders,
+                omitted=res.omitted_placeholders,
             ))
 
         planned_total = res.total
         display_items = res.estimated_line_items
         empty = not res.line_items
         empty_flag = flags.no_recurring_items(period_label=period.label)
-        empty_reason = (
-            f"No recurring line items in effect for {period.label}. "
-            "Skipped rather than creating an empty invoice."
-        )
+        # Two ways to reach empty, and they are not the same news. Nothing in
+        # effect is a config question; everything omitted is a decision the
+        # operator already made, and saying "no line items in effect" about it
+        # would send them looking for a problem that isn't there.
+        if res.omitted_placeholders and not res.line_items:
+            empty_reason = (
+                f"Every line item was omitted for {period.label}. "
+                "Skipped rather than creating an empty invoice."
+            )
+        else:
+            empty_reason = (
+                f"No recurring line items in effect for {period.label}. "
+                "Skipped rather than creating an empty invoice."
+            )
         body = payload_builder.build_free_form_payload(
             harvest_client_id=group["harvest_client_id"],
             subject=subject,

@@ -199,3 +199,176 @@ async def test_group_detail_includes_schedule_and_recurring_items():
     assert len(detail["recurring_items"]) == 1
     assert detail["recurring_items"][0]["unit_price"] == 15000
     assert detail["schedule_items"] == []
+
+
+# ── Recurring line items keep their identity across a save ──────────────────
+#
+# Placeholder resolutions are keyed on `recurring_line_items.id`, so a save that
+# re-minted ids would discard the amounts already entered for the month — as a
+# side effect of editing something unrelated, and in the direction of
+# under-billing. These tests are that guarantee.
+
+
+def _line(project_id: int, description: str, **over):
+    return {
+        "harvest_project_id": project_id,
+        "description": description,
+        "quantity": 1,
+        "unit_price": 1000,
+        "kind": "Service",
+        "is_placeholder": False,
+        **over,
+    }
+
+
+async def _recurring_group(pool, lines: list[dict]):
+    await _seed_snapshot(pool)
+    return await groups_service.create_group(
+        pool,
+        _spec(
+            "Northwind — Managed", NORTHWIND, [14308221],
+            billing_type="recurring_monthly", recurring_items=lines,
+        ),
+    )
+
+
+async def test_editing_a_line_keeps_every_id():
+    pool = await get_pool()
+    group = await _recurring_group(pool, [
+        _line(14308221, "Management fee"),
+        _line(14308221, "Hosting", is_placeholder=True, unit_price=0),
+    ])
+    before = {r["description"]: r["id"] for r in group["recurring_items"]}
+
+    updated = await groups_service.update_group(pool, group["id"], {
+        "recurring_items": [
+            {**_line(14308221, "Management fee", unit_price=2500),
+             "id": before["Management fee"]},
+            {**_line(14308221, "Hosting", is_placeholder=True, unit_price=0),
+             "id": before["Hosting"]},
+        ],
+    })
+
+    after = {r["description"]: r["id"] for r in updated["recurring_items"]}
+    assert after == before
+    fee = next(r for r in updated["recurring_items"] if r["description"] == "Management fee")
+    assert fee["unit_price"] == 2500
+
+
+async def test_reordering_keeps_ids_and_rewrites_sort_order():
+    """Position in the submitted list is authoritative, but identity is not
+    positional — the ids must follow the rows, not the slots."""
+    pool = await get_pool()
+    group = await _recurring_group(pool, [
+        _line(14308221, "First"),
+        _line(14308221, "Second"),
+    ])
+    ids = {r["description"]: r["id"] for r in group["recurring_items"]}
+
+    updated = await groups_service.update_group(pool, group["id"], {
+        "recurring_items": [
+            {**_line(14308221, "Second"), "id": ids["Second"]},
+            {**_line(14308221, "First"), "id": ids["First"]},
+        ],
+    })
+
+    rows = {r["description"]: r for r in updated["recurring_items"]}
+    assert rows["Second"]["id"] == ids["Second"]
+    assert rows["First"]["id"] == ids["First"]
+    assert rows["Second"]["sort_order"] == 1
+    assert rows["First"]["sort_order"] == 2
+
+
+async def test_a_line_omitted_from_the_submission_is_deleted():
+    pool = await get_pool()
+    group = await _recurring_group(pool, [
+        _line(14308221, "Keep"),
+        _line(14308221, "Drop"),
+    ])
+    keep_id = next(
+        r["id"] for r in group["recurring_items"] if r["description"] == "Keep"
+    )
+
+    updated = await groups_service.update_group(pool, group["id"], {
+        "recurring_items": [{**_line(14308221, "Keep"), "id": keep_id}],
+    })
+
+    assert [r["description"] for r in updated["recurring_items"]] == ["Keep"]
+
+
+async def test_a_line_with_no_id_is_inserted_alongside_the_existing_ones():
+    pool = await get_pool()
+    group = await _recurring_group(pool, [_line(14308221, "Management fee")])
+    existing_id = group["recurring_items"][0]["id"]
+
+    updated = await groups_service.update_group(pool, group["id"], {
+        "recurring_items": [
+            {**_line(14308221, "Management fee"), "id": existing_id},
+            _line(14308221, "New tooling fee"),  # no id
+        ],
+    })
+
+    rows = {r["description"]: r["id"] for r in updated["recurring_items"]}
+    assert rows["Management fee"] == existing_id
+    assert rows["New tooling fee"] != existing_id
+
+
+async def test_a_line_id_from_another_group_is_refused():
+    """Better to refuse than to insert a second copy under a fresh id — the
+    operator would end up billing one fee twice."""
+    pool = await get_pool()
+    await _seed_snapshot(pool)
+    other = await groups_service.create_group(
+        pool,
+        _spec("Acme Lab", ACME, [14307915], billing_type="recurring_monthly",
+              recurring_items=[_line(14307915, "Someone else's fee")]),
+    )
+    mine = await groups_service.create_group(
+        pool,
+        _spec("Northwind — Managed", NORTHWIND, [14308221],
+              billing_type="recurring_monthly",
+              recurring_items=[_line(14308221, "Management fee")]),
+    )
+    stolen = other["recurring_items"][0]["id"]
+
+    with pytest.raises(groups_service.BillingConfigError, match="does not belong"):
+        await groups_service.update_group(pool, mine["id"], {
+            "recurring_items": [
+                {**_line(14308221, "Management fee"), "id": stolen},
+            ],
+        })
+
+
+async def test_a_resolution_survives_an_unrelated_edit():
+    """The whole reason ids became stable. Entering August's hosting amount and
+    then changing the management fee must not discard the hosting amount."""
+    pool = await get_pool()
+    group = await _recurring_group(pool, [
+        _line(14308221, "Management fee"),
+        _line(14308221, "Hosting", is_placeholder=True, unit_price=0),
+    ])
+    ids = {r["description"]: r["id"] for r in group["recurring_items"]}
+
+    await pool.execute(
+        """
+        INSERT INTO recurring_line_item_resolutions
+            (recurring_line_item_id, run_month, resolution, unit_price)
+        VALUES ($1, '2026-08-01', 'amount', 1240.00)
+        """,
+        ids["Hosting"],
+    )
+
+    await groups_service.update_group(pool, group["id"], {
+        "recurring_items": [
+            {**_line(14308221, "Management fee", unit_price=2500),
+             "id": ids["Management fee"]},
+            {**_line(14308221, "Hosting", is_placeholder=True, unit_price=0),
+             "id": ids["Hosting"]},
+        ],
+    })
+
+    assert await pool.fetchval(
+        "SELECT unit_price FROM recurring_line_item_resolutions "
+        "WHERE recurring_line_item_id = $1 AND run_month = '2026-08-01'",
+        ids["Hosting"],
+    ) == 1240.00

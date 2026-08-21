@@ -276,7 +276,8 @@ class RecurringItem(ORMBase):
     # Harvest invoice item category name — "Service", "Billable Expense",
     # "Discount", etc. Validated against the account's own categories.
     kind: str = "Service"
-    # Created at $0 for the operator to complete in the Harvest draft.
+    # Amount is decided per month on the pre-flight, not here. Plans at $0
+    # until then, and blocks approval of the invoice.
     is_placeholder: bool = False
     sort_order: int = 0
     effective_from: date | None = None
@@ -284,8 +285,15 @@ class RecurringItem(ORMBase):
 
 
 class RecurringItemInput(ORMBase):
-    """One recurring line item as submitted by the group form."""
+    """One recurring line item as submitted by the group form.
 
+    `id` is present when the form is editing a line that already exists, absent
+    for a new one. Round-tripping it is what keeps the row's identity stable
+    across a save — placeholder resolutions hang off that id, so a save that
+    re-minted it would discard the amounts already entered for this month.
+    """
+
+    id: UUID | None = None
     harvest_project_id: int
     description: str
     quantity: float = 1
@@ -449,7 +457,25 @@ class SnapshotRefreshResponse(ORMBase):
 # ── Runs ────────────────────────────────────────────────────────────────────
 
 
+PlaceholderState = Literal["unresolved", "resolved", "omitted"]
+
+
 class EstimatedLineItem(ORMBase):
+    """One row of the pre-flight table.
+
+    For a `recurring_monthly` group this is more than display: the five fields
+    below make the entry a complete description of a line, so
+    `planned_payload["line_items"]` can be rebuilt from the array without
+    re-reading config. That is what lets a placeholder be resolved against the
+    plan the operator actually reviewed rather than against config as it stands
+    now. `label` is already the *rendered* description, which is verbatim what
+    Harvest receives.
+
+    All five are null for T&M and draw entries — T&M lines are aggregated from
+    time entries and have no config row behind them, and a draw's single line is
+    rebuilt from the schedule item instead.
+    """
+
     label: str
     detail: str | None = None
     quantity: float
@@ -457,6 +483,15 @@ class EstimatedLineItem(ORMBase):
     unit_price: float
     amount: float
     project_name: str | None = None
+
+    recurring_line_item_id: UUID | None = None
+    harvest_project_id: int | None = None
+    #: Harvest invoice item category name.
+    kind: str | None = None
+    is_placeholder: bool = False
+    #: `unresolved` blocks approval; `omitted` drops the line from the payload
+    #: while keeping it on screen. Null when the line is not a placeholder.
+    placeholder_state: PlaceholderState | None = None
 
 
 class RunItemResponse(ORMBase):
@@ -531,6 +566,27 @@ class ItemApprovalRequest(ORMBase):
 
     approved: bool | None = None
     override: bool | None = None
+
+
+class PlaceholderResolutionRequest(ORMBase):
+    """The operator's decision about one placeholder line, for one run month.
+
+    `amount` requires `unit_price`; a missing price is refused rather than
+    stored as zero, which would be indistinguishable from undecided and would
+    bill the client nothing. `quantity` is optional and falls back to the
+    template's — present when the placeholder is quantity-shaped, e.g. 12
+    overage hours at $175 rather than a flat sum.
+
+    `omitted` needs neither: it drops the line from this month's invoice and
+    leaves the template in place, so it comes back next month. `note` is where
+    "checked Harvest, no overage" goes — most valuable on an omit, where the
+    record would otherwise be indistinguishable from a line that never existed.
+    """
+
+    resolution: Literal["amount", "omitted"]
+    unit_price: float | None = None
+    quantity: float | None = None
+    note: str | None = None
 
 
 class BulkApprovalRequest(ORMBase):

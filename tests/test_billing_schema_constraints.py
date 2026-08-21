@@ -307,3 +307,111 @@ async def test_run_month_must_be_first_of_month():
     pool = await get_pool()
     with pytest.raises(asyncpg.CheckViolationError):
         await pool.execute("INSERT INTO billing_runs (run_month) VALUES ('2026-08-15')")
+
+
+# ── Placeholder resolutions (0033) ──────────────────────────────────────────
+
+
+async def _make_placeholder_line(pool, *, group_name: str = "Northwind — Hosting"):
+    group = await pool.fetchval(
+        """
+        INSERT INTO billing_groups (name, harvest_client_id, billing_type)
+        VALUES ($1, 5735774, 'recurring_monthly')
+        RETURNING id
+        """,
+        group_name,
+    )
+    line = await pool.fetchval(
+        """
+        INSERT INTO recurring_line_items
+            (billing_group_id, harvest_project_id, description, quantity,
+             unit_price, kind, is_placeholder, sort_order)
+        VALUES ($1, 14307913, 'Hosting pass-through', 1, 0, 'Billable Expense',
+                true, 1)
+        RETURNING id
+        """,
+        group,
+    )
+    return group, line
+
+
+async def _resolve(pool, line_id, run_month: date, *, resolution="amount",
+                   unit_price=1240.00, quantity=None):
+    return await pool.fetchval(
+        """
+        INSERT INTO recurring_line_item_resolutions
+            (recurring_line_item_id, run_month, resolution, unit_price, quantity)
+        VALUES ($1, $2, $3::recurring_line_item_resolution, $4, $5)
+        RETURNING id
+        """,
+        line_id, run_month, resolution, unit_price, quantity,
+    )
+
+
+async def test_run_month_on_a_resolution_must_be_first_of_month():
+    """The key is the month. A mid-month date would mint a second, unreachable
+    resolution for the same month rather than updating the first."""
+    pool = await get_pool()
+    _, line = await _make_placeholder_line(pool)
+
+    with pytest.raises(asyncpg.CheckViolationError):
+        await _resolve(pool, line, date(2026, 8, 15))
+
+
+async def test_one_resolution_per_line_per_month():
+    pool = await get_pool()
+    _, line = await _make_placeholder_line(pool)
+
+    await _resolve(pool, line, AUGUST)
+    with pytest.raises(asyncpg.UniqueViolationError):
+        await _resolve(pool, line, AUGUST, unit_price=99.00)
+
+
+async def test_the_same_line_resolves_independently_each_month():
+    pool = await get_pool()
+    _, line = await _make_placeholder_line(pool)
+
+    await _resolve(pool, line, JULY, unit_price=1180.00)
+    await _resolve(pool, line, AUGUST, unit_price=1240.00)  # must not raise
+
+    assert await pool.fetchval(
+        "SELECT count(*) FROM recurring_line_item_resolutions "
+        "WHERE recurring_line_item_id = $1", line,
+    ) == 2
+
+
+async def test_an_amount_resolution_requires_a_price():
+    """`amount` with no price is the shape a half-submitted form produces. It
+    must not land as a silent $0 — that is indistinguishable from unresolved."""
+    pool = await get_pool()
+    _, line = await _make_placeholder_line(pool)
+
+    with pytest.raises(asyncpg.CheckViolationError):
+        await _resolve(pool, line, AUGUST, unit_price=None)
+
+
+async def test_an_omit_needs_no_price():
+    pool = await get_pool()
+    _, line = await _make_placeholder_line(pool)
+
+    await _resolve(pool, line, AUGUST, resolution="omitted", unit_price=None)
+
+    assert await pool.fetchval(
+        "SELECT resolution FROM recurring_line_item_resolutions "
+        "WHERE recurring_line_item_id = $1", line,
+    ) == "omitted"
+
+
+async def test_deleting_the_line_drops_its_resolutions():
+    """Cascade, not restrict. Removing a fee from config should take the
+    decisions about it too — unlike a draw, nothing downstream references one."""
+    pool = await get_pool()
+    _, line = await _make_placeholder_line(pool)
+    await _resolve(pool, line, AUGUST)
+
+    await pool.execute("DELETE FROM recurring_line_items WHERE id = $1", line)
+
+    assert await pool.fetchval(
+        "SELECT count(*) FROM recurring_line_item_resolutions "
+        "WHERE recurring_line_item_id = $1", line,
+    ) == 0

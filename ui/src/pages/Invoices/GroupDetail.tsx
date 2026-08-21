@@ -310,9 +310,24 @@ export default function GroupDetail() {
                   const expired = r.effective_to !== null;
                   return (
                     <tr key={r.id} className={`border-t border-slate-200 ${expired ? 'opacity-50' : ''}`}>
-                      <td className="py-2 text-slate-800">{r.description}</td>
+                      <td className="py-2 text-slate-800">
+                        {r.description}
+                        {r.is_placeholder && (
+                          <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-amber-400/20 text-amber-700 font-medium align-middle">
+                            placeholder
+                          </span>
+                        )}
+                      </td>
                       <td className="py-2 text-right text-slate-600 tabular-nums">{r.quantity}</td>
-                      <td className="py-2 text-right text-slate-800 tabular-nums">{money(r.unit_price)}</td>
+                      {/* A placeholder is stored at $0, and rendering that as a
+                          price reads as a free line rather than an undecided
+                          one — the exact confusion is_placeholder exists to
+                          prevent. */}
+                      <td className="py-2 text-right tabular-nums">
+                        {r.is_placeholder
+                          ? <span className="text-amber-700">set each month</span>
+                          : <span className="text-slate-800">{money(r.unit_price)}</span>}
+                      </td>
                       <td className="py-2 pl-4 text-slate-600">
                         {r.effective_from ? shortDate(r.effective_from) : 'always'} →{' '}
                         {r.effective_to ? shortDate(r.effective_to) : 'open'}
@@ -325,7 +340,8 @@ export default function GroupDetail() {
           </div>
           <p className="text-[11px] text-slate-400">
             <code>{'{period_label}'}</code> is rendered at plan time. Superseded rows are kept so a fee change
-            doesn't erase history.
+            doesn't erase history. A placeholder's amount is entered on the pre-flight each month —
+            until it is, the invoice can't be approved.
           </p>
         </div>
       )}

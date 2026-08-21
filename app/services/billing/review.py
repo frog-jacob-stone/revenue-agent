@@ -5,7 +5,7 @@ exist. That decision is persisted here, on the ledger row itself, so closing
 the tab does not throw it away — and so the record of who approved what
 survives the run.
 
-Two rules the service layer owns, not the UI:
+Three rules the service layer owns, not the UI:
 
   - **Nothing is approved by default.** The planner writes `planned`; only an
     explicit human action moves a row to `approved`.
@@ -13,6 +13,14 @@ Two rules the service layer owns, not the UI:
     flags in `flags.NON_OVERRIDABLE` (today: `UNRESOLVED_IN_FLIGHT`) can never
     be overridden at all — overriding those risks a duplicate invoice, which is
     the failure the whole in-flight protocol exists to prevent.
+  - **An undecided placeholder blocks approval, and cannot be overridden.**
+    Not a flag: flags are frozen at plan time, and this one changes as the
+    operator works, so it is derived live from the ledger row's own line items
+    (`_unresolved_placeholders`). Nor is it in `flags.NON_OVERRIDABLE`, since
+    there is no flag to name — `PLACEHOLDER_LINE_ITEMS` stays `info` and stays
+    a record of what the plan contained. Deliberately no override path: the
+    entire point of a placeholder is that it cannot be forgotten, and an
+    override is a way to forget it with a click.
 
 Approval here is *review state*, not the Unbreakable Rule #1 approval chain.
 The Harvest write in Phase 3 still goes through a real `approvals` row; this
@@ -58,6 +66,26 @@ async def _has_error_flag(conn: Any, item_id: UUID) -> bool:
         "WHERE billing_run_item_id = $1 AND severity = 'error' LIMIT 1",
         item_id,
     ))
+
+
+async def _unresolved_placeholders(conn: Any, item_id: UUID) -> list[str]:
+    """Descriptions of the placeholder lines still awaiting a decision.
+
+    Derived from the ledger row rather than stored alongside it: the operator
+    resolves placeholders one at a time and each resolution rewrites
+    `estimated_line_items`, so reading from there is the one place this cannot
+    fall out of step with what is on screen.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT e->>'label' AS label
+        FROM billing_run_items i,
+             jsonb_array_elements(i.estimated_line_items) e
+        WHERE i.id = $1 AND e->>'placeholder_state' = 'unresolved'
+        """,
+        item_id,
+    )
+    return [r["label"] for r in rows]
 
 
 async def _load_item(conn: Any, run_id: UUID, item_id: UUID) -> asyncpg.Record | None:
@@ -144,6 +172,17 @@ async def set_item_approval(
                         f"{', '.join(blocking)} blocks approval and is not "
                         "overridable — resolve it first"
                     )
+                undecided = await _unresolved_placeholders(conn, item_id)
+                if undecided:
+                    n = len(undecided)
+                    listed = ", ".join(f"“{d}”" for d in undecided)
+                    raise ApprovalError(
+                        f"{n} placeholder line item{'' if n == 1 else 's'} still "
+                        f"need{'s' if n == 1 else ''} an amount, or an explicit "
+                        f"omit for this month: {listed}. Not overridable — enter "
+                        f"or omit each one, which takes a moment and is the "
+                        f"reason the placeholder is there."
+                    )
                 if await _has_error_flag(conn, item_id) and not effective_override:
                     raise ApprovalError(
                         "this group carries an error-severity flag; record an "
@@ -224,6 +263,13 @@ async def set_all_approvals(
                         SELECT 1 FROM billing_run_flags f
                         WHERE f.billing_run_item_id = i.id
                           AND f.code = ANY($3::text[])
+                      )
+                      -- Skipped rather than refused, matching how this treats
+                      -- an un-overridden error flag: "Approve all" approves what
+                      -- is approvable, and the rest keep saying why they aren't.
+                      AND NOT EXISTS (
+                        SELECT 1 FROM jsonb_array_elements(i.estimated_line_items) e
+                        WHERE e->>'placeholder_state' = 'unresolved'
                       )
                     RETURNING i.id
                     """,

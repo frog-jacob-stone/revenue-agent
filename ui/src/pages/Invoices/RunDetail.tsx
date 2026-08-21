@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft, ChevronDown, ChevronRight, RefreshCw, Unlock,
   AlertOctagon, SkipForward, ExternalLink, Link2, Loader2, Check, Undo2, Ban,
+  Pencil, Info,
 } from 'lucide-react';
 import StubBadge from '../../components/shared/StubBadge';
 import { FlagChip, FlagRow, SeverityCount } from './components/FlagChip';
@@ -12,11 +13,12 @@ import {
   RunStatusChip,
 } from './components/Bits';
 import InFlightModal from './components/InFlightModal';
+import PlaceholderPanel from './components/PlaceholderPanel';
 import {
   getBillingRun, planBillingRun, abandonBillingRun, setItemApproval, setRunApproval,
 } from '../../api';
 import {
-  blockingFlag, hasError, money, shortDate, dateTime,
+  blockingFlag, hasError, money, shortDate, dateTime, unresolvedPlaceholders,
 } from '../../invoicing';
 import type { BillingRunDetail, RunItem } from '../../invoicing';
 
@@ -30,12 +32,14 @@ import type { BillingRunDetail, RunItem } from '../../invoicing';
 function ApprovalControl({
   approved,
   blocked,
+  blockedReason,
   busy,
   approvedBy,
   onToggle,
 }: {
   approved: boolean;
   blocked: boolean;
+  blockedReason: string;
   busy: boolean;
   approvedBy: string | null;
   onToggle: () => void;
@@ -58,7 +62,7 @@ function ApprovalControl({
         disabled={blocked || busy}
         title={
           blocked
-            ? 'Resolve the error flag below before this group can be approved'
+            ? blockedReason
             : approved
               ? `Move back to pending — this group will not be invoiced${approvedBy ? ` (approved by ${approvedBy})` : ''}`
               : 'Approve this group — it will be included when drafts are created'
@@ -84,26 +88,37 @@ function ApprovalControl({
 }
 
 function PlannedItemCard({
+  run,
   item,
   busy,
   onToggleSelect,
   onOverride,
   onResolveInFlight,
 }: {
+  run: BillingRunDetail;
   item: RunItem;
   busy: boolean;
   onToggleSelect: () => void;
   onOverride: () => void;
   onResolveInFlight: (item: RunItem) => void;
 }) {
+  const undecided = unresolvedPlaceholders(item);
   const [open, setOpen] = useState(false);
   const inFlightFlag = blockingFlag(item);
   // Approval and the error override both live on the ledger row, so a reload
   // shows exactly what the operator last decided.
   const selected = item.status === 'approved';
   const overridden = item.error_override;
-  const blocked = hasError(item) && (!!inFlightFlag || !overridden);
+  const flagBlocked = hasError(item) && (!!inFlightFlag || !overridden);
+  const blocked = flagBlocked || undecided.length > 0;
   const payload = item.planned_payload as { subject?: string };
+
+  // PLACEHOLDER_LINE_ITEMS is still recorded — it is a frozen, honest note in
+  // `plan_snapshot` of what the plan contained. It is just not rendered here,
+  // because the banner above already says it, always, and says it live rather
+  // than as of plan time. Three copies of "this invoice has placeholders" made
+  // the real flags harder to see, which is the opposite of what flags are for.
+  const shownFlags = item.flags.filter((f) => f.code !== 'PLACEHOLDER_LINE_ITEMS');
 
   return (
     <div className={`bg-white border-y border-r rounded-xl overflow-hidden transition-colors border-l-4 ${
@@ -117,6 +132,11 @@ function PlannedItemCard({
         <ApprovalControl
           approved={selected}
           blocked={blocked}
+          blockedReason={
+            undecided.length > 0
+              ? `Decide ${undecided.length === 1 ? 'the placeholder' : `all ${undecided.length} placeholders`} below — an amount, or omit for this month`
+              : 'Resolve the error flag below before this group can be approved'
+          }
           busy={busy}
           approvedBy={item.approved_by ?? null}
           onToggle={onToggleSelect}
@@ -137,7 +157,7 @@ function PlannedItemCard({
           </div>
 
           <div className="flex items-center gap-1.5 flex-wrap justify-end max-w-[280px]">
-            {item.flags.map((f) => <FlagChip key={f.code} flag={f} />)}
+            {shownFlags.map((f) => <FlagChip key={f.code} flag={f} />)}
           </div>
 
           <div className="text-right w-36 flex-shrink-0">
@@ -151,7 +171,40 @@ function PlannedItemCard({
         </button>
       </div>
 
-      {blocked && (
+      {/* Undecided placeholders come first: it is the cheapest of the three to
+          clear, and unlike the others it is cleared right here.
+
+          Sky rather than red or amber. Entering a monthly amount is a routine
+          step, not a fault — the alarm palette belongs to the flags that mean
+          something went wrong. `sky` is already what `FlagChip` uses for info,
+          so this reads as the same register. This banner is also the *only*
+          placeholder notice on the card: it shows collapsed as well as
+          expanded, which is why the PLACEHOLDER_LINE_ITEMS chip and flag row
+          are filtered out below rather than saying it a third time. */}
+      {undecided.length > 0 && (
+        <div className="flex items-center gap-3 px-4 py-2 bg-sky-500/10 border-t border-sky-500/40">
+          <Info className="w-3.5 h-3.5 text-sky-600 flex-shrink-0" />
+          <p className="text-xs text-sky-700 flex-1">
+            {undecided.length === 1
+              ? '1 placeholder line item still needs an amount, or an explicit omit for this month.'
+              : `${undecided.length} placeholder line items still need an amount, or an explicit omit for this month.`}
+            {' '}Not overridable — that is what a placeholder is for.
+          </p>
+          {/* No Override button, deliberately. The decision is two fields
+              below; an override here would be the forgetting this prevents. */}
+          {!open && (
+            <button
+              onClick={() => setOpen(true)}
+              className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-medium bg-sky-500/20 border border-sky-500/50 text-sky-700 hover:bg-sky-500/30 transition-colors"
+            >
+              <Pencil className="w-3 h-3" />
+              Decide {undecided.length === 1 ? 'it' : 'them'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {flagBlocked && (
         <div className="flex items-center gap-3 px-4 py-2 bg-red-500/10 border-t border-red-500/40">
           <AlertOctagon className="w-3.5 h-3.5 text-red-600 flex-shrink-0" />
           <p className="text-xs text-red-700 flex-1">
@@ -215,6 +268,10 @@ function PlannedItemCard({
             </Field>
           </div>
 
+          {/* Above the line-item table: it is the thing to act on, and every
+              number in that table depends on it. */}
+          <PlaceholderPanel run={run} item={item} />
+
           <div>
             <p className="text-[11px] text-slate-500 uppercase tracking-wide font-medium mb-2">
               Estimated line items
@@ -230,25 +287,47 @@ function PlannedItemCard({
                   </tr>
                 </thead>
                 <tbody>
-                  {item.estimated_line_items.map((li, i) => (
-                    <tr key={i} className="border-t border-slate-200">
-                      <td className="px-3 py-2">
-                        <span className="text-slate-800">{li.label}</span>
-                        {li.detail && <span className="text-slate-400 block text-[11px]">{li.detail}</span>}
-                      </td>
-                      <td className="px-3 py-2 text-right text-slate-600 tabular-nums">
-                        {li.quantity} {li.unit}
-                      </td>
-                      <td className="px-3 py-2 text-right text-slate-600 tabular-nums">
-                        {money(li.unit_price)}
-                      </td>
-                      <td className="px-3 py-2 text-right text-slate-800 tabular-nums">
-                        {money(li.amount)}
-                      </td>
-                    </tr>
-                  ))}
+                  {item.estimated_line_items.map((li, i) => {
+                    const omitted = li.placeholder_state === 'omitted';
+                    return (
+                      <tr key={i} className="border-t border-slate-200">
+                        <td className="px-3 py-2">
+                          <span className={omitted ? 'text-slate-400 line-through' : 'text-slate-800'}>
+                            {li.label}
+                          </span>
+                          {li.placeholder_state === 'unresolved' && (
+                            <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-amber-400/20 text-amber-700 font-medium align-middle">
+                              needs amount
+                            </span>
+                          )}
+                          {li.placeholder_state === 'resolved' && (
+                            <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-700 font-medium align-middle">
+                              entered
+                            </span>
+                          )}
+                          {omitted && (
+                            <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-slate-200 text-slate-500 font-medium align-middle">
+                              omitted
+                            </span>
+                          )}
+                          {li.detail && <span className="text-slate-400 block text-[11px]">{li.detail}</span>}
+                        </td>
+                        <td className={`px-3 py-2 text-right tabular-nums ${omitted ? 'text-slate-300 line-through' : 'text-slate-600'}`}>
+                          {li.quantity} {li.unit}
+                        </td>
+                        <td className={`px-3 py-2 text-right tabular-nums ${omitted ? 'text-slate-300' : 'text-slate-600'}`}>
+                          {omitted ? '—' : money(li.unit_price)}
+                        </td>
+                        <td className={`px-3 py-2 text-right tabular-nums ${omitted ? 'text-slate-300' : 'text-slate-800'}`}>
+                          {omitted ? '—' : money(li.amount)}
+                        </td>
+                      </tr>
+                    );
+                  })}
                   <tr className="border-t border-slate-300 bg-white">
-                    <td className="px-3 py-2 text-slate-600 font-medium" colSpan={3}>Estimated total</td>
+                    <td className="px-3 py-2 text-slate-600 font-medium" colSpan={3}>
+                      {undecided.length > 0 ? 'Estimated total so far' : 'Estimated total'}
+                    </td>
                     <td className="px-3 py-2 text-right text-slate-900 font-semibold tabular-nums">
                       {money(item.planned_amount)}
                     </td>
@@ -256,16 +335,22 @@ function PlannedItemCard({
                 </tbody>
               </table>
             </div>
+            {/* The T&M caveat is about the estimator, and does not apply to a
+                recurring group — there we hand Harvest the literal lines, so
+                once every placeholder is decided the total is exact. */}
             <p className="text-[11px] text-slate-400 mt-1.5">
-              Computed independently of Harvest's own invoice generation. It is a sanity check, not a
-              contract — variance is recorded after creation.
+              {item.billing_type === 'recurring_monthly'
+                ? undecided.length > 0
+                  ? 'A floor, not a forecast — it excludes the placeholders still awaiting an amount.'
+                  : 'These are the literal line items sent to Harvest, so this total is exact.'
+                : "Computed independently of Harvest's own invoice generation. It is a sanity check, not a contract — variance is recorded after creation."}
             </p>
           </div>
 
-          {item.flags.length > 0 && (
+          {shownFlags.length > 0 && (
             <div className="space-y-2">
               <p className="text-[11px] text-slate-500 uppercase tracking-wide font-medium">Flags</p>
-              {item.flags.map((f) => <FlagRow key={f.code} flag={f} />)}
+              {shownFlags.map((f) => <FlagRow key={f.code} flag={f} />)}
             </div>
           )}
 
@@ -315,8 +400,15 @@ function PreflightView({ run }: { run: BillingRunDetail }) {
 
   const approved = planned.filter((i) => i.status === 'approved');
   const approvedTotal = approved.reduce((s, i) => s + i.planned_amount, 0);
+  // Must match the server's bulk filter, or "Approve all 5" approves 4 and the
+  // count reads as a failure.
   const approvable = planned.filter(
-    (i) => i.status === 'planned' && (!hasError(i) || (i.error_override && !blockingFlag(i))),
+    (i) => i.status === 'planned'
+      && (!hasError(i) || (i.error_override && !blockingFlag(i)))
+      && unresolvedPlaceholders(i).length === 0,
+  );
+  const undecidedCount = planned.reduce(
+    (n, i) => n + unresolvedPlaceholders(i).length, 0,
   );
 
   return (
@@ -337,8 +429,18 @@ function PreflightView({ run }: { run: BillingRunDetail }) {
         <StatTile
           label="Approved so far"
           value={`${approved.length} / ${planned.length}`}
-          sub={money(approvedTotal)}
-          tone={planned.length > 0 && approved.length === planned.length ? 'good' : 'warn'}
+          sub={
+            // The one thing standing between the operator and a full run that
+            // isn't a config problem — worth stating before any card is opened.
+            undecidedCount > 0
+              ? `${undecidedCount} placeholder${undecidedCount === 1 ? '' : 's'} to decide`
+              : money(approvedTotal)
+          }
+          tone={
+            undecidedCount > 0
+              ? 'warn'
+              : planned.length > 0 && approved.length === planned.length ? 'good' : 'warn'
+          }
         />
       </div>
 
@@ -428,6 +530,7 @@ function PreflightView({ run }: { run: BillingRunDetail }) {
         ) : planned.map((item) => (
           <PlannedItemCard
             key={item.id}
+            run={run}
             item={item}
             busy={busy}
             onToggleSelect={() => itemApproval.mutate({

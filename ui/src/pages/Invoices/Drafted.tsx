@@ -284,10 +284,14 @@ export default function Drafted() {
         </p>
       )}
 
+      {/* Placeholder resolution narrowed this gap without closing it: the
+          amounts that used to be typed into the draft are settled before it
+          exists, but a draft is still freely editable afterwards. So the
+          example is an ad-hoc edit now, not a retainer overage. */}
       <p className="text-[11px] text-slate-400 leading-relaxed">
         Every figure here is what Harvest returned when the invoice was created. Drafts are freely
-        edited in Harvest before sending, so an amount changed there — a retainer overage, an added
-        line — will not be reflected. This is the amount created, not the amount sent.
+        edited in Harvest before sending, so an amount changed there — a line added, a discount
+        applied — will not be reflected. This is the amount created, not the amount sent.
       </p>
     </div>
   );
