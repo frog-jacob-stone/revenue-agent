@@ -2,8 +2,9 @@
 #
 # Build and deploy the API to Azure Container Apps.
 #
-#   ./scripts/deploy-api.sh              build, deploy, and sync env vars
+#   ./scripts/deploy-api.sh              lint, build, deploy, and sync env vars
 #   ./scripts/deploy-api.sh --env-only   sync env vars and restart, no rebuild
+#   ./scripts/deploy-api.sh --skip-lint  skip the ruff check
 #
 # `--env-only` is the rotate-a-secret path: updating .env.production changes
 # nothing about what is running until the values are pushed.
@@ -16,7 +17,58 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 source scripts/_load_env.sh
 
 env_only=0
-[[ "${1:-}" == "--env-only" ]] && env_only=1
+skip_lint=0
+for arg in "$@"; do
+  case "$arg" in
+    --env-only)  env_only=1 ;;
+    --skip-lint) skip_lint=1 ;;
+    *)
+      echo "ERROR: unknown argument '$arg'." >&2
+      echo "Usage: $(basename "$0") [--env-only] [--skip-lint]" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# Lint only -- deliberately NOT the test suite.
+#
+# pytest runs against the local Supabase instance on port 54322, so gating on it
+# would mean `supabase start` before every deploy. That friction is not worth it
+# for a single operator deploying by hand, so running the suite stays a manual
+# step; see DEPLOY.md, "Routine deploy".
+#
+# ruff still earns its place: it needs no infrastructure, takes about a second,
+# and catches the import errors and syntax mistakes that would otherwise surface
+# as a failed revision ten minutes into an ACR build.
+preflight_lint() {
+  if [[ $skip_lint -eq 1 ]]; then
+    echo "==> WARNING: --skip-lint given."
+    echo
+    return 0
+  fi
+
+  # A missing binary exits 127, which `if ! ruff check .` would report as "ruff
+  # failed" -- sending you to look for lint errors that do not exist.
+  if ! command -v ruff >/dev/null 2>&1; then
+    echo "ERROR: 'ruff' is not on PATH." >&2
+    echo >&2
+    echo "         brew install ruff" >&2
+    echo >&2
+    echo "       (it is also in pyproject.toml's [test] extra, but the standalone" >&2
+    echo "        binary avoids depending on which Python is active)" >&2
+    echo >&2
+    echo "       Or skip the check: $(basename "$0") --skip-lint" >&2
+    exit 1
+  fi
+
+  echo "==> ruff"
+  if ! ruff check .; then
+    echo >&2
+    echo "ERROR: ruff failed. Fix it, or skip the check with --skip-lint." >&2
+    exit 1
+  fi
+  echo
+}
 
 require_vars AZURE_RESOURCE_GROUP AZURE_CONTAINERAPP_NAME AZURE_KEYVAULT_NAME
 
@@ -147,6 +199,7 @@ fi
 echo
 
 if [[ $env_only -eq 0 ]]; then
+  preflight_lint
   echo "==> Building and deploying from source"
   az containerapp up \
     --name "$AZURE_CONTAINERAPP_NAME" \

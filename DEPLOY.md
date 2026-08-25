@@ -436,12 +436,37 @@ Every deploy after the first. Skip any piece you did not change.
 All three read `.env.production`. Environment variables persist across deploys;
 you only touch them when adding or rotating one — see [Secrets](#secrets).
 
-**Run the tests first.** This is the one thing a pipeline would do for you that
-nothing else will:
+**The scripts run the static checks themselves.** `deploy-api.sh` runs
+`ruff check .` before it builds; `deploy-ui.sh` runs `npx tsc --noEmit` before it
+builds. Either failing stops the deploy. Both need no infrastructure and take
+about a second, and they catch the import errors, syntax mistakes, and type
+errors that would otherwise surface as a failed revision ten minutes into a
+build — or as a runtime error on a page nobody opened yet.
+
+`--skip-lint` and `--skip-typecheck` are the respective escape hatches, each
+printing a warning. `--env-only` skips the lint entirely: that path ships no
+code.
+
+**The test suite is not gated, and running it stays your job:**
 
 ```bash
-pytest && ruff check . && (cd ui && npx tsc --noEmit)
+supabase start && pytest
 ```
+
+That is a deliberate trade, not an oversight. `pytest` runs against the local
+Supabase instance on port 54322, so gating on it would mean starting Docker and
+Supabase before every deploy — too much friction for one operator deploying by
+hand. The cost is real and worth naming: `tests/test_no_agent_approval_tools.py`
+structurally enforces Unbreakable Rule 3 (no executor in any agent's
+`allowed_tools`), and nothing in the deploy path checks it. Run the suite after
+any change that touches agents, tools, or executors.
+
+> ⚠️ **Do not deploy the API while a billing run is executing.** Container Apps
+> overlaps revisions during a swap — the outgoing one is still `Deprovisioning`
+> while the new one is already serving — so there are briefly **two** replicas,
+> and therefore two Harvest token buckets. Single-replica pinning does not cover
+> the swap window. Everything else in the [replica warning](#3-create-and-deploy-the-api)
+> holds; this is the one gap in it.
 
 A destructive migration (dropping a column the running API still selects) needs
 the usual two-step: deploy a migration that only adds, deploy the API that stops
@@ -780,8 +805,15 @@ file.
 
 What it costs you, stated plainly so the tradeoff is visible:
 
-- **Nothing forces the tests to run.** The `pytest && ruff check .` line in
-  [Routine deploy](#routine-deploy) is a habit, not a gate.
+- **Nothing forces the test suite to run.** The deploy scripts gate on `ruff` and
+  `tsc`, which need no infrastructure — but `pytest` needs a running local
+  Supabase, so it stays a habit rather than a gate (see
+  [Routine deploy](#routine-deploy)). Even the checks that do run work against
+  your working tree, not the committed state, and are one flag from being
+  skipped. That is the honest limit of a gate you own and can wave through.
+- **Nothing checks the Azure subscription.** `deploy-db.sh` verifies which
+  Supabase project it linked; `deploy-api.sh` deploys wherever `az` currently
+  points. Confirm with `az account show -o table` if you have switched contexts.
 - **Only this laptop can deploy.** Make sure the Azure, Netlify, and Supabase
   credentials are recoverable from a password manager, not just this keychain.
 - **Infrastructure is not reproducible from code.** If the resource group is
