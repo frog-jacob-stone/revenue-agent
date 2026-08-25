@@ -4,9 +4,6 @@
  * app/services/activity_builder.py::_TOOL_STEP_LABELS.
  */
 const TOOL_STEP_LABELS: Record<string, string> = {
-  'create_post:interpret_brief': 'Interpreting brief',
-  'create_post:draft_post': 'Drafting post',
-  'create_post:voice_review': 'Reviewing voice',
   'trigger_revenue_recognition:validate_and_sync': 'Validating and syncing',
   'trigger_revenue_recognition:compute_entries': 'Computing entries',
 };

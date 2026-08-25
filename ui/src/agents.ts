@@ -17,7 +17,6 @@
 export const AGENT_COLORS: Record<string, string> = {
   'chief-of-staff': '#4f46e5',
   bdr: '#0891b2',
-  linkedin: '#059669',
   'revenue-ops': '#7c3aed',
 };
 
@@ -27,7 +26,6 @@ export const FALLBACK_AGENT_COLOR = '#475569';
 const AGENT_NAMES: Record<string, string> = {
   'chief-of-staff': 'Chief of Staff',
   bdr: 'BDR',
-  linkedin: 'LinkedIn',
   'revenue-ops': 'Revenue Ops',
 };
 

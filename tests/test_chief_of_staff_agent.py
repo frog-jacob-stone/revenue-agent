@@ -17,7 +17,6 @@ def test_system_prompt_non_empty():
     assert len(prompt) > 200
     # Must reference the slugs it knows how to delegate to.
     assert "revenue-ops" in prompt
-    assert "linkedin" in prompt
     assert "bdr" in prompt
 
 
@@ -32,8 +31,6 @@ def test_domain_tools_not_on_chief_of_staff():
     names = {t.name for t in inst.allowed_tools}
     assert "trigger_revenue_recognition" not in names
     assert "get_revenue_data" not in names
-    assert "create_post" not in names
-    assert "publish_post" not in names
 
 
 def test_get_tools_returns_schemas_for_allowed_tools():

@@ -41,8 +41,8 @@ tool returns AwaitingApproval(executor, payload, …)
 ### What Rule #1 does and doesn't cover
 
 Rule #1 governs **agent-initiated writes**. It is not a rule that every INSERT
-anywhere passes through the inbox — `memories`, `chat_sessions`, `social_posts`,
-and `billing_groups` are all written directly by authenticated, audited,
+anywhere passes through the inbox — `memories`, `chat_sessions`, and
+`billing_groups` are all written directly by authenticated, audited,
 human-initiated requests.
 
 The distinguishing question is **who decided**. An LLM deciding to write is what
@@ -376,7 +376,7 @@ router  →  service  →  (agent | integration client | db)
 
 Every LLM call in the system flows through the dispatcher at `app/integrations/llm.py`. Callers reach for `dispatch()` (non-streaming) or `dispatch_stream()` (streaming with `StreamDelta` chunks + a terminal `LlmResponse`). Provider details, the OpenAI SDK types, request snapshotting, latency timing, and the `llm_calls` row write all live inside the dispatcher. Nothing outside `app/integrations/` imports from the `openai` package.
 
-Attribution is structural, not ambient: every call passes `Attribution(agent_slug, purpose, workflow_id?, thread_id?)` as a required argument. `purpose` is a dotted free-form label that lands on `llm_calls.purpose` and is how telemetry gets sliced (`"chat"`, `"agent:bdr"`, `"create_post.voice_review"`, etc.). There is no contextvar form — forgetting attribution is a type error, not a silent NULL.
+Attribution is structural, not ambient: every call passes `Attribution(agent_slug, purpose, workflow_id?, thread_id?)` as a required argument. `purpose` is a dotted free-form label that lands on `llm_calls.purpose` and is how telemetry gets sliced (`"chat"`, `"agent:bdr"`, `"trigger_revenue_recognition.compute_entries"`, etc.). There is no contextvar form — forgetting attribution is a type error, not a silent NULL.
 
 Tests scope a fake provider with `use_provider(FakeProvider(...))` from `tests/fakes/llm.py`. The `LlmProvider` Protocol is the internal seam — production adapter is `_OpenAiProvider` (`app/integrations/_openai_provider.py`). A second provider lands as another adapter behind the same seam; no caller changes.
 
@@ -391,11 +391,11 @@ An agent has a single coherent identity: one job, one audit trail, one approval 
 
 **Read-only vs. write-proposing is a hard split.** An analytics agent and an operations agent for the same domain are distinct agents — different audit trails, different inbox behavior, different UI presentation.
 
-**Agents vs. inline LLM calls.** Classes in `app/agents/` represent identity-bearing things: the conversational front door (`ChiefOfStaffAgent`) or worker personas meant to be invoked via `ask_agent` / `run_agent_task` and accountable in the audit trail (`BDRAgent`, `RevenueOpsAgent`, `LinkedInAgent`). Single-turn, fixed-prompt LLM calls made inline inside a tool are NOT agents — they live in the tool file (or a sibling `_prompts.py`) as `MODEL` + `SYSTEM_PROMPT` constants, attributed via `Attribution(agent_slug=..., purpose=...)` on the dispatch call. Rule of thumb: if a "thing" has no identity, no autonomy, and one caller, it's a prompt, not an agent.
+**Agents vs. inline LLM calls.** Classes in `app/agents/` represent identity-bearing things: the conversational front door (`ChiefOfStaffAgent`) or worker personas meant to be invoked via `ask_agent` / `run_agent_task` and accountable in the audit trail (`BDRAgent`, `RevenueOpsAgent`). Single-turn, fixed-prompt LLM calls made inline inside a tool are NOT agents — they live in the tool file (or a sibling `_prompts.py`) as `MODEL` + `SYSTEM_PROMPT` constants, attributed via `Attribution(agent_slug=..., purpose=...)` on the dispatch call. Rule of thumb: if a "thing" has no identity, no autonomy, and one caller, it's a prompt, not an agent.
 
 **Chat is an interface, not an agent type.** Chat is one of several trigger sources (webhook, schedule, chat). Any *agent* path that proposes a write flows through the approval inbox; operator-initiated writes from the UI do not (ADR-0004). As of ADR-0004 no agent holds a write tool, so chat is read-and-draft only.
 
-**Single front-door pattern.** Exactly one agent is conversational: `ChiefOfStaffAgent` (slug `chief-of-staff`), defined in `app/agents/chief_of_staff_agent.py`. The user only ever chats with this agent. Specialist agents (`revenue-ops`, `linkedin`, `bdr`) are plain `Agent` workers invoked via `ask_agent` from the front door, which routes through `run_agent_task`. The front-door slug is hardcoded as `FRONT_DOOR_SLUG` in `app/services/chat_turn.py` — there is no agent picker.
+**Single front-door pattern.** Exactly one agent is conversational: `ChiefOfStaffAgent` (slug `chief-of-staff`), defined in `app/agents/chief_of_staff_agent.py`. The user only ever chats with this agent. Specialist agents (`revenue-ops`, `bdr`) are plain `Agent` workers invoked via `ask_agent` from the front door, which routes through `run_agent_task`. The front-door slug is hardcoded as `FRONT_DOOR_SLUG` in `app/services/chat_turn.py` — there is no agent picker.
 
 ## Orchestrator runtime (`app/orchestrator/`)
 
@@ -417,13 +417,13 @@ A tool exports a `ToolDefinition` constant — name, description, OpenAI input s
 - **`ProgressEmitter`** — tools may emit `tool_step_started` / `tool_step_completed` events for in-tool observability. These bubble up to the chat UI and appear as nested activity lines under the tool's call.
 - **`ToolContext`** — carries `agent_id`, `agent_slug`, optional `workflow_id`, and the optional `ProgressEmitter`. Passed by `dispatch_tool`.
 
-Today's production tools include: social-content tools (`create_post`, `rewrite_post`, `reject_post`, `get_posts`, `export_posts`), revenue analysis (`get_revenue_data`), and the agent-delegation tool (`ask_agent`). The three read-only HubSpot lookups (`get_contact_by_email`, `get_company_by_id`, `get_form_submission`) were deleted on 2026-08-10 when HubSpot was removed; they were the BDR agent's only tools, so the BDR is now toolless by design and drafts from supplied context.
+Today's production tools: revenue analysis (`get_revenue_data`) and the agent-delegation tool (`ask_agent`). The three read-only HubSpot lookups (`get_contact_by_email`, `get_company_by_id`, `get_form_submission`) were deleted on 2026-08-10 when HubSpot was removed; they were the BDR agent's only tools, so the BDR is now toolless by design and drafts from supplied context.
 
-**No agent holds a tool that proposes an approval.** `publish_post` and `trigger_revenue_recognition` still exist and still return `AwaitingApproval`, but ADR-0004 removed them from `LinkedInAgent` and `RevenueOpsAgent` respectively — publishing and running rev rec are operator actions now. `tests/test_no_agent_approval_tools.py` scans every reachable tool's handler source and fails the build if this regresses.
+**No agent holds a tool that proposes an approval.** `trigger_revenue_recognition` still exists and still returns `AwaitingApproval`, but ADR-0004 removed it from `RevenueOpsAgent` — running rev rec is an operator action now. `tests/test_no_agent_approval_tools.py` scans every reachable tool's handler source and fails the build if this regresses.
 
 ## Executors (`app/executors/`)
 
-Executors are the only code path that performs side effects against external systems on behalf of an approval. Each executor has a name (matching the `executor` column on its approval rows), a description, and an async `execute(ctx, payload)` callable. They are registered in `app/executors/registry.py::EXECUTORS_BY_NAME`. Today: `post_to_linkedin`, `write_rev_rec_entries`. They are **never** exposed to an LLM — that's the structural enforcement of Unbreakable Rule #3.
+Executors are the only code path that performs side effects against external systems on behalf of an approval. Each executor has a name (matching the `executor` column on its approval rows), a description, and an async `execute(ctx, payload)` callable. They are registered in `app/executors/registry.py::EXECUTORS_BY_NAME`. Today: `write_rev_rec_entries`. They are **never** exposed to an LLM — that's the structural enforcement of Unbreakable Rule #3.
 
 ## Approval Inbox
 
@@ -435,7 +435,7 @@ The system is a **single front door + specialist workers**. There is one convers
 
 Dispatch shape:
 
-- **User → front door (chat).** `app/services/chat_turn.py::start_turn` drives the OpenAI tool-call loop against `ChiefOfStaffAgent`. The front door owns the cross-domain content tools (`create_post`, `publish_post`, etc.) directly; revenue tools (`trigger_revenue_recognition`, `get_revenue_data`) live on the `revenue-ops` domain agent and are reached via `ask_agent`.
+- **User → front door (chat).** `app/services/chat_turn.py::start_turn` drives the OpenAI tool-call loop against `ChiefOfStaffAgent`. The front door owns no domain tools; revenue tools (`trigger_revenue_recognition`, `get_revenue_data`) live on the `revenue-ops` domain agent and are reached via `ask_agent`.
 - **Front door → specialist (LLM delegation).** The front door calls `ask_agent(target_slug, prompt)` for domain-specific explanation or reasoning. `ask_agent` writes the outbound prompt to `agent_messages`, calls `run_agent_task` (which is either single-turn or a ReAct loop depending on whether the target has `allowed_tools`), writes the inbound reply, and returns `{answer, thread_id}`. The specialist's `system_prompt` is what's load-bearing.
 
 Specialists never appear in the chat surface. To iterate on a specialist's prompt, drive `run_agent_task` from a test or shell — there is intentionally no admin chat endpoint for them.

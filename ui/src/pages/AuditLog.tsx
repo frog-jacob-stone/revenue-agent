@@ -95,8 +95,7 @@ export default function AuditLog() {
               <th className="w-6 px-3 py-3" />
               <th className="text-left px-4 py-3 font-medium">Timestamp</th>
               <th className="text-left px-4 py-3 font-medium">Agent</th>
-              <th className="text-left px-4 py-3 font-medium">Type</th>
-              <th className="text-left px-4 py-3 font-medium">Target</th>
+              <th className="text-left px-4 py-3 font-medium">Event</th>
               <th className="text-left px-4 py-3 font-medium">Outcome</th>
               <th className="text-left px-4 py-3 font-medium">Reason</th>
             </tr>
@@ -104,11 +103,11 @@ export default function AuditLog() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-xs text-slate-500 animate-pulse">Loading…</td>
+                <td colSpan={6} className="px-4 py-8 text-center text-xs text-slate-500 animate-pulse">Loading…</td>
               </tr>
             ) : entries.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-xs text-slate-500">No audit entries found.</td>
+                <td colSpan={6} className="px-4 py-8 text-center text-xs text-slate-500">No audit entries found.</td>
               </tr>
             ) : entries.map((entry, i) => (
               <>
@@ -130,14 +129,13 @@ export default function AuditLog() {
                       : <span className="text-xs text-slate-400">—</span>
                     }
                   </td>
-                  <td className="px-4 py-2.5"><ActionTypeChip type={entry.action_type ?? entry.event_type} /></td>
-                  <td className="px-4 py-2.5 text-slate-700 text-xs max-w-[200px] truncate">{entry.target ?? entry.event_type}</td>
+                  <td className="px-4 py-2.5"><ActionTypeChip type={entry.event_type} /></td>
                   <td className="px-4 py-2.5"><StatusChip status={entry.outcome} /></td>
                   <td className="px-4 py-2.5 text-slate-500 text-xs max-w-[200px] truncate">{entry.reason ?? '—'}</td>
                 </tr>
                 {expanded === String(entry.id) && (
                   <tr key={`${entry.id}-expand`} className="border-b border-slate-200 bg-slate-50">
-                    <td colSpan={7} className="px-8 py-4">
+                    <td colSpan={6} className="px-8 py-4">
                       <p className="text-xs text-slate-500 uppercase tracking-wide font-semibold mb-2">Payload</p>
                       <pre className="text-xs text-emerald-700 bg-slate-50 rounded-lg p-3 overflow-x-auto font-mono leading-relaxed">
                         {JSON.stringify(entry.payload, null, 2)}

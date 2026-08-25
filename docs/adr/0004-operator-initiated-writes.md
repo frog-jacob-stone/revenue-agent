@@ -61,6 +61,12 @@ existing executors (`post_to_linkedin`, `write_rev_rec_entries`) stay registered
 and intact. If the system evolves back toward agentic execution, the machinery is
 there — unused, not deleted.
 
+> **Update ([ADR-0006](0006-remove-social-content.md), 2026-08-25):** the
+> `post_to_linkedin` executor was later removed along with the rest of the
+> social-content feature — a deliberate decision, not a lapse in the above.
+> `write_rev_rec_entries` is now the only registered executor. The paragraph
+> stands as written for `app/services/approvals.py` and `/approvals`.
+
 ## Considered options
 
 **Option discarded: route operator writes through approvals anyway, auto-granting
@@ -95,7 +101,10 @@ returns.
   These were the only two tools in the codebase returning `AwaitingApproval`, so
   the inbox is now empty by construction. `create_post`, `rewrite_post`, and
   `reject_post` stay agent-callable — they return `Done()` and write only to the
-  internal `posts` table.
+  internal `posts` table. *(All four of those tools were deleted by
+  [ADR-0006](0006-remove-social-content.md); `TRIGGER_REVENUE_RECOGNITION` is now
+  the only tool in the codebase returning `AwaitingApproval`, and it is still
+  unreachable from any agent.)*
 - Rev rec consequently has **no runner** until it gets a UI button of the same
   shape. Tracked as follow-on work; the executor is untouched and waiting.
 - `tests/test_no_agent_approval_tools.py` makes condition 2 a build failure

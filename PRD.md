@@ -17,7 +17,7 @@ Jacob, VP of Revenue at Frogslayer, managing revenue operations day-to-day: clos
 - Automate Harvest invoicing without ever risking a duplicate, wrong, or unauthorized send — the write path is deterministic and every write is either operator-clicked or approval-gated
 - Compute revenue recognition correctly across billing types (Fixed Fee, T&M, MSF, Hosting, Retainer) and write it to the Airtable ledger
 - Surface an honest, current picture of what's happening — via the audit log today, and via revenue/project reporting once built
-- Support agent-assisted tasks (BDR drafting, LinkedIn content, conversational revenue Q&A) without ever letting an LLM hold a write capability
+- Support agent-assisted tasks (BDR drafting, conversational revenue Q&A) without ever letting an LLM hold a write capability
 
 ## Scope
 
@@ -31,7 +31,6 @@ Jacob, VP of Revenue at Frogslayer, managing revenue operations day-to-day: clos
 - ✅ Analytics (runs, approval rates, summary stats)
 - ✅ Settings (integrations, cron schedules, preferences)
 - ✅ Revenue recognition workflow (Harvest → compute → Airtable)
-- ✅ Content creation + publishing workflow (brief → strategy → draft → voice review → LinkedIn)
 - ✅ Harvest billing/invoicing automation — billing groups, Harvest snapshot sync, T&M estimation, duplicate-invoice guarding, fixed-fee draw scheduling/release, plan → approve → execute ledger. Operator-initiated per [ADR-0004](docs/adr/0004-operator-initiated-writes.md); no agent in the write path.
 - ✅ Append-only audit log with full state machine coverage
 - 🔲 **Planned — Revenue dashboard.** A business-facing view of revenue (not the existing agent-status dashboard), tracked in `PROGRESS.md` under "Revenue Reporting & Project Tracking." Not yet designed or built.
@@ -163,13 +162,7 @@ What the BDR agent retains is the drafting half: hand it a name, role, company, 
 
 ---
 
-## Workflow C: Content Creation & Publishing
-
-**Build:** Two chains: **content_creation**: interpret brief (LLM: strategy idea with title, angle, target, type) → draft post (LLM: post text, hook, CTA; writes `social_posts` row) → voice review (critique; max 3 attempts; on pass: status → `ready`; on exhaustion: status → `needs_revision`, workflow → `failed`). **content_publish**: execution approval → post to LinkedIn (stub; status → `published`). The LinkedIn agent (`linkedin`) owns the content tools and is invoked by `chief-of-staff` via `ask_agent` — users never see the chains directly. Post state machine: `draft` → `needs_revision` → `ready` → `published | rejected`.
-
----
-
-## Workflow D: Harvest Billing / Invoicing
+## Workflow C: Harvest Billing / Invoicing
 
 **Build:** Harvest snapshot sync (clients, projects, rates) → billing-group config (one Harvest client → one invoice, an abstraction Harvest itself lacks) → reconciliation (every billable project maps to exactly one active group) → T&M estimation from uninvoiced time, or fixed-fee draw / recurring line-item resolution → duplicate guard → plan → per-group approval on the ledger → operator clicks to create a draft invoice in Harvest. No agent or LLM anywhere in this path — deterministic by design, per [ADR-0004](docs/adr/0004-operator-initiated-writes.md). Full phase-by-phase status (T&M pre-flight complete, single-draw execution shipped, monthly-run execution not yet built) is tracked in `PROGRESS.md`.
 
@@ -184,4 +177,4 @@ The system should deliver:
 - ✅ Correct revenue recognition across all billing types, written to the Airtable ledger
 - ✅ A single approval inbox for every agent-initiated write, and a clear audit trail for every operator-initiated one
 - 🔲 Revenue and project reporting (dashboard, project-completion tracking, revenue-per-project-type) — planned, not yet built
-- ✅ Agent-assisted conversational and drafting tasks (BDR, LinkedIn, revenue Q&A) that can never hold a write capability directly
+- ✅ Agent-assisted conversational and drafting tasks (BDR drafting, revenue Q&A) that can never hold a write capability directly

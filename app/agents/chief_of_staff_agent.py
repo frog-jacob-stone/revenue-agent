@@ -6,15 +6,14 @@ this agent, which routes through `run_agent_task` (ReAct loop when the
 target has tools, single-turn otherwise).
 
 The chief of staff stays thin: it owns no domain tools today and delegates
-domain work — revenue ops, BDR follow-ups, LinkedIn content — to the
-corresponding domain agent via `ask_agent`.
+domain work — revenue ops and BDR follow-ups — to the corresponding domain
+agent via `ask_agent`.
 """
 from datetime import date
 from typing import ClassVar
 
 from app.agents.base import Agent
 from app.agents.bdr_agent import BDRAgent
-from app.agents.linkedin_agent import LinkedInAgent
 from app.agents.revenue_ops_agent import RevenueOpsAgent
 from app.agents.tools.agent.ask_agent import ASK_AGENT
 from app.agents.tools.base import ToolDefinition
@@ -25,8 +24,7 @@ class ChiefOfStaffAgent(Agent):
     name = "Chief of Staff"
     description = (
         "Chief of staff for the VP of Revenue. Single conversational front door; "
-        "coordinates revenue ops, BDR, and LinkedIn content work by delegating "
-        "to domain agents."
+        "coordinates revenue ops and BDR work by delegating to domain agents."
     )
     requires_approval = False
     model = "gpt-4o-mini"
@@ -38,7 +36,6 @@ class ChiefOfStaffAgent(Agent):
     available_agents: ClassVar[tuple[type[Agent], ...]] = (
         BDRAgent,
         RevenueOpsAgent,
-        LinkedInAgent,
     )
 
     def get_system_prompt(self) -> str:

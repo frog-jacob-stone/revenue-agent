@@ -70,30 +70,30 @@ def test_agent_tool_cannot_await_approval(agent_slug: str, tool: ToolDefinition)
 def test_the_scan_can_actually_detect_a_violation() -> None:
     """Guard the guard.
 
-    A source scan that silently matches nothing passes forever. `publish_post`
-    was removed from `LinkedInAgent` by ADR-0004 but still exists and still
-    returns `AwaitingApproval`, which makes it the honest fixture for proving
-    the detection works.
+    A source scan that silently matches nothing passes forever.
+    `trigger_revenue_recognition` was removed from `RevenueOpsAgent` by ADR-0004
+    but still exists and still returns `AwaitingApproval`, which makes it the
+    honest fixture for proving the detection works.
     """
-    from app.agents.tools.content import PUBLISH_POST
+    from app.agents.tools.revenue import TRIGGER_REVENUE_RECOGNITION
 
-    _, source = _handler_source(PUBLISH_POST)
-    assert source, "publish_post's handler source should be readable"
+    _, source = _handler_source(TRIGGER_REVENUE_RECOGNITION)
+    assert source, "trigger_revenue_recognition's handler source should be readable"
     assert _MARKER in source, (
-        "publish_post no longer returns AwaitingApproval, so this test no longer "
-        "proves the scan detects anything. Point it at another approval-proposing "
-        "tool, or delete it along with the last one."
+        "trigger_revenue_recognition no longer returns AwaitingApproval, so this "
+        "test no longer proves the scan detects anything. Point it at another "
+        "approval-proposing tool, or delete it along with the last one."
     )
 
 
 def test_approval_proposing_tools_are_unreachable_but_still_registered() -> None:
     """ADR-0004 preserves the machinery; it does not delete it.
 
-    Both executors stay registered so agentic execution can return without a
+    The executor stays registered so agentic execution can return without a
     reimplementation. If this fails, someone removed an executor — which is a
-    real decision, not a cleanup.
+    real decision, not a cleanup. (`post_to_linkedin` was such a decision:
+    ADR-0006 removed it with the rest of the social-content feature.)
     """
     from app.executors.registry import EXECUTORS_BY_NAME
 
-    assert "post_to_linkedin" in EXECUTORS_BY_NAME
     assert "write_rev_rec_entries" in EXECUTORS_BY_NAME

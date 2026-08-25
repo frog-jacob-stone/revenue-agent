@@ -106,14 +106,14 @@ async def test_start_turn_pushes_events_to_subscriber():
 
     events = [
         {"type": "delta", "text": "Hi"},
-        {"type": "tool_call_started", "name": "create_post", "args": {}},
+        {"type": "tool_call_started", "name": "trigger_revenue_recognition", "args": {}},
         {
             "type": "tool_call_completed",
-            "name": "create_post",
+            "name": "trigger_revenue_recognition",
             "ok": True,
             "result_summary": "{ok}",
         },
-        {"type": "done", "answer": "Hi", "tool_used": "create_post"},
+        {"type": "done", "answer": "Hi", "tool_used": "trigger_revenue_recognition"},
     ]
     fake_gen = await _fake_stream_gen(events)
     with patch("app.services.chat_turn._stream_llm_turn", new=fake_gen):
@@ -183,15 +183,15 @@ async def test_activity_is_persisted_with_tool_lifecycle():
     session = await cs.create_session(pool, FRONT_DOOR_SLUG)
 
     events = [
-        {"type": "tool_call_started", "name": "create_post", "args": {}},
+        {"type": "tool_call_started", "name": "trigger_revenue_recognition", "args": {}},
         {
             "type": "tool_call_completed",
-            "name": "create_post",
+            "name": "trigger_revenue_recognition",
             "ok": True,
             "result_summary": "{ok}",
         },
         {"type": "delta", "text": "Done."},
-        {"type": "done", "answer": "Done.", "tool_used": "create_post"},
+        {"type": "done", "answer": "Done.", "tool_used": "trigger_revenue_recognition"},
     ]
     fake_gen = await _fake_stream_gen(events)
     with patch("app.services.chat_turn._stream_llm_turn", new=fake_gen):
@@ -200,12 +200,12 @@ async def test_activity_is_persisted_with_tool_lifecycle():
 
     msgs = await cs.get_messages(pool, session["id"])
     assistant = msgs[1]
-    assert assistant["tool_used"] == "create_post"
+    assert assistant["tool_used"] == "trigger_revenue_recognition"
     assert len(assistant["activity"]) == 1
     line = assistant["activity"][0]
     assert line["kind"] == "tool"
     assert line["status"] == "ok"
-    assert line["label"] == "Calling create_post"
+    assert line["label"] == "Calling trigger_revenue_recognition"
 
 
 @pytest.mark.asyncio

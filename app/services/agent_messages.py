@@ -33,7 +33,7 @@ async def send_message(
     """Insert one agent_messages row. Generates a fresh thread_id if none given.
 
     Accepts either an asyncpg pool or an open connection so callers inside an
-    existing transaction can chain writes (mirrors the `social_posts` pattern).
+    existing transaction can chain writes.
     """
     thread_uuid = thread_id or uuid4()
     sql = """

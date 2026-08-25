@@ -178,9 +178,9 @@ app/
     dispatch.py         # tool return (Done | AwaitingApproval | Blocked) -> audit + approval row
     events.py           # audit event constants
   agents/
-    registry.py         # chief-of-staff, bdr, revenue-ops, linkedin (single agent class, ADR-0003)
-    tools/               # ask_agent, content/*, revenue/* — tools an LLM may call
-  executors/             # post_to_linkedin, write_rev_rec_entries — invoked after approval, never by an LLM
+    registry.py         # chief-of-staff, bdr, revenue-ops (single agent class, ADR-0003)
+    tools/               # ask_agent, revenue/* — tools an LLM may call
+  executors/             # write_rev_rec_entries — invoked after approval, never by an LLM
   integrations/          # Harvest, Airtable, Forecast, LLM dispatcher clients
 docs/
   SCHEMA.md            # Source of truth for the DB schema

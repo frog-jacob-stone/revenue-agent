@@ -14,8 +14,6 @@ import EmptyState from '../../components/shared/EmptyState';
 const ACTION_LABELS: Record<string, string> = {
   research: 'research',
   send_email: 'send email',
-  publish_content: 'publish',
-  post_to_linkedin: 'linkedin post',
   generate_document: 'gen doc',
   write_rev_rec: 'rev rec',
   configure_rev_rec_projects: 'rev rec setup',
@@ -48,23 +46,6 @@ const RISK_DOT: Record<string, string> = {
 /** Action-type-specific payload summary rendered below the main summary line. */
 function PayloadContext({ action }: { action: InboxItem }) {
   const p = action.proposed_payload;
-
-  if (action.action_type === 'post_to_linkedin') {
-    const ideaTitle = p.idea_title as string | undefined;
-    const postText = p.post_text as string | undefined;
-    return (
-      <div className="mt-2 space-y-1">
-        {ideaTitle && (
-          <p className="text-xs text-slate-600 font-medium">{ideaTitle}</p>
-        )}
-        {postText && (
-          <p className="text-xs text-slate-500 line-clamp-3 border-l-2 border-slate-300 pl-2 whitespace-pre-wrap">
-            {postText}
-          </p>
-        )}
-      </div>
-    );
-  }
 
   if (action.action_type === 'configure_rev_rec_projects') {
     const projects = (p.incomplete_projects as Array<{

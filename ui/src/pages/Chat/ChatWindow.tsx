@@ -205,11 +205,10 @@ export default function ChatWindow({ agentId, sessionId, agent }: Props) {
           const key = `${evt.tool}:${evt.step}:${evt.attempt ?? 1}`;
           const lineId = toolStepLineIds[key];
           if (lineId) {
-            // For voice_review the `passed` flag drives the status; other
-            // steps don't carry it and are considered ok on completion.
-            const status =
-              evt.passed === false ? 'fail' : evt.passed === true ? 'ok' : 'ok';
-            patchLine(lineId, { status });
+            // A step that omits `ok` succeeded. Same default as the server-side
+            // mirror in activity_builder.py, so a reload renders identically.
+            const status = evt.ok === false ? 'fail' : 'ok';
+            patchLine(lineId, { status, ...(evt.detail ? { detail: evt.detail } : {}) });
             delete toolStepLineIds[key];
           }
           break;

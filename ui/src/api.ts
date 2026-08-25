@@ -158,7 +158,9 @@ export type ChatStreamEvent =
       tool: string;
       step: string;
       attempt?: number;
-      passed?: boolean;
+      /** Absent means the step succeeded — mirrors `event.get("ok", True)` server-side. */
+      ok?: boolean;
+      detail?: string;
     }
   | { type: 'agent_task_tool_started'; agent_slug: string; name: string; args: Record<string, unknown> }
   | { type: 'agent_task_tool_completed'; agent_slug: string; name: string; ok: boolean; result_summary: string }
@@ -264,8 +266,6 @@ export interface AuditLogEntry {
   timestamp: string;
   agent_slug: string | null;
   event_type: string;
-  action_type: string | null;
-  target: string | null;
   outcome: 'success' | 'failed' | 'pending' | 'rejected';
   reason: string | null;
   payload: Record<string, unknown>;

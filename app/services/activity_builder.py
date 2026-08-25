@@ -21,9 +21,6 @@ from typing import Any
 # Tool-step labels (ADR-0002). Used when a tool emits `tool_step_started` /
 # `tool_step_completed` events on its ProgressEmitter.
 _TOOL_STEP_LABELS: dict[str, str] = {
-    "create_post:interpret_brief": "Interpreting brief",
-    "create_post:draft_post": "Drafting post",
-    "create_post:voice_review": "Reviewing voice",
     "trigger_revenue_recognition:validate_and_sync": "Validating and syncing",
     "trigger_revenue_recognition:compute_entries": "Computing entries",
 }

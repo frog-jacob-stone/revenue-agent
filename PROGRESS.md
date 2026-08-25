@@ -28,11 +28,14 @@ This file tracks two tracks: **Revenue Operations Automation** (billing/invoicin
 - [x] Edit & Approve — inline payload editing via EditBodyModal; Modified badge; diff stored as `executed_payload`
 - [-] Realtime — currently polls every 15s; Supabase Realtime subscription not implemented
 
-### Module 2: Agent Dashboard — `[-]`
-- [-] Summary cards — real agents from `GET /agents`: name, description, active/disabled. Last-run, actioned-today, and idle/running/error status were mock-only inventions with no backing data; removed rather than faked
-- [x] Activity feed — last 10 rows from `GET /audit_log`
+### Module 2: Dashboard — `[ ]`
+Reduced to a `PlaceholderPage` on 2026-08-25. The agent cards restated the Agents
+tab and the activity feed restated the Audit Log tab, so the screen was a
+duplicate of two others rather than a landing view. What belongs here — billing
+run state, revenue recognition status, exceptions needing a human — is not scoped.
+- [ ] Summary tiles — undesigned
+- [ ] Exceptions needing attention — undesigned
 - [ ] Global status banner — removed; nothing records an agent error state to banner on
-- [-] Quick-trigger buttons — all agents log to console with StubBadge (the one real trigger, "Reach out", went away with the outreach workflow)
 
 > **No mock fixtures left in the UI.** `ui/src/mocks/index.ts` — a prototype
 > fixture for five agents (`sdr-researcher`, `outreach-agent`, `content-writer`,
@@ -99,16 +102,10 @@ This file tracks two tracks: **Revenue Operations Automation** (billing/invoicin
 ### Workflow B: Outreach — **removed**
 Deleted with the LangGraph rip-out, then finished off on 2026-08-10 when HubSpot and Apollo were removed. Nothing here survives in code. What remains of outbound is the BDR agent, which drafts from context the caller supplies and has no tools.
 
-### Workflow C: Content Creation & Publishing — `[-]`
-- [x] `content_creation` — 4-node LangGraph; `voice_review` loops to `draft_post` on fail; no interrupt gate
-- [x] `interpret_brief` — direct OpenAI call (`ContentStrategyAgent` system prompt; title, angle, target, type)
-- [x] `draft_post` — direct OpenAI call (`LinkedInWritingAgent`); writes/updates `social_posts` row
-- [x] `voice_review` — direct OpenAI call (`PersonalVoiceAgent`); max 3 attempts; pass → `social_posts.status=ready`; exhausted → `failed_terminal` (post stays at `status=draft`; future: surface as `needs_revision` once the inbox supports it)
-- [x] `content_publish` — 2-node LangGraph; `propose_post` → [interrupt_before] → `post_to_linkedin`
-- [x] `propose_post` — execution approval gate (`action_type=post_to_linkedin`)
-- [-] `post_to_linkedin` — stub only; updates DB status to `published` but does not post; no LinkedIn integration
-- [x] LinkedIn agent (`linkedin`) — domain worker that owns the content tools (`create_post`, `publish_post`, etc.); invoked via `ask_agent` from the single front-door `chief-of-staff` agent. Internal LLM calls inside `create_post` (interpret_brief, draft_post, voice_review) are inlined as prompt constants in `app/agents/tools/content/_creation_prompts.py` rather than separate agent classes.
-- [x] Post state machine — `draft` → `ready` → `published | rejected` (`needs_revision` aspirational; not currently emitted)
+### Workflow C: Social Content — **removed**
+Removed on 2026-08-25. It was built for one person's LinkedIn presence, which is
+not what this system is for — see [ADR-0006](docs/adr/0006-remove-social-content.md).
+Nothing here survives in code, and migration `0034` drops the table it wrote to.
 
 ---
 
@@ -268,7 +265,7 @@ Originally scoped around LangGraph's `get_graph().draw_mermaid()`. LangGraph was
 
 ## Architecture status
 
-One orchestrator (`app/orchestrator/`) — `run_agent_task` drives a ReAct loop for agents with tools; prescribed workflows are tools returning `Done | AwaitingApproval | Blocked`, with loops/retries as inline Python, not a graph engine (LangGraph was removed; see [ADR-0002](docs/adr/0002-tools-not-graphs.md) and [ADR-0003](docs/adr/0003-single-agent-class-structural-delegation.md)). One approval surface (`/approvals`). One inbox type (`Approval`). One conversational agent (`chief-of-staff`) sitting in front of three worker agents (`bdr`, `revenue-ops`, `linkedin`). The chat-turn module (`app/services/chat_turn.py`) owns the LLM tool-call loop, turn lifecycle, and persistence; `app/services/chat_sessions.py` is pure CRUD. Single-turn LLM calls for sub-steps (consolidate, draft, voice critique, accuracy critique, voice review, idea interpretation, post drafting) live inline in their tool modules as `MODEL` + `SYSTEM_PROMPT` constants — not as agent classes. Every LLM call (single-turn or streaming) flows through the dispatcher at `app/integrations/llm.py`, which absorbs provider details, the `llm_calls` row write, and attribution (`Attribution(agent_slug, purpose, ...)` — required argument, not a contextvar). Chat turns emit `CHAT_TURN_STARTED` / `CHAT_TURN_COMPLETED` / `CHAT_TURN_FAILED` audit events. Test suite covers runner, approval flow, agent invocation, sub-workflow spawn, agent messaging, chat turn lifecycle, the LLM dispatcher in isolation, and the production tool-based workflows end-to-end.
+One orchestrator (`app/orchestrator/`) — `run_agent_task` drives a ReAct loop for agents with tools; prescribed workflows are tools returning `Done | AwaitingApproval | Blocked`, with loops/retries as inline Python, not a graph engine (LangGraph was removed; see [ADR-0002](docs/adr/0002-tools-not-graphs.md) and [ADR-0003](docs/adr/0003-single-agent-class-structural-delegation.md)). One approval surface (`/approvals`). One inbox type (`Approval`). One conversational agent (`chief-of-staff`) sitting in front of two worker agents (`bdr`, `revenue-ops`). The chat-turn module (`app/services/chat_turn.py`) owns the LLM tool-call loop, turn lifecycle, and persistence; `app/services/chat_sessions.py` is pure CRUD. Single-turn LLM calls for sub-steps (consolidate, draft, voice critique, accuracy critique) live inline in their tool modules as `MODEL` + `SYSTEM_PROMPT` constants — not as agent classes. Every LLM call (single-turn or streaming) flows through the dispatcher at `app/integrations/llm.py`, which absorbs provider details, the `llm_calls` row write, and attribution (`Attribution(agent_slug, purpose, ...)` — required argument, not a contextvar). Chat turns emit `CHAT_TURN_STARTED` / `CHAT_TURN_COMPLETED` / `CHAT_TURN_FAILED` audit events. Test suite covers runner, approval flow, agent invocation, sub-workflow spawn, agent messaging, chat turn lifecycle, the LLM dispatcher in isolation, and the production tool-based workflows end-to-end.
 
 Known gaps (tracked in Backlog):
 - Multi-turn thread context in `ask_agent`

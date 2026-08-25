@@ -57,7 +57,7 @@ Reference docs:
 - Tools may emit progress events via `ProgressEmitter` for in-tool observability (e.g., `{"type": "step_started", "name": "compose_email"}`).
 - Critique loops, retries, and conditional branches are inline Python (`for`, `while`, `if`) — there is no graph helper. Extract a shared helper only when at least two tools need the same pattern.
 - Executors live in their own registry and are **never** added to any agent's `allowed_tools`. They are invoked by the approval-grant handler, not by the LLM.
-- Production tools (workflow-shaped): `create_post`. `trigger_revenue_recognition` and `publish_post` still exist and still return `AwaitingApproval`, but ADR-0004 removed them from every agent's `allowed_tools` — no agent can propose an approval, so the inbox is empty by construction. Inbox UI still sources solely from `/approvals`.
+- `trigger_revenue_recognition` still exists and still returns `AwaitingApproval`, but ADR-0004 removed it from every agent's `allowed_tools` — no agent can propose an approval, so the inbox is empty by construction. Inbox UI still sources solely from `/approvals`.
 - Agent-to-agent communication: `app/services/agent_messages.py` records turn-by-turn exchanges; `ask_agent` (in `app/agents/tools/agent/ask_agent.py`) is the canonical delegation tool. Both messages (outgoing prompt + incoming reply) are written under one `thread_id`.
 
 ## Progress

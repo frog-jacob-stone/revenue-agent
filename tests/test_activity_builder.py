@@ -20,7 +20,8 @@ def _build(events):
 
 
 def test_label_for_tool_step_uses_known_label():
-    assert label_for_tool_step("create_post", "interpret_brief") == "Interpreting brief"
+    label = label_for_tool_step("trigger_revenue_recognition", "compute_entries")
+    assert label == "Computing entries"
 
 
 def test_label_for_tool_step_falls_back_to_title_case():
@@ -37,29 +38,29 @@ def test_delta_events_dont_touch_activity():
 
 def test_tool_call_started_then_completed_ok():
     activity = _build([
-        {"type": "tool_call_started", "name": "create_post", "args": {}},
+        {"type": "tool_call_started", "name": "trigger_revenue_recognition", "args": {}},
         {
             "type": "tool_call_completed",
-            "name": "create_post",
+            "name": "trigger_revenue_recognition",
             "ok": True,
-            "result_summary": "{post_id…}",
+            "result_summary": "{entry_count…}",
         },
     ])
     assert len(activity) == 1
     line = activity[0]
     assert line["kind"] == "tool"
-    assert line["label"] == "Calling create_post"
+    assert line["label"] == "Calling trigger_revenue_recognition"
     assert line["status"] == "ok"
-    assert line["detail"] == "{post_id…}"
+    assert line["detail"] == "{entry_count…}"
     assert line["parentId"] is None
 
 
 def test_tool_call_completed_failure_marks_status_fail():
     activity = _build([
-        {"type": "tool_call_started", "name": "create_post", "args": {}},
+        {"type": "tool_call_started", "name": "trigger_revenue_recognition", "args": {}},
         {
             "type": "tool_call_completed",
-            "name": "create_post",
+            "name": "trigger_revenue_recognition",
             "ok": False,
             "result_summary": "error: boom",
         },
@@ -70,16 +71,16 @@ def test_tool_call_completed_failure_marks_status_fail():
 
 def test_tool_step_events_nest_under_tool():
     activity = _build([
-        {"type": "tool_call_started", "name": "create_post", "args": {}},
-        {"type": "tool_step_started", "name": "interpret_brief"},
-        {"type": "tool_step_completed", "name": "interpret_brief", "ok": True},
-        {"type": "tool_step_started", "name": "draft_post"},
-        {"type": "tool_step_completed", "name": "draft_post", "ok": True},
+        {"type": "tool_call_started", "name": "trigger_revenue_recognition", "args": {}},
+        {"type": "tool_step_started", "name": "validate_and_sync"},
+        {"type": "tool_step_completed", "name": "validate_and_sync", "ok": True},
+        {"type": "tool_step_started", "name": "compute_entries"},
+        {"type": "tool_step_completed", "name": "compute_entries", "ok": True},
         {
             "type": "tool_call_completed",
-            "name": "create_post",
+            "name": "trigger_revenue_recognition",
             "ok": True,
-            "result_summary": "{post_id…}",
+            "result_summary": "{entry_count…}",
         },
     ])
 
@@ -88,18 +89,18 @@ def test_tool_step_events_nest_under_tool():
     tool_line, step1, step2 = activity
     assert step1["parentId"] == tool_line["id"]
     assert step2["parentId"] == tool_line["id"]
-    assert step1["label"] == "Interpreting brief"
+    assert step1["label"] == "Validating and syncing"
     assert step1["status"] == "ok"
-    assert step2["label"] == "Drafting post"
+    assert step2["label"] == "Computing entries"
     assert step2["status"] == "ok"
     assert tool_line["status"] == "ok"
 
 
 def test_tool_step_completed_with_ok_false_marks_fail():
     activity = _build([
-        {"type": "tool_call_started", "name": "create_post", "args": {}},
-        {"type": "tool_step_started", "name": "voice_review"},
-        {"type": "tool_step_completed", "name": "voice_review", "ok": False},
+        {"type": "tool_call_started", "name": "trigger_revenue_recognition", "args": {}},
+        {"type": "tool_step_started", "name": "compute_entries"},
+        {"type": "tool_step_completed", "name": "compute_entries", "ok": False},
     ])
     step = next(line for line in activity if line["kind"] == "node")
     assert step["status"] == "fail"

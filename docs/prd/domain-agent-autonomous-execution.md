@@ -115,7 +115,7 @@ Good tests verify externally observable behaviour, not implementation steps. For
 
 - Sending the drafted email (requires propose-approve-execute through the outreach graph).
 - Persisting the draft to any database table.
-- The BDR performing web research or LinkedIn enrichment (future tool addition to the BDR).
+- The BDR performing web research or contact enrichment (future tool addition to the BDR).
 - Asynchronous agentic task execution (the task runs synchronously within the chat turn; async is a future concern).
 - Multi-step outreach sequences (belong in a prescribed workflow graph, not an agentic task).
 - SDR agent or any other domain agent beyond BDR (future).

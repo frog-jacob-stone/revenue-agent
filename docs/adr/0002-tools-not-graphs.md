@@ -17,6 +17,12 @@ Auditing the production graphs:
 | `outreach_chain` | 1 | Before Gmail send. Retired during this change (not in active use). |
 | `rev_rec_monthly` | 2 (today); **1 after reframe** | "Configure projects" was modelled as a gate but is actually a precondition failure — the user fixes Airtable, then re-runs. |
 
+This is a snapshot of the graphs as they stood when this decision was made. Two
+of the four are gone for reasons unrelated to it: `outreach_chain` with HubSpot,
+and the two content rows with the whole social-content feature
+([ADR-0006](0006-remove-social-content.md)). Only `rev_rec_monthly` survives, as
+a tool.
+
 After the rev_rec reframe, every workflow we care about is single-gate. None of the multi-gate machinery is load-bearing. Walking the roadmap (outreach + follow-up, proposal generation, invoice operations, SDR enrichment, slide decks, contract negotiation), every apparent multi-gate case decomposes either into (a) single-gate sequences linked by orchestrator decisions, or (b) separate triggers linked by external events. True multi-gate is rare in revenue ops and shows up mainly in compliance / financial-close / regulatory flows — none in scope here.
 
 LangGraph also charges a steady tax for cases that don't need it: a TypedDict per graph, `GraphSpec` + `build_graph()` boilerplate, the runner's `_propose` unpack, state-key namespacing, the central registry, the checkpointer pool, the workflow-event tail, and the `_owning_agent_slug` threading. For 0-gate and 1-gate flows that's pure ceremony.

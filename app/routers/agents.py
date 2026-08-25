@@ -25,7 +25,19 @@ def _enrich(d: dict) -> dict:
 
 @router.get("", response_model=list[AgentRead])
 async def list_agents(pool: asyncpg.Pool = Depends(_db)):
-    rows = await pool.fetch("SELECT * FROM agents ORDER BY slug")
+    """Agents that exist today, per the Python registry.
+
+    `seed_agents` only inserts, so a slug retired from the registry leaves its
+    `agents` row behind. Those rows are not deleted — `audit_log.agent_id`,
+    `llm_calls`, and `agent_messages` point at them, and dropping them would
+    erase the attribution on work that really happened. But a retired agent is
+    not part of the roster, and listing it puts a name in the UI that nothing
+    can act on. So the registry, not the table, decides what this returns.
+    """
+    rows = await pool.fetch(
+        "SELECT * FROM agents WHERE slug = ANY($1) ORDER BY slug",
+        list(AGENTS_BY_SLUG),
+    )
     return [AgentRead.model_validate(_enrich(dict(r))) for r in rows]
 
 

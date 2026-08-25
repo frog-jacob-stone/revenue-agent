@@ -15,28 +15,38 @@ async def _db() -> asyncpg.Pool:
 
 
 class AuditLogEntry(BaseModel):
+    """
+    One `audit_log` row, flattened.
+
+    `action_type` and `target` used to come from the v1 `actions` table, which
+    migration 0014 dropped. Nothing records them now, so they are gone rather
+    than returned as permanent nulls — `event_type` is the type, and `payload`
+    is the detail.
+    """
+
     id: int
     timestamp: datetime
     agent_slug: str | None
     event_type: str
-    action_type: str | None
-    target: str | None
     outcome: str
     reason: str | None
     payload: dict[str, Any]
 
 
-def _derive_outcome(action_status: str | None, event_type: str) -> str:
-    if action_status == "proposed":
-        return "pending"
-    if action_status in ("approved", "completed"):
-        return "success"
-    if action_status == "rejected":
+def _derive_outcome(event_type: str) -> str:
+    """
+    Outcome comes from the event name alone.
+
+    The v1 `actions` table used to carry a status column that drove this;
+    migration 0014 dropped that table. `audit_log.event_type` is now the only
+    signal, so the suffix is the whole story.
+    """
+    if event_type.endswith((".failed", ".error")):
+        return "failed"
+    if event_type.endswith(".rejected"):
         return "rejected"
-    if action_status == "failed":
-        return "failed"
-    if event_type.endswith(".failed"):
-        return "failed"
+    if event_type.endswith((".approved", ".completed", ".executed", ".succeeded")):
+        return "success"
     return "pending"
 
 
@@ -70,11 +80,13 @@ async def list_audit_log(
         outcome_idx = len(params)
         conditions.append(
             f"""CASE
-                WHEN ac.status = 'proposed' THEN 'pending'
-                WHEN ac.status IN ('approved', 'completed') THEN 'success'
-                WHEN ac.status = 'rejected' THEN 'rejected'
-                WHEN ac.status = 'failed' THEN 'failed'
-                WHEN ac.status IS NULL AND al.event_type LIKE '%.failed' THEN 'failed'
+                WHEN al.event_type LIKE '%.failed'
+                  OR al.event_type LIKE '%.error' THEN 'failed'
+                WHEN al.event_type LIKE '%.rejected' THEN 'rejected'
+                WHEN al.event_type LIKE '%.approved'
+                  OR al.event_type LIKE '%.completed'
+                  OR al.event_type LIKE '%.executed'
+                  OR al.event_type LIKE '%.succeeded' THEN 'success'
                 ELSE 'pending'
             END = ${outcome_idx}"""
         )
@@ -94,13 +106,9 @@ async def list_audit_log(
             al.event_type,
             al.actor,
             al.payload,
-            ag.slug AS agent_slug,
-            ac.action_type,
-            ac.summary AS action_summary,
-            ac.status AS action_status
+            ag.slug AS agent_slug
         FROM audit_log al
         LEFT JOIN agents ag ON al.agent_id = ag.id
-        LEFT JOIN actions ac ON al.action_id = ac.id
         {where}
         ORDER BY al.occurred_at DESC
         LIMIT ${limit_idx} OFFSET ${offset_idx}
@@ -114,9 +122,7 @@ async def list_audit_log(
             timestamp=row["occurred_at"],
             agent_slug=row["agent_slug"],
             event_type=row["event_type"],
-            action_type=row["action_type"],
-            target=row["action_summary"],
-            outcome=_derive_outcome(row["action_status"], row["event_type"]),
+            outcome=_derive_outcome(row["event_type"]),
             reason=row["actor"],
             payload=dict(row["payload"]) if row["payload"] else {},
         )

@@ -47,7 +47,7 @@ The single conversational agent Jacob talks to. Slug `chief-of-staff`. Stays thi
 _Avoid_: front-door agent, chat agent, assistant.
 
 **Domain agent**:
-A specialist agent that owns tools for a specific business domain and runs autonomously when delegated a task. Has a slug, a row in `agents`, and an `allowed_tools` set. When invoked via `ask_agent`, drives a ReAct loop — decides which tools to call, in what order — and returns a final answer. Examples: `bdr`, `linkedin`, `revenue-ops`.
+A specialist agent that owns tools for a specific business domain and runs autonomously when delegated a task. Has a slug, a row in `agents`, and an `allowed_tools` set. When invoked via `ask_agent`, drives a ReAct loop — decides which tools to call, in what order — and returns a final answer. Examples: `bdr`, `revenue-ops`.
 _Avoid_: sub-agent, worker agent, helper agent.
 
 **Inline prompt**:
@@ -75,7 +75,7 @@ A task delegated to a domain agent via `ask_agent` where the agent decides the a
 _Avoid_: autonomous workflow, agent run.
 
 **Prescribed workflow**:
-A tool that runs a fixed sequence of steps and returns one of `Done`, `AwaitingApproval`, or `Blocked`. Used when the process is deterministic and should only change through deliberate code changes. Examples: `trigger_revenue_recognition`, `create_post`, `publish_post`. See [ADR-0002](adr/0002-tools-not-graphs.md). Loops, retries, and conditional branches are inline Python — there is no graph engine.
+A tool that runs a fixed sequence of steps and returns one of `Done`, `AwaitingApproval`, or `Blocked`. Used when the process is deterministic and should only change through deliberate code changes. Example: `trigger_revenue_recognition`. See [ADR-0002](adr/0002-tools-not-graphs.md). Loops, retries, and conditional branches are inline Python — there is no graph engine.
 _Avoid_: workflow (too broad — qualify as prescribed or agentic), graph, chain, pipeline.
 
 ### Tool return shapes
@@ -117,7 +117,7 @@ The agent identity a tool's work attributes to. Declared as a class attribute on
 _Avoid_: workflow agent, runner agent.
 
 **Invoking agent**:
-The agent that called a tool (typically `chief-of-staff` from a chat turn, or another agent via `ask_agent`; cron-triggered tools have no invoking agent). Distinct from the **owning agent**: when `chief-of-staff` delegates to `linkedin` via `ask_agent`, the invoking agent of `ask_agent` is `chief-of-staff`, but every LLM call inside the delegated ReAct loop is attributed to `linkedin` (the owning agent of `create_post` and the other content tools). The relationship lives in the audit trail and `agent_messages` thread, not on `llm_calls` rows.
+The agent that called a tool (typically `chief-of-staff` from a chat turn, or another agent via `ask_agent`; cron-triggered tools have no invoking agent). Distinct from the **owning agent**: when `chief-of-staff` delegates to `revenue-ops` via `ask_agent`, the invoking agent of `ask_agent` is `chief-of-staff`, but every LLM call inside the delegated ReAct loop is attributed to `revenue-ops` (the owning agent of `get_revenue_data`). The relationship lives in the audit trail and `agent_messages` thread, not on `llm_calls` rows.
 _Avoid_: caller agent, triggering agent.
 
 ## Example dialogue
