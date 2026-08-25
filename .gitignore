@@ -45,3 +45,5 @@ docker-compose.override.yml
 # Other
 .agent/*
 .claude/*
+# Local Netlify folder
+.netlify

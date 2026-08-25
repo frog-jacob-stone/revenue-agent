@@ -1,0 +1,8 @@
+# SPA fallback. Client-side routing means /invoices, /approvals etc. exist only
+# in the browser — Netlify would otherwise look for a file at that path and 404.
+# Status 200 (not 301/302) so the URL in the address bar is preserved and the
+# router sees the real path.
+#
+# Everything in ui/public/ is copied verbatim into dist/ by Vite, which is how
+# this reaches Netlify without appearing in the build output.
+/*  /index.html  200

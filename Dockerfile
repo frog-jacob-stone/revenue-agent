@@ -25,8 +25,16 @@ COPY pyproject.toml uv.lock ./
 # stack to production. --no-install-project because app/ is copied directly
 # below: it is one package with no build step, so installing a wheel would only
 # add a rebuild on every code change.
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project
+#
+# Deliberately no `--mount=type=cache,target=/root/.cache/uv`. That is a BuildKit
+# instruction, and production images are built by ACR Tasks (`az containerapp up
+# --source .`), which uses the classic Docker builder and fails outright with
+# "the --mount option requires BuildKit". Nothing is lost: every ACR Tasks run
+# starts on a fresh volume, so there was never a cache to hit there. Locally the
+# layer cache still covers the common case, since this layer is invalidated only
+# by a change to pyproject.toml or uv.lock. Do not re-add it without moving the
+# build off ACR Tasks.
+RUN uv sync --frozen --no-dev --no-install-project
 
 # ---- runtime ----
 FROM python:3.12-slim-bookworm AS runtime
