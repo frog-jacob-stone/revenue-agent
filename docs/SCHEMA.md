@@ -1,11 +1,11 @@
 # Supabase Schema — Revenue Operations System
 
 > Source of truth for the database. Update this file when the schema changes.
-> Matches migrations: `supabase/migrations/20250101000001_initial_schema.sql` through `20250101000029_billing_settings.sql`
+> Matches migrations: `supabase/migrations/20250101000001_initial_schema.sql` through `20250101000035_security_lints.sql`
 
 ## Overview
 
-Two groups of tables, plus pgvector. Every table has RLS enabled from day one so policies can be added without a migration later.
+Two groups of tables, plus pgvector (installed in the `extensions` schema, not `public` — see migration `0035`). Every table has RLS enabled from day one so policies can be added without a migration later.
 
 **Agent framework** (nine core tables):
 
@@ -536,6 +536,8 @@ Migrations run in filename order; each is idempotent.
 33. `20250101000033_recurring_line_item_resolutions.sql` — adds `recurring_line_item_resolutions`, the operator's per-month decision about a placeholder line: an amount, or an explicit omit. Migration `0025` introduced `is_placeholder` on the understanding that the operator would complete the line by hand in the Harvest draft (PRD §10, §13). That put the last step of an invoice in a system this one cannot read, so nothing could notice when it was skipped — the invoice went out short while `planned_amount` still read as correct, precisely because placeholders were excluded from it. Keyed on `(recurring_line_item_id, run_month)` rather than the ledger row, so a decision survives Re-plan; that in turn is why `groups._save_recurring_items` became an upsert-by-id in the same change, since the previous delete-and-reinsert re-minted the ids these rows point at and would have discarded the month's amounts as a side effect of editing an unrelated fee. Also rewrites `0025`'s `is_placeholder` column comment, which described the workflow this replaces
 
 34. `20250101000034_drop_social_posts.sql` — drops `social_posts`. The social-content feature is removed (see [ADR-0006](adr/0006-remove-social-content.md)): it served one person's LinkedIn presence rather than the firm's revenue operations. Destructive — remaining draft rows are discarded, which is the intent. The orphaned `action_type` enum value from `0008` is deliberately left alone; see that entry
+
+35. `20250101000035_security_lints.sql` — clears the Supabase database-linter warnings on this project: pins `search_path = ''` on all four plpgsql trigger functions (`audit_log_block_mutations`, `set_updated_at`, `billing_group_projects_sync_active`, `billing_group_projects_set_active`, lint `0011`) and moves the `vector` extension out of `public` into `extensions` (lint `0014`). Both are the same hazard: an unqualified name inside a `security invoker` function, or an extension's types and operators, resolving through a caller-controlled `search_path`. The two billing functions had their bodies schema-qualified (`public.billing_groups`) as part of the pin; `pg_catalog` is always implicitly searched, so `now()` and `raise` need no qualification. Relocating `vector` does not touch existing `vector(1536)` columns or the ivfflat indexes (both reference the type by OID), and no app code names the type — the `memories` / `knowledge_base` embedding columns are still unread. New SQL naming the type must write `extensions.vector` unless `extensions` is on the search_path (`supabase/config.toml` already sets it for API requests). Creates the `extensions` schema first, since a bare postgres cluster — CI, the pytest test DB — has no such schema while Supabase provisions one. `pgcrypto` is left in `public`: Supabase already has it in `extensions` (the `0001` `create extension if not exists` was a no-op there), so it is unflagged upstream and only lands in `public` on the local test DB
 
 ## Open Questions
 
