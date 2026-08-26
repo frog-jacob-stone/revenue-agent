@@ -1,8 +1,21 @@
-# SPA fallback. Client-side routing means /invoices, /approvals etc. exist only
-# in the browser — Netlify would otherwise look for a file at that path and 404.
-# Status 200 (not 301/302) so the URL in the address bar is preserved and the
-# router sees the real path.
+# Netlify rules, evaluated top to bottom — first match wins. Everything in
+# ui/public/ is copied verbatim into dist/ by Vite, which is how this file
+# reaches Netlify without appearing in the build output.
+
+# --- Canonicalize onto the custom domain ------------------------------------
+# Setting revops.frogslayer.com as the primary domain in the Netlify UI is not
+# enough on its own: the SPA catch-all below matches every path and returns 200,
+# and _redirects rules are evaluated before Netlify's automatic
+# subdomain -> primary redirect, so that redirect never fires. Hence the explicit
+# rules, and hence their position ABOVE the catch-all.
 #
-# Everything in ui/public/ is copied verbatim into dist/ by Vite, which is how
-# this reaches Netlify without appearing in the build output.
+# `!` forces the redirect even where a real file exists — without it, static
+# assets under /assets/* would be served from the netlify.app origin instead.
+http://fs-revenue-ops.netlify.app/*   https://revops.frogslayer.com/:splat  301!
+https://fs-revenue-ops.netlify.app/*  https://revops.frogslayer.com/:splat  301!
+
+# --- SPA fallback ------------------------------------------------------------
+# Client-side routing means /invoices, /approvals etc. exist only in the browser;
+# Netlify would otherwise look for a file at that path and 404. Status 200 (not
+# 301/302) so the address bar is preserved and the router sees the real path.
 /*  /index.html  200

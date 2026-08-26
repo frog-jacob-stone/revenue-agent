@@ -41,7 +41,7 @@ resources. Keep this table current; it is the only record of where things live.
 | `<AZURE_LOCATION>` | `eastus` | Match the Supabase region — see below |
 | `<AZURE_KEYVAULT_NAME>` | `fs-revops-kv` | Holds the four API credentials; see [Secrets](#secrets) |
 | `<API_URL>` | `https://revenue-agents-api.bluepebble-5dde0989.eastus.azurecontainerapps.io` | Azure prints it after the first deploy |
-| `<NETLIFY_SITE_URL>` | `https://fs-revenue-ops.netlify.app` | Netlify prints it after the first deploy |
+| `<NETLIFY_SITE_URL>` | `https://revops.frogslayer.com` (custom domain)<br>`https://fs-revenue-ops.netlify.app` (Netlify default, still live) | Netlify prints the default after the first deploy; the custom domain is a CNAME to it |
 
 > **Region.** Supabase is in East US (North Virginia), so the Container App is in
 > `eastus`. Every request makes several Postgres round trips, so co-locating the
@@ -403,8 +403,21 @@ truth; keep it that way.
 
 Must be `https://`, no trailing slash. The startup guard rejects plain http.
 
-Add the same URL to Supabase: **Authentication → URL Configuration → Site URL and
-Redirect URLs**. Login will not complete without it.
+**Both origins are listed**, comma-separated — `app/config.py` splits on commas
+and strips each entry. The `.netlify.app` address serves the site directly rather
+than redirecting to the custom domain, so dropping it would break any bookmark
+still pointing there: the app would load and then fail every request, which looks
+like a broken backend rather than a CORS problem. Trim it only after setting
+`revops.frogslayer.com` as the primary domain in Netlify, which makes the old
+address 301 instead of serve.
+
+Add the same URLs to Supabase: **Authentication → URL Configuration**. Site URL
+is the custom domain (it builds the links in password-reset emails); Redirect
+URLs should list both. Login will not complete without it.
+
+> **A custom domain on the UI needs no rebuild** — nothing in the bundle
+> references the UI's own origin. A custom domain on the *API* would, since
+> `VITE_API_URL` is inlined at build time.
 
 ### 6. Verify
 
