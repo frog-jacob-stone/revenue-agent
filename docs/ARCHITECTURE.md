@@ -120,6 +120,23 @@ the wrong one — flags are frozen at plan time while this changes as the operat
 works, and `error` severity would have exposed the `error_override` escape hatch
 to the one condition that must not have one.
 
+**A placeholder can be omitted for one month, not deleted.** A retainer overage
+stays configured as a standing monthly reminder to check for an overage; most
+months there isn't one. Omitting drops the line from that month's payload, keeps
+it on the pre-flight struck through, and records an optional note — the
+alternative was billing $0 or deleting the reminder outright, losing the check
+for every future month too.
+
+**Resolutions are keyed on `(recurring_line_item_id, run_month)`, not on the
+run.** A resolution is a fact about a month, not about a particular plan of it.
+Re-plan is the ordinary response to a config fix, and if resolutions were keyed
+to the run, retyping every placeholder amount after a re-plan would reintroduce
+the exact forgetting this feature closes. This is also why
+`groups._save_recurring_items` upserts recurring line items by id rather than
+delete-and-reinsert: a delete-and-reinsert re-mints the ids resolutions point
+at, silently discarding a month's other decided amounts the moment one fee is
+edited.
+
 **The write, and its one ordering rule.** `draws.invoice_draw` commits the
 `in_flight` ledger row *before* it POSTs, in a separate transaction:
 
@@ -289,6 +306,60 @@ The monthly run's execution is still unbuilt and stays behind the reconcile gate
   and that index is what stops two simultaneous clicks from creating two
   invoices, since both requests read `ready` before either writes. See
   `docs/SCHEMA.md`.
+
+## Client exclusions (`excluded_harvest_clients`)
+
+Our own company is itself a Harvest client, and some of its internal work is
+flagged *billable* in Harvest — `is_billable` alone cannot tell a real client
+from us. `excluded_harvest_clients` (migration `0031`) is a client-level
+exclusion, managed at Settings → Excluded Clients (`GET`/`POST`/`DELETE
+/client-exclusions`): keyed on the client rather than the project, so one row
+covers every project under it, present and future.
+
+The predicate lives in one place, `client_exclusions.not_excluded_sql()`, so
+every reader — `app/services/projects.py`, `reconcile._unmapped_candidates`,
+and both `billing/catalog.py` browsers — opts in with one line rather than
+re-deriving the filter. The catalog pair take `include_excluded` (default
+`False`): a **new** billing group cannot select an excluded client, but the
+**edit** form passes `include_excluded=True` so a group whose client was
+excluded after the group was built stays editable — a missing option there
+would blank the field and let an ordinary save wipe it.
+
+Exclusion hides a client from reporting; it does **not** stop it billing.
+`EXCLUDED_CLIENT_HAS_ACTIVE_GROUP` (an `error`-severity flag in `reconcile`) is
+the guard against the one dangerous combination — an excluded client with an
+active billing group would mean invoices keep going out for an account this
+system has been told is not a client, silently, since exclusions live on a
+Settings screen that knows nothing about billing groups.
+
+## Projects & Forecast snapshot
+
+`GET /projects` (`app/services/projects.py`) reads the `harvest_projects`
+snapshot cache, the same cache billing's `harvest_snapshot` module maintains —
+not Harvest live. There is no `projects` table this system owns, so the tab
+shows what Harvest/Forecast know (name, client, start/end date, projected end)
+and nothing they don't (no committed end, no completion tracking).
+
+Projected end is Forecast-derived (`forecast_project_schedule`, migration
+`0032`, `app/services/forecast_snapshot.py`): the last day a **person** is
+booked on the project. Placeholder bookings — capacity held open, not someone
+scheduled — are deliberately excluded, since counting them pushes a project's
+projected end out on a booking with no name against it. Forecast projects
+carry a `harvest_id`, so the join to `harvest_projects` resolves at sync time;
+the sync costs exactly 2 HTTP calls (`/projects` for the id map, `/assignments`
+as one bulk window). The lookback/lookahead window (`_LOOKBACK_YEARS` /
+`_LOOKAHEAD_YEARS` in `app/integrations/forecast.py`) is capped at five years
+because `/assignments` 422s past six.
+
+One Refresh button (`POST /projects/refresh`) pulls Harvest then Forecast in a
+single action, and reports outcome **per source** rather than as one ok/fail:
+both sources feed the same row, and Harvest commits first, so a Forecast
+outage returns 200 with `forecast: null` / `forecast_error` set rather than a
+5xx that would claim nothing happened when half of it did.
+
+Nothing schedules either sync — both caches are only as fresh as the last press
+of that button, and the snapshot never deletes, so a project removed from
+Harvest lingers until read again.
 
 ## Configuration: constant vs. env vs. database
 

@@ -5,7 +5,7 @@ Track progress through implementation. Update this file as you complete modules 
 ## Convention
 - `[ ]` = Not started
 - `[-]` = In progress / partial
-- `[x]` = Completed
+- `[x] (YYYY-MM-DD)` = Completed. Items completed before 2026-08-26 predate this dating convention and are undated.
 
 This file tracks two tracks: **Revenue Operations Automation** (billing/invoicing, revenue recognition, and planned revenue/project reporting — deterministic, no agent in the write path) and **Agent Framework** (the approval-gated conversational/drafting layer). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the two relate.
 
@@ -97,18 +97,6 @@ run state, revenue recognition status, exceptions needing a human — is not sco
 
 ---
 
-## Agentic Workflows
-
-### Workflow B: Outreach — **removed**
-Deleted with the LangGraph rip-out, then finished off on 2026-08-10 when HubSpot and Apollo were removed. Nothing here survives in code. What remains of outbound is the BDR agent, which drafts from context the caller supplies and has no tools.
-
-### Workflow C: Social Content — **removed**
-Removed on 2026-08-25. It was built for one person's LinkedIn presence, which is
-not what this system is for — see [ADR-0006](docs/adr/0006-remove-social-content.md).
-Nothing here survives in code, and migration `0034` drops the table it wrote to.
-
----
-
 ## Revenue Operations Automation
 
 ### Workflow A: Revenue Recognition — `[-]`
@@ -131,7 +119,7 @@ Nothing here survives in code, and migration `0034` drops the table it wrote to.
 ### Revenue Reporting & Project Tracking — `[~]` (Projects tab live; revenue still mocked)
 The **revenue** half is unbuilt in code and schema: no revenue-per-type view, no Postgres-backed rev-rec data, and no rev-rec endpoints in `ui/src/api.ts`. Recognised revenue still lives only in Airtable. Added to scope in `PRD.md`.
 
-The **project-roster** half is live as of 2026-08-14 — `GET /projects` over the Harvest snapshot cache, see the Projects bullet below. There is still no `projects` table this system owns; the tab reads `harvest_projects`, so it can show what Harvest knows (name, client, start, end) and nothing Harvest doesn't (committed end, completion, forecast).
+The **project-roster** half is live as of 2026-08-14 — `GET /projects` over the Harvest snapshot cache, see the Projects bullet below. There is still no `projects` table this system owns; the tab reads `harvest_projects`, so it can show what Harvest knows (name, client, start, end) and nothing Harvest doesn't (committed end, completion, forecast). Fuller architecture for this cache and its Forecast sync is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#projects--forecast-snapshot).
 
 A **non-functional UI mockup** now exists at `/revenue` (`ui/src/pages/Revenue/`, plan `.claude/tasks/24.revenue-tab-mockup.md`) — Overview / Runs / Entries, built to the Invoices tab's conventions so the shape can be reviewed before the backend is designed. Every figure comes from `pages/Revenue/mockData.ts`, whose types deliberately mirror the real slim schema (`app/services/revenue.py::_SLIM_FIELDS`) so live wiring replaces that one file rather than redesigning the screens. An amber "sample data — not live" banner renders once in `RevenueLayout`. Recharts was added to `ui/package.json` for the TTM bar chart; it is the app's only chart library.
 
@@ -142,14 +130,14 @@ Overview carries two project × month grids (shared renderer, `pages/Revenue/com
 - [ ] Project-completion tracking — still nothing. Harvest's `is_active` is the only notion of "closed", and it is Harvest's flag, not one this system owns. **Committed end** is still deliberately absent: Harvest's `ends_on` is editable and moves when a project slips, so the tab calls it "End date" rather than pretending it is a commitment. A real committed date needs a project record this system owns
 - [x] **One Refresh button on the Projects tab** — `POST /projects/refresh` (`projects.refresh_sources`) pulls Harvest **then** Forecast in one action, ~7s against the live account. Both sources feed the same row, so refreshing one alone left half of it stale while looking like the page had updated. Reported per source, not as a single "ok": Harvest commits first, so a Forecast outage or a missing `FORECAST_ACCOUNT_ID` returns **200** with `forecast: null` and `forecast_error` set, and the tab shows an amber "Harvest updated, but the forecast did not" line. A 5xx there would claim nothing happened when half of it did
 - [ ] Nothing schedules either sync — both caches are only as fresh as the last press of that button. The `_LOOKBACK_YEARS` / `_LOOKAHEAD_YEARS` window in `app/integrations/forecast.py` is five years wide because `/assignments` 422s on a long window (six years is accepted, eight is not) and reads with overlap semantics
-- [x] **Client exclusions** — `excluded_harvest_clients` (migration `0031`), managed at Settings → Excluded Clients (`GET`/`POST`/`DELETE /client-exclusions`). Our own company is a Harvest client and some of its internal work is flagged *billable*, so `is_billable` could not catch it. Keyed on the **client**, so one row covers every present and future project under it. Applied through one shared SQL predicate, `client_exclusions.not_excluded_sql()`, so a new reader opts in with one line: `app/services/projects.py`, `reconcile._unmapped_candidates`, and both `billing/catalog.py` browsers. The catalog pair take `include_excluded` (default `False`): a **new** billing group cannot select an excluded client, while the **edit** form passes `include_excluded=True` so a group whose client was excluded after it was built stays editable — that select is editable, and a missing option would blank the field and let a save wipe it
+- [x] **Client exclusions** — `excluded_harvest_clients` (migration `0031`), managed at Settings → Excluded Clients (`GET`/`POST`/`DELETE /client-exclusions`). Our own company is a Harvest client and some of its internal work is flagged *billable*, so `is_billable` could not catch it. Keyed on the **client**, so one row covers every present and future project under it. Applied through one shared SQL predicate, `client_exclusions.not_excluded_sql()`, so a new reader opts in with one line: `app/services/projects.py`, `reconcile._unmapped_candidates`, and both `billing/catalog.py` browsers. The catalog pair take `include_excluded` (default `False`): a **new** billing group cannot select an excluded client, while the **edit** form passes `include_excluded=True` so a group whose client was excluded after it was built stays editable — that select is editable, and a missing option would blank the field and let a save wipe it. Fuller rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#client-exclusions-excluded_harvest_clients)
 - [x] `EXCLUDED_CLIENT_HAS_ACTIVE_GROUP` (error) in `reconcile` — the one dangerous combination. Exclusion hides a client from reporting but does **not** stop it billing, so an excluded client with an active group means invoices still go out for an account we have been told is not a client. Silent otherwise: exclusions are set on a Settings screen that knows nothing about billing groups
 - [x] Retired the `Frogslayer - Exclusion` billing group (2026-08-14) — a `manual` group that existed solely to suppress `UNMAPPED_PROJECT` on two internal projects, superseded by the client exclusion. Deleted by hand in the local dev DB, not through the app: there is no billing-group delete path, by design. Safe because it had never billed — the `billing_run_items.billing_group_id` FK is `ON DELETE NO ACTION` precisely so a group with ledger history cannot be deleted, and it had zero rows. Recorded in `audit_log` as `billing.group.deleted` with the projects it held. **Production still has this group**; delete it there the same way after the migrations land
 - [ ] Snapshot freshness on the Projects tab — the page reads a cache refreshed only by a billing-run plan or `POST /billing/snapshot/refresh`; there is no cron anywhere in the repo. A footnote renders `synced_at` so staleness is visible, but a project created in Harvest today will not appear until someone triggers a sync. A refresh button on the tab is the obvious follow-up. The snapshot also never deletes, so a project removed from Harvest lingers
 - [ ] Revenue-per-project-type reporting — `billing_type` exists as a config enum (T&M / fixed_fee_schedule / recurring_monthly / manual) but nothing reports revenue rolled up by it
 
 ### Contracts — `[ ]` (not started, not scoped)
-New in the sidebar on 2026-08-14 as a placeholder tab only (`ui/src/pages/Contracts.tsx`). Nothing models a contract anywhere in the repo. The terms that behave like contract terms are split between `contracted_fees` in the Airtable rev rec ledger and the payment terms / billing type / draw schedules in billing group config. Whether Contracts becomes its own record or a view over what exists is undecided.
+New in the sidebar on 2026-08-14 as a placeholder tab only (`ui/src/pages/Contracts.tsx`). Nothing models a contract anywhere in the repo. The terms that behave like contract terms are split between `contracted_fees` in the Airtable rev rec ledger and the payment terms / billing type / draw schedules in billing group config. Whether Contracts becomes its own record or a view over what exists is undecided. See the contract-intake-automation Backlog item below for the fuller wanted-state.
 - [ ] Decide the shape — own record vs. view over billing groups + Airtable terms
 - [ ] Everything else — no schema, no API, no design
 
@@ -199,11 +187,7 @@ Phase 4 (partial) — Recurring monthly — `[x]`
 - [x] Recurring resolver — effective-dated line items, `{period_label}` / `{client_name}` rendering
 - [x] Free-form payload builder — literal `line_items`, each with its own `project_id`, so one invoice spans several projects
 - [x] Placeholder lines — hosting pass-through, percentage-based fees, retainer overages: description, category, and project fixed in config, amount decided per month. Surfaced as `PLACEHOLDER_LINE_ITEMS`, and excluded from `planned_amount` until decided
-- [x] **Placeholder resolution** (plan `.agent/plans/26.placeholder-resolution.md`, migration `0033` `recurring_line_item_resolutions`, `app/services/billing/placeholders.py`, `POST`/`DELETE /billing/runs/{run_id}/items/{item_id}/placeholders/{line_item_id}`). The amount is entered on the pre-flight, before the draft exists — it used to be typed into the Harvest draft, which put the last step of an invoice in a system this one cannot read, so nothing noticed when it was skipped. The failure was quiet and always the same direction: the invoice went out short while `planned_amount` read as correct, precisely because placeholders were excluded from it
-- [x] **Omit for one month** — a retainer overage stays configured as a standing monthly reminder to *check* for an overage; most months there isn't one. Omitting drops the line from that month's payload, keeps it on the pre-flight struck through, and records an optional note. Without it the only exits were billing $0 or deleting the reminder
-- [x] **Approval blocked while any placeholder is undecided, with no override.** Derived live from the ledger row's `estimated_line_items` in `review.py`, not from a flag: flags are frozen at plan time while this changes as the operator works, and `error` severity would have exposed the `error_override` escape hatch to the one condition that must not have one. Second non-overridable gate after `UNRESOLVED_IN_FLIGHT`; like that one, the UI offers resolution where it would otherwise offer override
-- [x] **Decisions survive Re-plan** — keyed on `(recurring_line_item_id, run_month)`, because a resolution is a fact about a month rather than about a run. Re-plan is the ordinary response to a config fix, and retyping every amount afterwards would reintroduce exactly the forgetting this closes
-- [x] **Recurring line-item ids are stable across a group save** — `groups._save_recurring_items` upserts by id (was delete-and-reinsert, which re-minted the ids resolutions point at, so editing one fee would have discarded the month's other amounts). Also fixes the effective-dating history story, which previously survived an edit only by accident
+- [x] **Placeholder resolution** (plan `.agent/plans/26.placeholder-resolution.md`, migration `0033` `recurring_line_item_resolutions`, `app/services/billing/placeholders.py`, `POST`/`DELETE /billing/runs/{run_id}/items/{item_id}/placeholders/{line_item_id}`). The amount is entered on the pre-flight, before the draft exists — it used to be typed into the Harvest draft, which put the last step of an invoice in a system this one cannot read, so nothing noticed when it was skipped. The failure was quiet and always the same direction: the invoice went out short while `planned_amount` read as correct, precisely because placeholders were excluded from it. Omit-for-one-month and re-plan/id-stability details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#billing--invoicing-appservicesbilling)
 - [x] `estimated_line_items` carries `recurring_line_item_id` / `harvest_project_id` / `kind` / `is_placeholder` / `placeholder_state` for recurring groups, making the ledger row complete enough to rebuild `planned_payload` from — so a resolution applies to the plan the operator reviewed rather than to config as it stands now. Resolving withdraws any approval on the row, since an approval describes a payload (ADR-0004 condition 1)
 - [x] `kind` validated against the account's categories at save time **and** plan time (`INVALID_ITEM_CATEGORY`)
 - [x] Line-item editor in the group form, with fee-type dropdown sourced from Harvest
@@ -256,21 +240,16 @@ permanently disabled and badged `NOT IMPLEMENTED`, wired to nothing. The
 
 ---
 
-## Tooling
-
-### Workflow Visualizer — `[ ]` (Backlogged, stale)
-Originally scoped around LangGraph's `get_graph().draw_mermaid()`. LangGraph was removed per [ADR-0002](docs/adr/0002-tools-not-graphs.md) — there is no graph object left to draw. A read-only trace view over tool-based workflows (event timeline, not a graph diagram) would need to be re-scoped from scratch if this is still wanted.
-
----
-
 ## Architecture status
 
 One orchestrator (`app/orchestrator/`) — `run_agent_task` drives a ReAct loop for agents with tools; prescribed workflows are tools returning `Done | AwaitingApproval | Blocked`, with loops/retries as inline Python, not a graph engine (LangGraph was removed; see [ADR-0002](docs/adr/0002-tools-not-graphs.md) and [ADR-0003](docs/adr/0003-single-agent-class-structural-delegation.md)). One approval surface (`/approvals`). One inbox type (`Approval`). One conversational agent (`chief-of-staff`) sitting in front of two worker agents (`bdr`, `revenue-ops`). The chat-turn module (`app/services/chat_turn.py`) owns the LLM tool-call loop, turn lifecycle, and persistence; `app/services/chat_sessions.py` is pure CRUD. Single-turn LLM calls for sub-steps (consolidate, draft, voice critique, accuracy critique) live inline in their tool modules as `MODEL` + `SYSTEM_PROMPT` constants — not as agent classes. Every LLM call (single-turn or streaming) flows through the dispatcher at `app/integrations/llm.py`, which absorbs provider details, the `llm_calls` row write, and attribution (`Attribution(agent_slug, purpose, ...)` — required argument, not a contextvar). Chat turns emit `CHAT_TURN_STARTED` / `CHAT_TURN_COMPLETED` / `CHAT_TURN_FAILED` audit events. Test suite covers runner, approval flow, agent invocation, sub-workflow spawn, agent messaging, chat turn lifecycle, the LLM dispatcher in isolation, and the production tool-based workflows end-to-end.
 
+Removed and not coming back the same way: the LangGraph-based Outreach workflow (deleted with the LangGraph rip-out, finished off 2026-08-10 when HubSpot/Apollo were removed — the BDR agent is now toolless by design, drafting from supplied context) and the Social Content workflow (removed 2026-08-25, [ADR-0006](docs/adr/0006-remove-social-content.md); migration `0034` drops its table). Neither survives in code.
+
 Known gaps (tracked in Backlog):
 - Multi-turn thread context in `ask_agent`
 - Anthropic provider adapter (lands behind the existing dispatcher seam; no caller changes)
-- Workflow visualizer — backlogged, and stale: it assumed a LangGraph `get_graph().draw_mermaid()` call that no longer exists post-ADR-0002. Needs re-scoping against tool-based workflows before it's buildable, if still wanted.
+- Workflow visualizer, diagrams-as-code — both stale as scoped (assumed LangGraph APIs removed per ADR-0002); see Backlog
 
 ---
 
@@ -278,3 +257,5 @@ Known gaps (tracked in Backlog):
 
 - [ ] **Workflow visualizer** — stale as scoped (assumed LangGraph's `get_graph().draw_mermaid()`, removed per ADR-0002). If still wanted, re-scope as a trace view over tool-based workflows instead of a graph diagram.
 - [ ] **Diagrams-as-code** — stale as scoped (`make diagrams` assumed registered LangGraph graphs, which no longer exist). Drop or re-scope against the current tool/executor structure.
+- [ ] **Placeholder preset mode — quantity or amount, chosen per line item.** A placeholder line item's `unit_price` is forced to `0` at group-save time (`groups.py`, `_save_recurring_items`) and everything is decided fresh each month via `resolve_placeholder` (`app/services/billing/placeholders.py`), which already accepts `quantity` and `unit_price` at resolution time. What's missing is a *default* set on the group itself: some placeholders (e.g. a pass-through with a known monthly quantity but a variable rate) are more naturally preset by quantity, others (e.g. a flat overage fee) by amount — and which one varies per line item, not globally. Needs a preset-mode field on the recurring line item config plus pre-flight defaulting the resolution form to it, without changing what `resolve_placeholder` itself accepts.
+- [ ] **Contract intake automation — SharePoint upload + billing group draft from a signed contract.** Today: Contracts tab (`ui/src/pages/Contracts.tsx`) is an acknowledged placeholder — "nothing in this system models a contract" — and there is no SharePoint integration anywhere in the repo. Wanted flow: uploading a signed contract through the Contracts tab suggests (and performs) the SharePoint destination in the client's legal folder, then offers to create a new billing group or edit an existing one, and — if accepted — has an LLM draft the billing group fields (fee type, amount/quantity, schedule, category) from the contract for the operator to review and save. This is a write (new billing group / edited config) initiated from an LLM suggestion, so it needs to land as an operator-initiated write per ADR-0004 (exact payload shown before the click, human clicks save) rather than as an agent-proposed approval — no existing agent should get a Contracts/SharePoint tool in its `allowed_tools`. Needs: a SharePoint integration (new), a contract→billing-group extraction step (LLM, single-turn, likely following the existing dispatcher pattern in `app/integrations/llm.py`), and a decision on whether a contract becomes a record of its own before this is buildable — the placeholder text already flags that as unscoped.
