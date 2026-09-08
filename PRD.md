@@ -41,7 +41,8 @@ Jacob, VP of Revenue at Frogslayer, managing revenue operations day-to-day: clos
 - ❌ CRM and prospecting integrations — HubSpot and Apollo were removed on 2026-08-10; Frogslayer no longer uses either. This retired the outreach workflow (was: CRM pull → draft → critique × 2 → Gmail) and left the BDR agent toolless, drafting from context the caller supplies.
 - ❌ Multi-user / role-based access control (v1 is single-user)
 - ❌ LangChain, CrewAI, and similar agent frameworks — raw SDKs only for LLM calls
-- ❌ Document ingestion pipeline (SharePoint → pgvector)
+- ❌ Document ingestion pipeline (SharePoint → pgvector) — note this is *ingestion*. Contract **drafting** ships (Workflow D); reading a signed contract back in does not.
+- ❌ Contract lifecycle — e-signature, countersignature tracking, renewal dates, amendment chains. Workflow D generates a draft and stops; what happens to it afterwards is not a system concern.
 - ❌ Brand research workflow (deferred — needs ingestion first)
 - ❌ Real-time worker queue (Arq + Redis) — FastAPI BackgroundTasks for now
 - ❌ Monthly-run invoice execution — the single-draw write path ships; batch execution across many groups (`create_harvest_draft_invoices`), post-run variance reconciliation, and a candidate-invoice picker for in-flight resolution are not yet built. Tracked in `PROGRESS.md`.
@@ -165,6 +166,14 @@ What the BDR agent retains is the drafting half: hand it a name, role, company, 
 ## Workflow C: Harvest Billing / Invoicing
 
 **Build:** Harvest snapshot sync (clients, projects, rates) → billing-group config (one Harvest client → one invoice, an abstraction Harvest itself lacks) → reconciliation (every billable project maps to exactly one active group) → T&M estimation from uninvoiced time, or fixed-fee draw / recurring line-item resolution → duplicate guard → plan → per-group approval on the ledger → operator clicks to create a draft invoice in Harvest. No agent or LLM anywhere in this path — deterministic by design, per [ADR-0004](docs/adr/0004-operator-initiated-writes.md). Full phase-by-phase status (T&M pre-flight complete, single-draw execution shipped, monthly-run execution not yet built) is tracked in `PROGRESS.md`.
+
+---
+
+## Workflow D: Contract Drafting
+
+**Build:** Save a counterparty's legal identity once (`contract_clients` — entity name, address, signatory; no Harvest link, because the primary case is a prospect) → pick a saved client or type a new one → fill the per-engagement fields → review the list of blanks the draft will flag → generate and download a Word document. `docxtpl` renders the checked-in `tm_agreement.docx` in place, so the output is the template with its blanks filled and every style, table, and font intact. Anything left empty renders as a yellow-highlighted `[REVIEW: <label>]` marker rather than a silent gap, and generation never refuses on one — drafting with terms still to negotiate is the normal case. No agent or LLM anywhere in this path either: deterministic substitution, operator-initiated per [ADR-0004](docs/adr/0004-operator-initiated-writes.md). The file is streamed and stored nowhere, so `contract.draft.generated` carries the full field set and review list as the only record.
+
+Scoped to T&M. **Not** a model of a signed contract or its lifecycle — `contracted_fees` remains in the Airtable ledger and payment terms / draw schedules remain in billing-group config, and this does not unify them. Rate cards and role definitions are static text in the template. LLM-drafted prose (scope, assumptions, exclusions) is the next contract type's problem, not this one's; `app/services/contracts/fields.py` is the seam it plugs into.
 
 ---
 

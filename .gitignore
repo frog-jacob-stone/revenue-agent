@@ -37,6 +37,12 @@ docker-compose.override.yml
 # macOS
 .DS_Store
 
+# Word owner/lock files. Word writes `~$name.docx` beside any open document and
+# deletes it on close, so it appears and disappears while someone edits the
+# contract template in app/services/contracts/templates/ — committing one would
+# make git think an editing session is a tracked artifact.
+~$*
+
 # IDEs
 .idea/
 .vscode/

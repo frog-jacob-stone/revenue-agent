@@ -332,6 +332,65 @@ active billing group would mean invoices keep going out for an account this
 system has been told is not a client, silently, since exclusions live on a
 Settings screen that knows nothing about billing groups.
 
+## Contract drafting (`app/services/contracts/`)
+
+A document generator, and only that. It produces a draft T&M agreement as a
+Word file and remembers the counterparty's legal identity so the next draft for
+the same client is not retyping. It does **not** model a signed contract or its
+lifecycle: `contracted_fees` stays in the Airtable rev rec ledger, payment terms
+and draw schedules stay in `billing_groups`, and nothing here tries to unify
+them. Contract *intake* — ingesting a signed contract — is the inverse problem
+and is not built.
+
+Structurally it is the same shape as billing: deterministic, operator-initiated
+([ADR-0004](adr/0004-operator-initiated-writes.md)), and with **no agent and no
+LLM anywhere in the path**. The endpoints are human-only, in no agent's
+`allowed_tools` and not executors, so `tests/test_no_agent_approval_tools.py`
+keeps holding without needing to know this module exists. Four modules, in
+dependency order: `fields` (what a contract asks for), `clients` (the saved
+identity repository), `render` (template in, bytes out, no database), `drafts`
+(resolve, render, audit).
+
+**The template is a versioned repo asset**, at
+`app/services/contracts/templates/tm_agreement.docx`. Not uploadable and not
+per-tenant: there is one, legal owns its wording, and changing it is a commit —
+so `git log` on that directory is the history of what wording went out. It ships
+in the image via the Dockerfile's `COPY app/ app/` with no packaging change.
+
+**The .docx and the code are held together by a test.** `fields.TM_FIELDS`
+declares each blank's tag, human label, and whether it comes from the saved
+client record or is typed per contract; the .docx knows which tags physically
+exist. `tests/test_contract_template_tags.py` asserts the two sets are equal.
+Without it the failure is silent and bad — a tag nobody declared is never put in
+the render context, so Jinja resolves it to nothing and the clause goes out blank.
+The two vocabularies are bridged by `ContractField.client_column` rather than a
+naming convention, and that mapping is *served* to the UI on
+`GET /contracts/tm/fields` so the form has no second copy to drift.
+
+**Unfilled fields are marked, not dropped.** An empty value renders as a
+yellow-highlighted `[REVIEW: <label>]` marker, and the form lists every one
+*before* generating. A blank is a decision — producing a draft with terms still
+to negotiate is the normal case — so generation never refuses on one. That
+pre-click list is also how this satisfies ADR-0004's "the exact payload is shown
+before the click" for a write whose payload is a document;
+`POST /contracts/tm/preview` computes it server-side from the same function the
+download uses, so the two cannot disagree.
+
+**Identity comes from the repository, never the request.** When a draft names a
+saved client, every client-sourced field is read from that row server-side and
+nothing about the counterparty is taken from the body — the same reasoning as
+the draw-invoice path recomputing its payload rather than trusting the browser's.
+
+The generated file is streamed and stored nowhere, which makes
+`contract.draft.generated` the only record of what went out; it carries the full
+resolved field set and the review list for that reason. Three rendering
+decisions were arrived at by measurement, are individually easy to undo by
+accident, and are documented with what breaks in `render.py`'s module docstring:
+plain `{{ tag }}` rather than docxtpl's `{{r tag }}` (which discards the tag
+run's formatting), `autoescape=True` (without which an `&` in an entity name
+corrupts the document), and highlighting as a post-render pass (which is what
+lets a marker inherit the formatting of the text it replaced).
+
 ## Projects & Forecast snapshot
 
 `GET /projects` (`app/services/projects.py`) reads the `harvest_projects`

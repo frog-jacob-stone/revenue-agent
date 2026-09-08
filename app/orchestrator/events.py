@@ -87,6 +87,23 @@ class AuditEvent(StrEnum):
     # delivery-forecast cache was rebuilt and what it found.
     FORECAST_SCHEDULE_REFRESHED = "forecast.schedule.refreshed"
 
+    # Contract drafting. Operator-initiated throughout (ADR-0004), so as with
+    # billing this vocabulary is the whole record of who authorized what.
+    #
+    # DRAFT_GENERATED carries the full resolved field set and the list of fields
+    # left for review, and it has to: the generated .docx is streamed to the
+    # browser and stored nowhere, so this row is the only evidence of what was
+    # produced, for whom, and what was still open when it went out. "What did
+    # the draft we sent Acme in September actually say" is answerable only here.
+    #
+    # The CLIENT_* three are about the saved identity block. The payload carries
+    # the values because a contract is the one place a wrong legal entity name
+    # or a stale address has consequences beyond this system.
+    CONTRACT_CLIENT_CREATED = "contract.client.created"
+    CONTRACT_CLIENT_UPDATED = "contract.client.updated"
+    CONTRACT_CLIENT_DELETED = "contract.client.deleted"
+    CONTRACT_DRAFT_GENERATED = "contract.draft.generated"
+
     # The Harvest write (PRD §8). Four outcomes, and the trail must distinguish
     # them: ATTEMPTED is written and committed *before* the POST, so an invoice
     # created during an outage that never returned still has a record on our side.
@@ -151,6 +168,10 @@ BILLING_SETTINGS_UPDATED = AuditEvent.BILLING_SETTINGS_UPDATED
 CLIENT_EXCLUDED = AuditEvent.CLIENT_EXCLUDED
 CLIENT_EXCLUSION_REMOVED = AuditEvent.CLIENT_EXCLUSION_REMOVED
 FORECAST_SCHEDULE_REFRESHED = AuditEvent.FORECAST_SCHEDULE_REFRESHED
+CONTRACT_CLIENT_CREATED = AuditEvent.CONTRACT_CLIENT_CREATED
+CONTRACT_CLIENT_UPDATED = AuditEvent.CONTRACT_CLIENT_UPDATED
+CONTRACT_CLIENT_DELETED = AuditEvent.CONTRACT_CLIENT_DELETED
+CONTRACT_DRAFT_GENERATED = AuditEvent.CONTRACT_DRAFT_GENERATED
 BILLING_INVOICE_ATTEMPTED = AuditEvent.BILLING_INVOICE_ATTEMPTED
 BILLING_INVOICE_CREATED = AuditEvent.BILLING_INVOICE_CREATED
 BILLING_INVOICE_FAILED = AuditEvent.BILLING_INVOICE_FAILED

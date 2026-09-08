@@ -15,6 +15,7 @@ from app.routers import (
     billing,
     chat,
     client_exclusions,
+    contracts,
     llm_calls,
     projects,
 )
@@ -61,6 +62,14 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
+    # Response headers JS is allowed to read. Without this the browser receives
+    # them and then hides them from `fetch` — they are simply absent from
+    # `res.headers`, with no error anywhere, which is the same class of
+    # silent-in-the-browser failure that
+    # tests/test_cors_allows_every_route_method.py exists to catch. Both are
+    # needed by the contract-draft download: the filename to save the file
+    # under, and which fields the draft left marked for review.
+    expose_headers=["Content-Disposition", "X-Contract-Review-Fields"],
 )
 
 _auth = [Depends(get_current_user)]
@@ -73,6 +82,7 @@ app.include_router(approvals.router, dependencies=_auth)
 app.include_router(billing.router, dependencies=_auth)
 app.include_router(projects.router, dependencies=_auth)
 app.include_router(client_exclusions.router, dependencies=_auth)
+app.include_router(contracts.router, dependencies=_auth)
 
 
 @app.get("/healthz")

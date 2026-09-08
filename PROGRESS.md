@@ -136,17 +136,32 @@ Overview carries two project × month grids (shared renderer, `pages/Revenue/com
 - [ ] Snapshot freshness on the Projects tab — the page reads a cache refreshed only by a billing-run plan or `POST /billing/snapshot/refresh`; there is no cron anywhere in the repo. A footnote renders `synced_at` so staleness is visible, but a project created in Harvest today will not appear until someone triggers a sync. A refresh button on the tab is the obvious follow-up. The snapshot also never deletes, so a project removed from Harvest lingers
 - [ ] Revenue-per-project-type reporting — `billing_type` exists as a config enum (T&M / fixed_fee_schedule / recurring_monthly / manual) but nothing reports revenue rolled up by it
 
-### Contracts — `[ ]` (not started, not scoped)
-New in the sidebar on 2026-08-14 as a placeholder tab only (`ui/src/pages/Contracts.tsx`). Nothing models a contract anywhere in the repo. The terms that behave like contract terms are split between `contracted_fees` in the Airtable rev rec ledger and the payment terms / billing type / draw schedules in billing group config. Whether Contracts becomes its own record or a view over what exists is undecided. See the contract-intake-automation Backlog item below for the fuller wanted-state.
-- [ ] Decide the shape — own record vs. view over billing groups + Airtable terms
-- [ ] Everything else — no schema, no API, no design
+### Contracts — T&M drafting `[x]` (2026-09-08)
+Generates a draft T&M agreement as a Word document by filling the blanks in a checked-in .docx template, and remembers the client identity so the next one for the same client needs no retyping. Deterministic — no LLM and no agent in the path; operator-initiated per [ADR-0004](docs/adr/0004-operator-initiated-writes.md). The placeholder tab is gone.
 
-> **Placeholder tabs are not features.** `/contracts` is a nav destination that exists ahead of
-> its backend. It renders `components/shared/PlaceholderPage.tsx`, which carries a
-> `NOT IMPLEMENTED` badge and states what has to exist first. Deliberately not `EmptyState` —
-> "no items yet" would imply the screen works and simply has no rows. `/projects` was one of
-> these and no longer is: it reads live Harvest data, so the badge and the amber
-> "sample data" banner both came off. `/revenue` is the remaining mockup and keeps its banner.
+- [x] `contract_clients` (migration `0036`) — counterparty legal identity only: entity name, one address line, city/state/ZIP, signatory. No Harvest link, on purpose: the primary case is a prospect
+- [x] Render pipeline (`app/services/contracts/`) — `fields.py` declares the blanks, `render.py` fills the template, `drafts.py` resolves and audits. `docxtpl` renders the real .docx in place so styles, numbering, tables, headers and fonts survive by construction
+- [x] Unfilled fields render as a yellow-highlighted `[REVIEW: <label>]` marker rather than a silent blank, and the form lists them before you generate. A blank is a decision — drafting with terms still to negotiate is the normal case, so generation never refuses
+- [x] `/contracts` UI — New T&M draft (form driven by `GET /contracts/tm/fields`, review panel, download) and Saved clients (CRUD). First file download in the app; needed `expose_headers` on the CORS middleware
+- [x] Four audit events; `contract.draft.generated` carries the full field set and review list, because the .docx is stored nowhere and the row is the only record
+
+Three things worth knowing, all found by measurement and all easy to undo by accident — see the docstring in `render.py`:
+- **Plain `{{ tag }}`, never `{{r tag }}`.** docxtpl's `RichText` replaces the tag's whole run and discards its formatting; a tag in a bold DM Sans clause came back unbolded in the body font. The loader accepts `{{r }}` (docxtpl's own docs steer authors to it) but rewrites it to a plain tag — and must do so *before* `super().patch_xml()`, or the value lands as raw text between two empty runs and Word silently ignores it
+- **`autoescape=True` is mandatory.** Without it a value containing `&` or `<` corrupts the file — `"Smith & Co <Holdings>"` dropped the ampersand and swallowed the following table. An ordinary entity name
+- **Highlighting is a post-render pass**, splitting the run so the marker keeps the surrounding font
+
+Not built, deliberately: nothing models a *signed* contract or its lifecycle. `contracted_fees` still lives in the Airtable rev rec ledger and payment terms / billing type / draw schedules still live in billing group config, and this slice does not try to unify them. It is a document generator. Contract *intake* (the inverse — ingesting a signed contract) is still the Backlog item below.
+
+- [ ] Contract types beyond T&M — the point at which LLM-drafted prose (scope, assumptions, exclusions) enters. `fields.py` is the seam: an LLM-sourced field is one whose value came from elsewhere and is always flagged for review
+- [ ] Rate table and role definitions are static text in the template and are not modelled. Fine while they are identical across engagements
+
+> **Placeholder tabs are not features.** A nav destination that exists ahead of its backend
+> renders `components/shared/PlaceholderPage.tsx`, which carries a `NOT IMPLEMENTED` badge and
+> states what has to exist first. Deliberately not `EmptyState` — "no items yet" would imply the
+> screen works and simply has no rows. Both original placeholders are now gone: `/projects`
+> reads live Harvest data, and `/contracts` generates real documents as of 2026-09-08 (the
+> badge and `pages/Contracts.tsx` came off with it). `/revenue` is the remaining mockup and
+> keeps its banner.
 
 ### Module 8: Invoicing (Harvest) — `[-]`
 

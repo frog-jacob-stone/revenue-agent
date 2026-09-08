@@ -15,6 +15,12 @@ dependencies = [
     "asyncpg>=0.30.0",
     "httpx>=0.28.0",
     "pyjwt[crypto]>=2.9.0",
+    # Contract drafting. Renders the checked-in .docx template in place rather
+    # than building a document from scratch, which is the only way the
+    # template's styles, numbering, headers and tables survive. Brings
+    # python-docx (used directly for the post-render highlight pass), jinja2 and
+    # lxml.
+    "docxtpl>=0.19.0",
 ]
 
 [project.optional-dependencies]

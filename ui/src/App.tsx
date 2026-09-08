@@ -19,7 +19,10 @@ import RevenueOverview from './pages/Revenue/Overview';
 import RevenueRuns from './pages/Revenue/Runs';
 import RevenueEntries from './pages/Revenue/Entries';
 import Projects from './pages/Projects/ProjectList';
-import Contracts from './pages/Contracts';
+import ContractsLayout from './pages/Contracts/ContractsLayout';
+import NewTM from './pages/Contracts/NewTM';
+import ContractClientList from './pages/Contracts/ClientList';
+import ContractClientForm from './pages/Contracts/ClientForm';
 import AuditLog from './pages/AuditLog';
 import ChatLayout from './pages/Chat/ChatLayout';
 import LlmCalls from './pages/LlmCalls';
@@ -68,10 +71,19 @@ export default function App() {
             <Route path="runs" element={<RevenueRuns />} />
             <Route path="entries" element={<RevenueEntries />} />
           </Route>
-          {/* Both are nav destinations ahead of their features: Projects is a
-              sample-data stub, Contracts a bare PlaceholderPage. */}
+          {/* Projects is still a nav destination ahead of its feature — a
+              sample-data stub. */}
           <Route path="/projects" element={<Projects />} />
-          <Route path="/contracts" element={<Contracts />} />
+          <Route path="/contracts" element={<ContractsLayout />}>
+            {/* Drafting lands first: it is the thing you came here to do, and
+                the saved-client tab exists to serve it. */}
+            <Route index element={<Navigate to="new" replace />} />
+            <Route path="new" element={<NewTM />} />
+            <Route path="clients" element={<ContractClientList />} />
+            {/* `new` must precede `:clientId` or it matches as an id. */}
+            <Route path="clients/new" element={<ContractClientForm />} />
+            <Route path="clients/:clientId/edit" element={<ContractClientForm />} />
+          </Route>
           <Route path="/chat" element={<ChatLayout />} />
           <Route path="/chat/:agentId" element={<ChatLayout />} />
           <Route path="/chat/:agentId/:sessionId" element={<ChatLayout />} />

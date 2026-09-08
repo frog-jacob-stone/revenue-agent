@@ -798,3 +798,129 @@ export function unexcludeClient(harvest_client_id: number): Promise<ExcludedClie
     method: 'DELETE',
   });
 }
+
+// ── Contracts ───────────────────────────────────────────────────────────────
+
+/**
+ * A saved counterparty: who they are, in the words a contract needs.
+ *
+ * Unrelated to `ExcludedClient` and `HarvestClientOption` above, both of which
+ * are about Harvest ids. This record deliberately has no Harvest link — the
+ * primary case is a prospect being sent a contract *because* they are not a
+ * client yet.
+ */
+export interface ContractClient {
+  id: string;
+  legal_entity_name: string;
+  /** Street address, suite included — the template's address block is one line. */
+  address_line1: string | null;
+  city: string | null;
+  state: string | null;
+  postal_code: string | null;
+  signatory_name: string | null;
+  /** The client's MSA effective date, worded as it reads in the document.
+   *  Free text, not a date — the operator controls the format. Null when the
+   *  client has no MSA, which a first engagement usually means. */
+  msa_effective_date: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by: string;
+  updated_by: string;
+}
+
+/** Only the legal entity name is required — a name-only prospect is valid. */
+export interface ContractClientInput {
+  legal_entity_name: string;
+  address_line1?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  signatory_name?: string | null;
+  msa_effective_date?: string | null;
+}
+
+/**
+ * One blank a draft asks about.
+ *
+ * Served by the API rather than hardcoded here, so labels and ordering come
+ * from the same declaration the renderer uses — see
+ * `app/services/contracts/fields.py`. A field added to the Word template shows
+ * up on this form without a UI change.
+ */
+export interface ContractFieldSpec {
+  tag: string;
+  label: string;
+  /** `client` comes from the saved record; `engagement` is typed each time. */
+  source: 'client' | 'engagement';
+  /**
+   * Which `ContractClient` field a `source: 'client'` tag reads. Null for
+   * engagement fields.
+   *
+   * Served rather than mapped here on purpose: a local copy of the mapping is
+   * a second place to update when a template tag is renamed, and the one that
+   * gets forgotten.
+   */
+  client_field: keyof ContractClientInput | null;
+}
+
+export interface TmDraftRequest {
+  /** Exactly one of `client_id` or `client`. */
+  client_id?: string | null;
+  client?: ContractClientInput | null;
+  /** File an inline counterparty for next time. */
+  save_client?: boolean;
+  /** Per-contract values, keyed by tag. */
+  engagement?: Record<string, string | null>;
+}
+
+/** What generating would produce. Shown before the click, per ADR-0004. */
+export interface TmDraftPreview {
+  values: Record<string, string | null>;
+  /** Labels that will render as highlighted `[REVIEW: …]` markers. */
+  review_labels: string[];
+  filename: string;
+}
+
+export function getContractClients(): Promise<ContractClient[]> {
+  return apiFetch<ContractClient[]>('/contracts/clients');
+}
+
+export function createContractClient(body: ContractClientInput): Promise<ContractClient> {
+  return apiFetch<ContractClient>('/contracts/clients', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+/** PATCH semantics: an omitted field is left alone, an empty string clears it. */
+export function updateContractClient(
+  id: string,
+  body: Partial<ContractClientInput>,
+): Promise<ContractClient> {
+  return apiFetch<ContractClient>(`/contracts/clients/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteContractClient(id: string): Promise<void> {
+  const res = await authedFetch(`/contracts/clients/${id}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, (body as { detail?: unknown }).detail);
+  }
+}
+
+export function getTmFields(): Promise<ContractFieldSpec[]> {
+  return apiFetch<ContractFieldSpec[]>('/contracts/tm/fields');
+}
+
+export function previewTmDraft(body: TmDraftRequest): Promise<TmDraftPreview> {
+  return apiFetch<TmDraftPreview>('/contracts/tm/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}

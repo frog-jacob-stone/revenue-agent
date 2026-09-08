@@ -241,6 +241,37 @@ is safe to truncate and re-sync, and operator intent must survive that. No FK to
 it either, so an exclusion outlives a cache rebuild or a client deleted in
 Harvest.
 
+`contract_clients` — counterparty legal identity for contract drafting:
+`legal_entity_name` (unique, the only required column), `address_line1`, `city`,
+`state`, `postal_code`, `signatory_name`, `msa_effective_date`, plus
+created/updated provenance. Owned by this system and synced from nowhere. Exists
+so drafting a contract for a client we have contracted with before is not
+retyping.
+
+`msa_effective_date` (migration `0037`) is here rather than on the engagement
+because every SOW written under the same MSA names the same date — it is a fact
+about the relationship. It is **`text`, not `date`**, like every other
+template-backed column: the value is substituted verbatim into a Word document,
+so the operator controls its exact wording, and a `date` column would force this
+code to choose a format that is the document's business rather than the
+database's. The cost is no validation; the mitigation is that a wrong date is
+visible on the page the operator reviews before sending, whereas a silently
+reformatted one would not be.
+
+Deliberately **no `harvest_client_id`**, and no relationship to
+`harvest_clients` at all: the primary case is a prospect being sent a contract
+*because* they are not a client yet, so keying on Harvest would make the table
+useless for the people it exists to serve. Equally deliberately not a CRM — the
+scope test for a column is "does a contract preamble or signature block need
+it?", and the commercial terms for clients who bill already live in
+`billing_groups`.
+
+One address line, because the template's address block is one line
+(`{{ client_street }}`) — a suite number goes in with the street. Everything but
+the name is nullable: a half-known prospect is worth saving, and the gaps are
+not silent, since every empty field renders in the draft as a highlighted
+`[REVIEW: …]` marker.
+
 **Configuration**
 
 `billing_groups` — the unit that produces exactly one Harvest invoice. Harvest
@@ -441,6 +472,26 @@ Keep this list stable; it becomes grep-able forensics. Constants live in `app/or
 - `billing.group.created`, `billing.group.updated`, `billing.group.deactivated`
 - `billing.run.planned`, `billing.run.abandoned`
 
+**Client exclusions:**
+- `client.excluded`, `client.exclusion.removed`
+
+**Forecast:**
+- `forecast.schedule.refreshed`
+
+**Contracts:**
+- `contract.client.created`, `contract.client.updated`, `contract.client.deleted`
+- `contract.draft.generated`
+
+Operator-initiated throughout (ADR-0004), so as with billing this vocabulary is
+the entire record of who authorized what. `contract.draft.generated` carries the
+full resolved field set, the review list, and the filename, and it has to: the
+generated .docx is streamed to the browser and stored nowhere, so this row is
+the only evidence of what was produced, for whom, and what was still open when
+it went out. The `contract.client.*` payloads carry values rather than just the
+id — create records the whole row, update records only the changed fields — because
+the row is editable and deletable, and "created client `<uuid>`" is worthless
+once it is gone.
+
 These cover human-initiated operations on our own store. The Harvest invoice
 write (Phase 3) reuses the `approval.*` vocabulary above.
 
@@ -538,6 +589,8 @@ Migrations run in filename order; each is idempotent.
 34. `20250101000034_drop_social_posts.sql` — drops `social_posts`. The social-content feature is removed (see [ADR-0006](adr/0006-remove-social-content.md)): it served one person's LinkedIn presence rather than the firm's revenue operations. Destructive — remaining draft rows are discarded, which is the intent. The orphaned `action_type` enum value from `0008` is deliberately left alone; see that entry
 
 35. `20250101000035_security_lints.sql` — clears the Supabase database-linter warnings on this project: pins `search_path = ''` on all four plpgsql trigger functions (`audit_log_block_mutations`, `set_updated_at`, `billing_group_projects_sync_active`, `billing_group_projects_set_active`, lint `0011`) and moves the `vector` extension out of `public` into `extensions` (lint `0014`). Both are the same hazard: an unqualified name inside a `security invoker` function, or an extension's types and operators, resolving through a caller-controlled `search_path`. The two billing functions had their bodies schema-qualified (`public.billing_groups`) as part of the pin; `pg_catalog` is always implicitly searched, so `now()` and `raise` need no qualification. Relocating `vector` does not touch existing `vector(1536)` columns or the ivfflat indexes (both reference the type by OID), and no app code names the type — the `memories` / `knowledge_base` embedding columns are still unread. New SQL naming the type must write `extensions.vector` unless `extensions` is on the search_path (`supabase/config.toml` already sets it for API requests). Creates the `extensions` schema first, since a bare postgres cluster — CI, the pytest test DB — has no such schema while Supabase provisions one. `pgcrypto` is left in `public`: Supabase already has it in `extensions` (the `0001` `create extension if not exists` was a no-op there), so it is unflagged upstream and only lands in `public` on the local test DB
+36. `20250101000036_contract_clients.sql` — adds `contract_clients`, the saved counterparty identity used to draft contracts (legal entity name, one address line, city/state/ZIP, signatory). Exists because retyping a client's legal identity was the slowest part of producing a draft, and it is transcription rather than judgment. Deliberately no `harvest_client_id` and no FK to `harvest_clients`: the primary case is a prospect being sent a contract precisely because they are not a client yet, so a Harvest key would exclude the people the table is for; when they do become a client the two records simply coexist and nothing joins them. Equally deliberately not a CRM — no contacts, owner, stage, or opportunity value; the admission test for a column is whether a contract preamble or signature block needs it, and commercial terms for billing clients already live in `billing_groups`. Rate cards and role definitions are absent because they are static text in the .docx template, identical across engagements today. One address line to match the template's single-line address block. Only `legal_entity_name` is `not null` (and unique, since it is also the label the operator picks from) — a half-known prospect is a legitimate row and its gaps surface as highlighted `[REVIEW: …]` markers in the draft rather than as silent blanks
+37. `20250101000037_contract_clients_msa_effective_date.sql` — adds `contract_clients.msa_effective_date`, nullable. A SOW executed under a master services agreement names that agreement's effective date, and that date is identical across every SOW under the same MSA — a fact about the relationship, not the engagement — so it is saved against the client rather than retyped. A separate migration rather than an edit to `0036` because `0036` was already applied; additive, so it lands without a reset. `text` rather than `date` for the same reason as every other template-backed column: the value is substituted verbatim into a Word document and the operator has to control its wording, whereas a `date` would make this code pick a format. Nullable because plenty of clients have no MSA — a first engagement is exactly what a T&M SOW gets written for — and an empty value is not silent, rendering as a highlighted `[REVIEW: MSA effective date]` marker
 
 ## Open Questions
 
