@@ -14,7 +14,7 @@ import pytest
 from app.config import settings
 from app.db import get_pool
 from app.integrations import forecast
-from app.services import forecast_snapshot, projects
+from app.services import forecast_snapshot
 from app.services.billing import harvest_snapshot
 
 ACME = 5735774
