@@ -67,7 +67,9 @@ async def test_write_endpoints_require_auth(unauthed_client):
 
     for path in (
         f"/billing/draws/{zero}/invoice",
+        f"/billing/runs/{zero}/execute",
         f"/billing/runs/{zero}/items/{zero}/resolve",
+        f"/billing/runs/{zero}/items/{zero}/rejection",
     ):
         res = await unauthed_client.post(path, json={})
         assert res.status_code in (401, 403), f"POST {path} was not protected"

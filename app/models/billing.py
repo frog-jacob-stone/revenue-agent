@@ -265,6 +265,10 @@ class ResolveInFlightResponse(ORMBase):
     status: str
     fixed_fee_schedule_item_id: UUID | None = None
     harvest_invoice_id: int | None = None
+    # The run's status after the resolution. Not always terminal: a monthly run
+    # that halted here stays `executing` while approved groups are still waiting
+    # to be drafted, and the UI should offer to resume rather than say "done".
+    run_status: str | None = None
 
 
 class RecurringItem(ORMBase):
@@ -520,6 +524,16 @@ class RunItemResponse(ORMBase):
     approved_at: datetime | None = None
     approved_by: str | None = None
     error_override: bool = False
+    # `status == 'skipped'` covers two different things. `rejected_by` set means
+    # an operator decided against this invoice and `skip_reason` is their words;
+    # null means the planner found nothing to bill. Only the first is undoable.
+    rejected_at: datetime | None = None
+    rejected_by: str | None = None
+    # Measured just after the invoice was created: billable time Harvest still
+    # reports as unbilled for this item's projects over its service period.
+    # Null = not checked (free-form invoice, or the check itself failed).
+    unbilled_hours_after: float | None = None
+    unbilled_entries_after: int | None = None
     estimated_line_items: list[EstimatedLineItem] = Field(default_factory=list)
     planned_payload: dict[str, Any] = Field(default_factory=dict)
     flags: list[Flag] = Field(default_factory=list)
@@ -568,6 +582,72 @@ class ItemApprovalRequest(ORMBase):
     override: bool | None = None
 
 
+class ItemRejectionRequest(ORMBase):
+    """Decide against invoicing one group this run, or undo that.
+
+    `reason` is required when rejecting and ignored when undoing. It is the
+    only record of why a client a run had planned for received nothing —
+    "already invoiced by hand on the 1st" is the sentence that makes the
+    Skipped list readable a month later.
+    """
+
+    rejected: bool
+    reason: str | None = None
+
+
+class RunExecutionItem(ORMBase):
+    """What happened to one group's invoice during a run's execution."""
+
+    billing_run_item_id: UUID
+    billing_group_name: str
+    status: str
+    harvest_invoice_id: int | None = None
+    harvest_invoice_number: str | None = None
+    planned_amount: float = 0.0
+    actual_amount: float | None = None
+    variance: float | None = None
+    issue_date: date | None = None
+    due_date: date | None = None
+    error: str | None = None
+    # Post-write check; see `RunItemResponse`. Null = not checked.
+    unbilled_hours_after: float | None = None
+    unbilled_entries_after: int | None = None
+
+
+class UnknownWriteDetail(ORMBase):
+    """A POST that returned no verdict. The invoice may or may not exist."""
+
+    message: str
+    billing_run_id: UUID
+    billing_run_item_id: UUID
+    remedy: str
+
+
+class RunExecutionResult(ORMBase):
+    """The outcome of one click on "Create drafts in Harvest".
+
+    Reports per item rather than as a single verdict, because a run is many
+    independent writes and a 4xx on one says nothing about the next. `halted`
+    means execution stopped early on an unknown outcome — the remaining
+    approved groups were never attempted and are still approved.
+
+    `remaining` is how many groups this run could still bill afterwards: a click
+    drafts what is approved at that moment, so a run with undecided groups left
+    comes back `awaiting_approval` rather than `completed`, ready for the next
+    batch. Zero and a `completed`/`failed` status is the end of the run.
+    """
+
+    billing_run_id: UUID
+    status: str
+    attempted: int = 0
+    created: int = 0
+    failed: int = 0
+    remaining: int = 0
+    items: list[RunExecutionItem] = Field(default_factory=list)
+    halted: bool = False
+    unknown_item: UnknownWriteDetail | None = None
+
+
 class PlaceholderResolutionRequest(ORMBase):
     """The operator's decision about one placeholder line, for one run month.
 
@@ -594,3 +674,16 @@ class BulkApprovalRequest(ORMBase):
     never overrides an error flag on the operator's behalf."""
 
     approved: bool
+
+
+class CloseRunRequest(ORMBase):
+    """Finish a run that drafted some groups and will not draft the rest.
+
+    `reason` covers the whole remainder at once — unlike a single rejection,
+    where the reason is specific to that client, closing is one decision
+    ("everything else waits for next month") applied to every group left. It
+    is optional for that reason, and defaults to a sentence saying exactly
+    that.
+    """
+
+    reason: str | None = None

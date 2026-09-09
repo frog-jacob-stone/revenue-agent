@@ -111,3 +111,77 @@ def test_custom_due_date_crosses_a_year_boundary():
 def test_unknown_payment_term_is_rejected():
     with pytest.raises(ValueError, match="unknown payment term"):
         dates.resolve_due_date(date(2026, 7, 31), "net 10")
+
+
+# ── Draft-day dating ────────────────────────────────────────────────────────
+#
+# The issue date stays at the period boundary because that is the accounting
+# answer; the payment clock starts when the invoice exists because that is when
+# the client can act on it. Harvest cannot express the two separately under an
+# enum term, so every one of these comes back as `custom`.
+
+
+def test_arrears_drafted_the_same_month_still_moves_the_due_date():
+    term, due = dates.resolve_draft_dating(
+        issue_date=date(2026, 8, 31),
+        planned_due_date=date(2026, 9, 30),   # net 30
+        draft_date=date(2026, 9, 9),
+    )
+    assert term == "custom"
+    assert due == date(2026, 10, 9)
+
+
+def test_arrears_drafted_a_month_late_never_arrives_overdue():
+    """The failure this exists to prevent: issued 31 July, net 30, drafted
+    5 October would otherwise be due 30 August — overdue on arrival."""
+    _, due = dates.resolve_draft_dating(
+        issue_date=date(2026, 7, 31),
+        planned_due_date=date(2026, 8, 30),
+        draft_date=date(2026, 10, 5),
+    )
+    assert due == date(2026, 11, 4)
+    assert due > date(2026, 10, 5)
+
+
+def test_advance_drafted_on_its_issue_date_is_unchanged():
+    _, due = dates.resolve_draft_dating(
+        issue_date=date(2026, 9, 1),
+        planned_due_date=date(2026, 10, 1),
+        draft_date=date(2026, 9, 1),
+    )
+    assert due == date(2026, 10, 1)
+
+
+def test_advance_drafted_before_its_issue_date_is_not_pulled_earlier():
+    """The clock starts at max(draft, issue). An advance group can be planned
+    and drafted in the last days of the prior month, and re-dating from the
+    draft day would make it due sooner than the operator approved."""
+    _, due = dates.resolve_draft_dating(
+        issue_date=date(2026, 9, 1),
+        planned_due_date=date(2026, 10, 1),
+        draft_date=date(2026, 8, 28),
+    )
+    assert due == date(2026, 10, 1)
+
+
+def test_upon_receipt_is_due_the_day_it_is_drafted():
+    """Net zero. Due 31 August for an invoice created on 9 September would be
+    the same wrongness as any other stale term, just more obviously."""
+    _, due = dates.resolve_draft_dating(
+        issue_date=date(2026, 8, 31),
+        planned_due_date=date(2026, 8, 31),
+        draft_date=date(2026, 9, 9),
+    )
+    assert due == date(2026, 9, 9)
+
+
+def test_net_days_are_read_off_the_frozen_row_not_from_config():
+    """The gap between the two stored columns *is* the term, whatever it was.
+    Nothing here consults `billing_groups`, so a group edited since planning
+    cannot change an invoice already under review."""
+    _, due = dates.resolve_draft_dating(
+        issue_date=date(2026, 8, 31),
+        planned_due_date=date(2026, 10, 30),   # 60 days
+        draft_date=date(2026, 9, 9),
+    )
+    assert due == date(2026, 11, 8)

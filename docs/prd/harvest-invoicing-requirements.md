@@ -66,11 +66,27 @@ A single run produces both. If the run month is August 2026:
 - Arrears groups get `period 2026-07-01 → 2026-07-31`, `issue_date 2026-07-31`
 - Advance groups get `period 2026-08-01 → 2026-08-31`, `issue_date 2026-08-01`
 
+**Amended 2026-09-09 — the due date, and only the due date, starts on the draft
+day.** The issue dates above are unchanged and remain the accounting answer. But
+a July-arrears invoice issued 31 July on net 30 is due 30 August, and a run
+drafted on 3 September would put an already-overdue invoice in front of a
+client. The payment window starts when the invoice exists: issued 31 July, due
+3 October. See `dates.resolve_draft_dating`.
+
+This forces `payment_term: "custom"` on every monthly payload. Harvest accepts
+an explicit `due_date` only for `custom` and derives it from `issue_date` for
+every enum term, so the two dates cannot be separated any other way. The net-day
+count is read off the frozen ledger row (`due_date − issue_date`) rather than
+from live group config, so a group edited after planning cannot change an
+invoice already under review.
+
 ### 2.4 Billing Run
 
 One operator-initiated execution against a single `run_month`. `run_month` defaults to the current calendar month and is overridable (needed for backfills and for the case where you run on the 1st or 2nd and mean the prior month).
 
 A run has a lifecycle: `planning` → `awaiting_approval` → `executing` → `completed` (or `failed` / `abandoned`).
+
+**Execution can happen more than once.** A click drafts the groups approved at that moment, so a run whose operator drafted some and not others goes back to `awaiting_approval` for the next batch — the groups left over are still billable from that run. The run ends when the operator closes it (the remainder is recorded as decided against), or when the month is re-planned, which sweeps the same remainder. A run that has drafted anything can no longer be abandoned.
 
 ---
 
@@ -365,13 +381,17 @@ Do not implement, do not call:
   │                 │  ledger row → POST → record result.
   └────────┬────────┘
            ▼
-  ┌─────────────────┐
+  ┌─────────────────┐         groups left undrafted
   │  6. RECONCILE   │  Compare actual vs. planned amounts. Report.
-  │     RESULT      │  Run status → completed.
-  └─────────────────┘
+  │     RESULT      │  Run status → completed, or back to
+  └────────┬────────┘  awaiting_approval for the next batch. ──┐
+           │                                                    │
+           └──── operator closes the run, or re-plans ◄─────────┘
 ```
 
 **Approval is per-group, not per-run.** The operator will routinely want to approve 18 of 20 groups, fix two config problems, and re-plan. Do not build all-or-nothing approval.
+
+**And execution is per-batch, not per-run.** The same operator will want to draft those 18 now and the last two on Thursday, from the same run. Step 5 bills what is approved when it is clicked and leaves everything else exactly as it was.
 
 ---
 
@@ -413,13 +433,14 @@ Handle it this way: the pre-flight number is a **sanity check**, not a contract.
 | `PROJECT_IN_MULTIPLE_GROUPS` | error | Project appears in more than one active billing group |
 | `PROJECT_CLIENT_MISMATCH` | error | Project's `client.id` ≠ group's `harvest_client_id`. Would cause a 422. |
 | `ALREADY_INVOICED_THIS_RUN` | error | Non-failed ledger row already exists for this group and run month |
-| `EXISTING_HARVEST_INVOICE` | warning | Harvest already has an invoice for this client with an overlapping issue date |
+| `EXISTING_HARVEST_INVOICE` | warning | Harvest already has an invoice **billed against one of this group's projects** with an overlapping issue date. Narrowed from "for this client" on 2026-09-09: a client with several engagements tripped it every month over another project's invoice. |
+| `UNATTRIBUTED_HARVEST_INVOICE` | info | An unrecognized invoice for this client whose line items carry no project at all, so it can be neither matched to this group nor ruled out. Added 2026-09-09 alongside the narrowing above, so a hand-typed duplicate is not silently dropped by it. |
 | `NO_RATE_RESOLVED` | error | A billable time entry has no resolvable rate |
 | `INVALID_ITEM_CATEGORY` | error | `kind` on a fixed-fee line item is not a valid invoice item category |
 | `NO_UNINVOICED_TIME` | warning | T&M group with zero billable uninvoiced time in the period. Skip by default; make skip-vs-zero-invoice configurable. |
 | `UNAPPROVED_TIME` | warning | Time entries in the period with `approval_status` ≠ `approved` |
 | `STRAGGLER_TIME` | warning | Uninvoiced billable time **before** the period start. Will not be captured by the bounded `from`/`to` import and will silently roll forward. |
-| `LATE_TIME` | warning | Uninvoiced billable time **after** the period end on an arrears group |
+| ~~`LATE_TIME`~~ | — | **Removed 2026-09-09.** Uninvoiced billable time after the period end on an arrears group — which is what every arrears group looks like, always: billing August in September finds September time because September is being worked. It fired on every such group every month with no action behind it, and cost a Harvest round-trip per project per plan to compute. `STRAGGLER_TIME` above is the asymmetric half and is the one worth keeping. |
 | `SCHEDULE_GAP` | warning | `fixed_fee_schedule` group with no schedule item for this month |
 | `SCHEDULE_EXHAUSTED` | info | Active fixed-fee group with all schedule items consumed |
 | `TYPE_MISMATCH` | warning | `time_and_materials` group pointing at a project with `is_fixed_fee = true`, **or** a `fixed_fee_schedule` / `recurring_monthly` group pointing at a project with `is_fixed_fee = false` |
@@ -504,20 +525,30 @@ estimate involved, so there is nothing for a hand-reconcile to check.
 
 ### Phase 3 — Execution
 
-Status: the single-draw write path is **built**; the monthly run's is not.
-Superseded on one point by [ADR-0004](../adr/0004-operator-initiated-writes.md) —
-these writes are operator-initiated and carry no `approvals` row. The click on a
-screen showing the exact payload is the authorization.
+Status: **both write paths are built** (2026-09-09) — one draw at a time, and the
+monthly run. Superseded on one point by
+[ADR-0004](../adr/0004-operator-initiated-writes.md) — these writes are
+operator-initiated and carry no `approvals` row. The click on a screen showing
+the exact payload is the authorization.
 
 | # | Task | Status | Acceptance criteria |
 |---|---|---|---|
-| 3.1 | Approval interface | ✅ | Per-group approve / skip, `approved_at` recorded, error flags need an explicit override. For draws the release + the create click serve this role. |
-| 3.2 | Execution engine | ◐ | §8 implemented exactly, for one draw (`draws.invoice_draw`). The in-flight row is committed before the POST. Sequential multi-group execution is unbuilt. |
-| 3.3 | In-flight resolution | ◐ | `GET /billing/in-flight` lists unresolved rows; `POST /billing/runs/{run_id}/items/{item_id}/resolve` links or marks failed, audit-logged. The candidate-invoice picker is not built — the operator pastes the id from Harvest. |
-| 3.4 | Post-run reconciliation | ○ | Variance is computed and stored per row at creation; there is no run-level report or threshold flag yet. |
-| 3.5 | Execute command | ○ | Monthly-run execution. Needs the subset filter below before its first live use. |
+| 3.1 | Approval interface | ✅ | Per-group approve / reject, `approved_at` recorded, error flags need an explicit override. Rejection (2026-09-09) is distinct from un-approving: it says the invoice is not going out and requires a reason. For draws the release + the create click serve this role. |
+| 3.2 | Execution engine | ✅ | §8 implemented exactly, for one draw (`draws.invoice_draw`) and for a monthly run (`execute.execute_run`). The in-flight row is committed before each POST. A 4xx fails one group and the loop continues; an unknown outcome halts the run and it resumes after a human resolves the row. A click drafts the groups approved at that moment (2026-09-09) and the run reopens for the next batch; `review.close_run` / `POST /billing/runs/{id}/close` ends it. |
+| 3.3 | In-flight resolution | ◐ | `GET /billing/in-flight` lists unresolved rows; `POST /billing/runs/{run_id}/items/{item_id}/resolve` links or marks failed, audit-logged, and now settles the run's status by derivation rather than assuming one item means one run. The candidate-invoice picker is not built — the operator pastes the id from Harvest. |
+| 3.4 | Post-run reconciliation | ◐ | Variance is computed and stored per row at creation, and a post-write check records billable time Harvest still reports unbilled for the period (`verify.count_unbilled_after`). There is still no run-level report or threshold flag. |
+| 3.5 | Execute command | ✅ | `POST /billing/runs/{run_id}/execute` and the pre-flight button. Takes no request body — the payloads are the ones the screen just displayed. |
 
-**Milestone: first live run. Create drafts for a subset of clients only — needs a `--only-group` equivalent in the API/UI, since the UI is the only surface.**
+**Milestone: first live run. Approve one group rather than all of them.** The
+subset filter this milestone originally called for was decided against: rejection
+covers the same ground and leaves a reason behind where a checkbox would not, and
+"everything approved" keeps the pre-flight the single place a decision is made.
+
+That holds for *which* groups are billed, but not for *when*. Approving a subset
+and drafting it used to finish the run, which made the pre-flight a one-shot: the
+groups still waiting on an answer were locked out of the run they were planned in.
+Drafting is now a batch over what is approved at the moment of the click, the run
+returns to `awaiting_approval`, and closing it is the explicit end (2026-09-09).
 
 ### Phase 4 — Fixed Fee, Recurring & Retainers
 

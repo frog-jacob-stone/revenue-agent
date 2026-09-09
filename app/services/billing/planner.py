@@ -32,11 +32,13 @@ from app.services.billing import (
     reconcile,
     recurring,
     settings_store,
+    write_protocol,
 )
 from app.services.billing import payload as payload_builder
 from app.services.billing.dates import (
     month_label,
     normalize_run_month,
+    resolve_draft_dating,
     resolve_due_date,
     resolve_period,
 )
@@ -78,6 +80,13 @@ async def _abandon_live_runs(
     not the month's, so a monthly re-plan has no reason to touch them — and
     sweeping them up would silently discard an invoice the operator had already
     prepared for a delivered milestone.
+
+    A prior run that already drafted some groups also rests in
+    `awaiting_approval`, waiting for its next batch, and its leftovers are swept
+    like any other — but the run itself is *not* relabelled `abandoned`, which
+    would deny the invoices it put in front of clients. Losing its remainder is
+    exactly what closing it means, so it is settled instead: re-planning the
+    month is the second way to close a partially-drafted run.
     """
     rows = await conn.fetch(
         """
@@ -92,17 +101,34 @@ async def _abandon_live_runs(
     )
     if not rows:
         return
-    run_ids = {r["billing_run_id"] for r in rows}
-    await conn.execute(
-        "UPDATE billing_runs SET status = 'abandoned' "
-        "WHERE id = ANY($1::uuid[]) AND status IN ('planning','awaiting_approval')",
-        list(run_ids),
+    run_ids = list({r["billing_run_id"] for r in rows})
+    abandoned = await conn.fetch(
+        """
+        UPDATE billing_runs r SET status = 'abandoned'
+        WHERE r.id = ANY($1::uuid[])
+          AND r.status IN ('planning','awaiting_approval')
+          AND NOT EXISTS (
+            SELECT 1 FROM billing_run_items i
+            WHERE i.billing_run_id = r.id
+              AND i.status IN ('created', 'in_flight', 'failed')
+          )
+        RETURNING r.id
+        """,
+        run_ids,
     )
+    abandoned_ids = {r["id"] for r in abandoned}
+    for run_id in run_ids:
+        if run_id not in abandoned_ids:
+            await write_protocol.settle_run_status(conn, run_id)
     await audit.write_audit_event(
         conn,
         events.BILLING_RUN_ABANDONED,
         actor=actor,
-        payload={"run_month": run_month.isoformat(), "run_ids": [str(r) for r in run_ids]},
+        payload={
+            "run_month": run_month.isoformat(),
+            "run_ids": [str(r) for r in abandoned_ids],
+            "settled_run_ids": [str(r) for r in run_ids if r not in abandoned_ids],
+        },
     )
 
 
@@ -324,11 +350,6 @@ async def _plan_group(
                 period_start=period.start.isoformat(),
             ))
 
-        if est.late_hours > 0 and group["billing_timing"] == "arrears":
-            group_flags.append(flags.late_time(
-                hours=est.late_hours, period_end=period.end.isoformat()
-            ))
-
         planned_total = est.total
         display_items = est.line_items
         empty = est.total <= 0 and not est.line_items
@@ -358,15 +379,20 @@ async def _plan_group(
     if group["requires_purchase_order"] and not (group["purchase_order"] or "").strip():
         group_flags.append(flags.missing_po())
 
-    # Layer 2: Harvest invoices in the window we have no ledger row for.
-    unrecognized = await duplicate_guard.find_unrecognized_harvest_invoices(
+    # Layer 2: Harvest invoices in the window we have no ledger row for. Scoped
+    # to this group's projects — another engagement of the same client billing
+    # in the same window is ordinary, not a duplicate.
+    on_group, unattributable = await duplicate_guard.find_unrecognized_harvest_invoices(
         pool, cfg,
         harvest_client_id=group["harvest_client_id"],
+        project_ids=project_ids,
         window_start=period.start,
         window_end=period.end,
     )
-    if unrecognized:
-        group_flags.append(flags.existing_harvest_invoice(invoices=unrecognized))
+    if on_group:
+        group_flags.append(flags.existing_harvest_invoice(invoices=on_group))
+    if unattributable:
+        group_flags.append(flags.unattributed_harvest_invoice(invoices=unattributable))
 
     prior = await _prior_amount(conn, group_id, run_month)
     if prior and prior > 0:
@@ -513,6 +539,13 @@ async def plan_run(
 async def abandon_run(
     pool: asyncpg.Pool, run_id: UUID, *, actor: str = "system"
 ) -> bool:
+    """Throw a plan away whole. Only valid while it is still only a plan.
+
+    A run that has already drafted into Harvest cannot be abandoned, even
+    though it rests in `awaiting_approval` between batches: `abandoned` reads
+    everywhere as "this produced nothing", and the invoices it produced are
+    sitting in front of clients. `review.close_run` is the verb for that run.
+    """
     async with pool.acquire() as conn:
         async with conn.transaction():
             row = await conn.fetchrow(
@@ -525,6 +558,17 @@ async def abandon_run(
                 raise RunStateError(
                     f"run is {row['status']}; only a planning or awaiting_approval "
                     "run can be abandoned"
+                )
+            drafted = await conn.fetchval(
+                "SELECT count(*) FROM billing_run_items "
+                "WHERE billing_run_id = $1 AND status IN ('created','in_flight','failed')",
+                run_id,
+            )
+            if drafted:
+                raise RunStateError(
+                    f"this run has already attempted {drafted} invoice(s) in Harvest, "
+                    "so it cannot be abandoned — close it instead, which records "
+                    "that the remaining groups were decided against"
                 )
             await conn.execute(
                 "UPDATE billing_run_items SET status = 'abandoned', updated_at = now() "
@@ -567,6 +611,55 @@ async def _build_snapshot(conn: asyncpg.Connection, run_id: UUID) -> dict[str, A
         ],
         "run_flags": detail["run_flags"],
     }
+
+
+# Statuses whose payload has not been sent yet, and may therefore still be
+# re-dated. Anything past them carries the dates actually used on a real
+# invoice and must never be rewritten by a read.
+_REDATABLE = ("planned", "approved")
+
+
+def draft_dating_for(
+    item: Any, *, draft_date: date
+) -> tuple[str, date, dict[str, Any]] | None:
+    """`(payment_term, due_date, dated_payload)` for a row not yet sent.
+
+    Returns None when the row has nothing to re-date — already executed,
+    skipped with no payload, or missing the dates the term is derived from.
+
+    The planner freezes `issue_date` at the period boundary and `due_date` at
+    `issue_date + net_days`. Drafting happens later, sometimes much later, and
+    the client's payment window should start then — see
+    `dates.resolve_draft_dating` for why, and for why the term becomes
+    `custom`. The gap between the two frozen columns *is* the net term, so
+    nothing needs to be re-read from `billing_groups`.
+    """
+    if item["status"] not in _REDATABLE:
+        return None
+    issue_date, planned_due = item["issue_date"], item["due_date"]
+    if issue_date is None or planned_due is None:
+        return None
+    body = item["planned_payload"]
+    if not body:
+        return None
+
+    term, due = resolve_draft_dating(
+        issue_date=issue_date, planned_due_date=planned_due, draft_date=draft_date
+    )
+    return term, due, payload_builder.apply_draft_dating(
+        body, payment_term=term, due_date=due
+    )
+
+
+def redate_pending_item(item: dict[str, Any], *, draft_date: date | None = None) -> None:
+    """Re-date one loaded ledger row in place, so a read shows what a click now
+    would send. Mirrors `preview_draw_invoice`, which recomputes its dates on
+    every call for the same reason — a preview looked at on Tuesday and acted
+    on on Thursday must show Thursday's due date."""
+    dated = draft_dating_for(item, draft_date=draft_date or date.today())
+    if dated is None:
+        return
+    _, item["due_date"], item["planned_payload"] = dated
 
 
 async def _load_run(conn: Any, run_id: UUID) -> dict[str, Any] | None:
@@ -628,7 +721,20 @@ async def _load_run(conn: Any, run_id: UUID) -> dict[str, Any] | None:
 
 
 async def get_run(pool: asyncpg.Pool, run_id: UUID) -> dict[str, Any] | None:
-    return await _load_run(pool, run_id)
+    """The run as a click right now would send it.
+
+    Re-dating lives here rather than in `_load_run` on purpose: `plan_snapshot`
+    is built from `_load_run` too, and it is a frozen record of what the
+    planner produced. Rewriting its dates would make the one artefact meant to
+    preserve plan-time state drift with the calendar.
+    """
+    detail = await _load_run(pool, run_id)
+    if detail is None:
+        return None
+    today = date.today()
+    for item in detail["items"]:
+        redate_pending_item(item, draft_date=today)
+    return detail
 
 
 async def list_runs(

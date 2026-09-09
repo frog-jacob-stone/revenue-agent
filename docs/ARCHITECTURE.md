@@ -77,8 +77,8 @@ a tool that reaches them.
 
 Harvest draft-invoice creation. Specified in
 `docs/prd/harvest-invoicing-requirements.md`. Planning is complete for every
-billing type. Execution exists for **one draw at a time**; the monthly run is
-still plan-only and stays behind the reconcile gate.
+billing type, and so is execution — one draw at a time from the Draws tab, and
+the monthly run from the pre-flight.
 
 ```
 harvest_snapshot → read-through cache of clients, projects, categories, rates
@@ -88,16 +88,39 @@ rates            → the rate-resolution ladder, shared by estimator and reconci
 dates            → run month + timing → service period, issue date, due date
 estimator        → T&M line-item estimates from uninvoiced time and expenses
 payload          → the exact POST /v2/invoices body
-duplicate_guard  → ledger-aware detection of invoices already created
+duplicate_guard  → project-scoped detection of invoices already created
 flags            → the §7 flag catalog
 recurring        → the literal monthly lines, with placeholder state applied
 planner          → orchestrates a run and writes the ledger
-review           → per-group approval of a planned run (persisted, human-only)
+review           → per-group approve / reject of a planned run (human-only)
 placeholders     → pricing or omitting a placeholder line for one month
 draws            → fixed-fee contract draws, billed off-cycle one at a time,
-                   and `invoice_draw` — the only Harvest write in the system
+                   and `invoice_draw`
+execute          → the monthly run's many-invoice write, `execute_run`
+write_protocol   → the outcome recorders and run-status settler both writes share
+verify           → post-write check that Harvest marked the time billed
 inflight         → resolving a write whose outcome is unknown (human-only)
 ```
+
+**T&M invoices import time; they do not list it.** This is the single most
+load-bearing fact in the module. `payload.build_time_and_materials_payload`
+emits a `line_items_import` body — Harvest generates the line items itself from
+the unbilled entries in the window and stamps each one `is_billed`, with a
+back-reference to the invoice. `is_billed` is read-only on Harvest's API, so
+there is no other way to set it. A payload that computed its own `line_items`
+would look identical to the client and be quietly wrong: the hours would still
+read as uninvoiced in Harvest and next month's plan would bill them again. The
+estimator's numbers exist to be *compared* to the result, never to become it.
+`tests/test_billing_run_execution.py` asserts the shape of the body that reaches
+`create_invoice`, and `tests/fakes/harvest.py` models the marking, so a change
+that drops the import fails rather than passes quietly.
+
+`verify.count_unbilled_after` closes the loop from the other side: after each
+T&M invoice, count the billable time Harvest *still* reports as unbilled for
+those projects over that period. Recorded on the row, shown on the run result,
+and deliberately non-blocking — unapproved time and entries with no resolvable
+rate are ordinary reasons for a non-zero reading, and turning a real invoice
+into a failed run over one would be worse than the thing it warns about.
 
 **A ledger row's payload is no longer write-once.** The planner freezes
 `planned_payload` and `estimated_line_items` at plan time, and for most of the
@@ -232,12 +255,31 @@ buried among July's own work. `harvest_invoice_id` breaks ties, because one
 transaction stamps a single `now()` and the list would otherwise reshuffle between
 identical queries.
 
-**Open question for the monthly run.** `resolve_period` deliberately dates those
-invoices to the *period boundary* (arrears → last day of the month billed), not
-the draft day, per PRD §2.3. That is the right accounting answer, but it means a
-July-arrears run executed on 3 September would be issued 31 July and — net 30 —
-already overdue on arrival. Decide the rule before monthly execution ships; do not
-assume the draw behaviour above carries over.
+**A monthly invoice is issued on the period boundary and due from the draft
+day.** Settled 2026-09-09; this replaces the open question that stood here.
+`resolve_period` dates these invoices to the period boundary (arrears → last day
+of the month billed) per PRD §2.3, which is the right accounting answer and
+stays. But a July-arrears run drafted on 3 September, issued 31 July and net 30,
+would arrive already overdue — so the payment clock starts when the invoice
+exists. Issued 31 July, due 3 October.
+
+That costs something, and the cost is unavoidable. Harvest accepts an explicit
+`due_date` **only** when `payment_term` is `"custom"`, deriving it from
+`issue_date` for every enum term, so splitting the two dates means every monthly
+payload goes out as `custom`. `dates.resolve_draft_dating` is where that happens.
+
+Net days come from the frozen ledger row, never from live config: the planner
+stored `issue_date` and `due_date`, so the gap between them *is* the term, and
+re-reading `billing_groups` would fold a group edited since planning into an
+invoice already under review. The same reasoning as `estimated_line_items`
+above.
+
+Re-dating happens in `planner.get_run`, not `_load_run` — `plan_snapshot` is
+built from `_load_run` and is a frozen record of what the planner produced.
+`execute` applies the identical pure function at write time, which is what keeps
+the payload on screen and the payload sent the same object (ADR-0004 condition
+1). The UI never caches the run for the same reason the draw preview is never
+cached.
 
 **Draws do not ride the monthly run.** A fixed-fee contract's payment schedule
 commits to dates, but a date never bills anything: a draw becomes billable only
@@ -266,10 +308,64 @@ when execution does ship, a draw mid-write can never be offered for billing
 again, and a half-completed write is visible in the queue rather than silently
 gone from it.
 
-**Approval is persisted review state, not UI state.** The planner writes every
-group as `planned`; a human moves it to `approved` through `review.py`, which
-stamps `approved_at` / `approved_by`. Nothing defaults to approved, and closing
-the tab does not discard the review. `review.py` owns two rules the UI must not
+**A monthly run is many writes, and it halts on exactly one thing.**
+`execute.execute_run` walks the approved items alphabetically, wrapping each in
+the same three-transaction protocol as a draw. A 4xx is a verdict about one
+payload and says nothing about the next, so the loop continues and the run's
+status is decided once at the end. A timeout or 5xx is not a verdict — that
+item's invoice may exist — so the loop **stops**: the remaining groups stay
+`approved` and un-attempted, the run stays `executing`, and clicking again after
+a human settles the row resumes where it left off. Continuing would turn one
+unresolvable row into several, while hammering a Harvest that is plainly unwell.
+
+`write_protocol.settle_run_status` derives the run's status from its items and
+is shared with `inflight.resolve_item` and `review.close_run`, because the
+things that can finish a run must not be able to disagree about what finishing
+means. A draw run holds one item, so for that path it reduces to what it always
+did.
+
+**A click drafts a batch, not the run.** Approving three of nine groups and
+clicking creates three drafts and leaves the other six planned — the operator
+waiting on a PM's answer about a group can still bill it *from this run* next
+week. So leftover `planned` rows send the run back to `awaiting_approval`
+rather than letting it settle: `execute` and `review` both refuse a `completed`
+run, so completing after the first batch would strand the rest and claim a
+month was billed when most of it was not.
+
+That leaves the run needing a deliberate end, and it has three. **Closing**
+(`review.close_run`, `POST /billing/runs/{id}/close`) is the direct one: the
+remainder is recorded as rejected — reason and actor attached, so the Skipped
+section still answers "why did Acme get nothing" — and the run settles.
+**Re-planning the month** is the second: it sweeps the leftovers as it always
+did, which is what closing does, so the old run settles instead of being
+relabelled `abandoned`. **Abandoning** is now refused once a run has drafted
+anything, because `abandoned` reads everywhere as "this produced nothing" and
+that run's invoices are in front of clients.
+
+The endpoint answers **200 even when the run halted**, which departs from the
+draw path's 502. A batch that halts has usually already created real invoices,
+and a 502 would throw away the only record of which; the unknown rides inside
+the body as `halted` + `unknown_item`, carrying the same ids and remedy the 502
+detail does. The UI must surface it as loudly.
+
+**Review has three outcomes, not two.** The planner writes every group as
+`planned`; a human moves it to `approved` through `review.py`, which stamps
+`approved_at` / `approved_by`. Nothing defaults to approved, and closing the tab
+does not discard the review.
+
+The third is **rejection**, and it is not the opposite of approval.
+Un-approving means *undecided* — the row stays live, still holds the month's
+slot, and records nothing. `review.set_item_rejection` says the invoice is not
+going out and why; the case it exists for is a recurring group already invoiced
+by hand days earlier, where the next run would put a duplicate in front of a
+real client. It reuses `skipped` rather than adding a status, with `rejected_by`
+separating an operator's decision from a planner skip and gating the undo. A
+reason is required: this row is the only record of why a client a run planned
+for received nothing. Rejection is also allowed while a run is `executing`,
+which approval is not — a run halted mid-write must still let the operator drop
+a group before resuming.
+
+`review.py` owns two more rules the UI must not
 be trusted with: an error-severity flag blocks approval until a human records an
 override, and flags in `flags.NON_OVERRIDABLE` can never be overridden at all.
 This is *review* state, distinct from the Rule #1 approval chain below. Since
@@ -291,8 +387,28 @@ and audit-logged; `audit_log` records both what happened and who authorized it.
 `billing_runs.approval_id` is left in place, unused, in case agentic execution
 returns.
 
-Built so far: the single-draw write path (`POST /billing/draws/{id}/invoice`).
-The monthly run's execution is still unbuilt and stays behind the reconcile gate.
+Both write paths are built: `POST /billing/draws/{id}/invoice` for one draw and
+`POST /billing/runs/{run_id}/execute` for a monthly run. Neither accepts a
+payload from the caller — precisely so the body sent cannot differ from the body
+seen. The reconcile gate still applies to the monthly run's *first live use*
+(plan a month, reconcile it by hand, then execute), which is an operating
+instruction rather than something the code enforces.
+
+**Two flags were wrong and are fixed.** `EXISTING_HARVEST_INVOICE` matched on
+the *client*, so a firm with several engagements got warned every month because
+a different project's invoice went out — and a warning that always fires is a
+warning nobody reads. `duplicate_guard` now scopes it to invoices whose line
+items reference a project in the group being planned. Invoices belonging wholly
+to another engagement are dropped; invoices with no project on any line cannot
+be placed either way and surface as `UNATTRIBUTED_HARVEST_INVOICE` at `info`,
+because a hand-typed invoice is the likeliest duplicate there is and silently
+discarding it would defeat the guard.
+
+`LATE_TIME` is deleted. Billing August in September always finds September time;
+that is the next invoice doing its job. `STRAGGLER_TIME` — uninvoiced billable
+time dated *before* the period, which the bounded import window will miss again
+— is the asymmetric case and is the one worth saying. Removing the flag also
+removes a Harvest round-trip per project per plan.
 
 **Two hard guarantees, both structural rather than conventional:**
 

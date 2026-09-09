@@ -29,6 +29,7 @@ import asyncpg
 
 from app.orchestrator import events
 from app.services import audit
+from app.services.billing import write_protocol
 from app.services.billing.errors import BillingConfigError
 
 RESOLUTIONS = ("link", "failed")
@@ -116,11 +117,6 @@ async def resolve_item(
                         "WHERE id = $1",
                         draw_id, run_id,
                     )
-                await conn.execute(
-                    "UPDATE billing_runs SET status = 'completed', completed_at = now() "
-                    "WHERE id = $1",
-                    run_id,
-                )
                 event = events.BILLING_INVOICE_RESOLVED_LINKED
             else:
                 await conn.execute(
@@ -135,10 +131,14 @@ async def resolve_item(
                 )
                 # The draw is untouched — `invoiced_run_id` was never set — so
                 # dropping the live row returns it to `ready` by derivation.
-                await conn.execute(
-                    "UPDATE billing_runs SET status = 'failed' WHERE id = $1", run_id
-                )
                 event = events.BILLING_INVOICE_RESOLVED_FAILED
+
+            # Derived rather than asserted, because resolving one row does not
+            # necessarily finish the run. A draw run holds a single item and
+            # lands on completed/failed exactly as it always did; a monthly run
+            # that halted here may still have approved groups waiting, and
+            # calling it completed would strand them.
+            run_status = await write_protocol.settle_run_status(conn, run_id)
 
             await audit.write_audit_event(
                 conn,
@@ -153,6 +153,7 @@ async def resolve_item(
                     "resolution": resolution,
                     "harvest_invoice_id": harvest_invoice_id,
                     "actual_amount": actual_amount,
+                    "run_status": run_status,
                 },
             )
 
@@ -161,6 +162,7 @@ async def resolve_item(
         "billing_run_item_id": item_id,
         "resolution": resolution,
         "status": "created" if resolution == "link" else "failed",
+        "run_status": run_status,
         "fixed_fee_schedule_item_id": draw_id,
         "harvest_invoice_id": harvest_invoice_id,
     }

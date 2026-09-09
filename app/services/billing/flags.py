@@ -76,20 +76,53 @@ def no_rate_resolved(*, entries: list[dict[str, Any]], hours: float) -> Flag:
     )
 
 
-def existing_harvest_invoice(*, invoices: list[dict[str, Any]]) -> Flag:
-    described = ", ".join(
+def _describe_invoices(invoices: list[dict[str, Any]]) -> str:
+    return ", ".join(
         f"#{i.get('number')} ({i.get('issue_date')}, {i.get('amount')})"
         for i in invoices
     )
+
+
+def _invoice_context(invoices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {"id": i.get("id"), "number": i.get("number"),
+         "issue_date": i.get("issue_date"), "amount": i.get("amount")}
+        for i in invoices
+    ]
+
+
+def existing_harvest_invoice(*, invoices: list[dict[str, Any]]) -> Flag:
+    """Scoped to the group's own projects, not to the client.
+
+    A client with several engagements will have other invoices in the window
+    and that is not news; only one billed against a project in *this* group is
+    a possible duplicate. See `duplicate_guard`.
+    """
     return flag(
         "EXISTING_HARVEST_INVOICE", WARNING,
-        f"Harvest already has {len(invoices)} invoice(s) for this client in the "
-        f"period window that this system did not create: {described}.",
-        invoices=[
-            {"id": i.get("id"), "number": i.get("number"),
-             "issue_date": i.get("issue_date"), "amount": i.get("amount")}
-            for i in invoices
-        ],
+        f"Harvest already has {len(invoices)} invoice(s) billed against this "
+        f"billing group's projects in the period window that this system did "
+        f"not create: {_describe_invoices(invoices)}.",
+        invoices=_invoice_context(invoices),
+    )
+
+
+def unattributed_harvest_invoice(*, invoices: list[dict[str, Any]]) -> Flag:
+    """Invoices for this client that carry no project on any line item.
+
+    `info`, not `warning`: they cannot be shown to overlap this group, so
+    treating them as duplicates would recreate the noise that scoping
+    `EXISTING_HARVEST_INVOICE` to projects removed. But they cannot be shown
+    *not* to overlap either — a hand-typed invoice is the likeliest duplicate
+    there is — so they are named rather than dropped.
+    """
+    return flag(
+        "UNATTRIBUTED_HARVEST_INVOICE", INFO,
+        f"{len(invoices)} invoice(s) for this client in the period window carry "
+        f"no project on any line, so they cannot be matched to a billing group: "
+        f"{_describe_invoices(invoices)}. Check them by hand if this group looks "
+        f"like it may already have been billed.",
+        invoices=_invoice_context(invoices),
     )
 
 
@@ -184,20 +217,23 @@ def unapproved_time(*, entries: list[dict[str, Any]], hours: float) -> Flag:
 
 
 def straggler_time(*, hours: float, earliest: str | None, period_start: str) -> Flag:
+    """Billable work from before this period that no invoice has ever picked up.
+
+    There is no `LATE_TIME` counterpart. Time logged *after* the period is
+    ordinary — billing August in September always finds September time — and a
+    flag that fires on every arrears run every month is one nobody reads. Time
+    from *before* the period is the asymmetric case: this invoice's import
+    window will not reach it, so it rolls forward again, silently, exactly as
+    it already has.
+    """
+    since = f" (earliest {earliest})" if earliest else ""
     return flag(
         "STRAGGLER_TIME", WARNING,
-        f"{hours:g} hrs of uninvoiced billable time dated before {period_start} "
-        f"will not be captured by this import and will roll forward silently.",
+        f"{hours:g} hrs of billable time dated before {period_start}{since} has "
+        f"never been invoiced. This invoice covers {period_start} onward, so it "
+        f"will not pick that up — it rolls forward again unless you bill it by "
+        f"hand.",
         hours=hours, earliest=earliest,
-    )
-
-
-def late_time(*, hours: float, period_end: str) -> Flag:
-    return flag(
-        "LATE_TIME", WARNING,
-        f"{hours:g} hrs of uninvoiced billable time logged after {period_end}. "
-        f"It belongs to a later invoice, not this one.",
-        hours=hours,
     )
 
 

@@ -53,6 +53,7 @@ from app.services.billing import (
     flags,
     recurring,
     settings_store,
+    write_protocol,
 )
 from app.services.billing import (
     payload as payload_builder,
@@ -849,29 +850,15 @@ async def _record_failure(
     actor: str,
     error: str,
 ) -> None:
-    """Harvest refused. Release the lock so the draw can be fixed and retried."""
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            await conn.execute(
-                "UPDATE billing_run_items "
-                "SET status = 'failed'::billing_run_item_status, error_message = $2 "
-                "WHERE id = $1",
-                item_id, error[:2000],
-            )
-            await conn.execute(
-                "UPDATE billing_runs SET status = 'failed' WHERE id = $1", run_id
-            )
-            await audit.write_audit_event(
-                conn,
-                events.BILLING_INVOICE_FAILED,
-                actor=actor,
-                payload={
-                    "billing_run_id": str(run_id),
-                    "billing_run_item_id": str(item_id),
-                    "fixed_fee_schedule_item_id": str(draw_id),
-                    "error": error[:2000],
-                },
-            )
+    """Harvest refused. Release the lock so the draw can be fixed and retried.
+
+    A draw run holds exactly one item, so a failed item is a failed run —
+    hence `fail_run=True`, which a monthly run does not want.
+    """
+    await write_protocol.record_failure(
+        pool, item_id=item_id, run_id=run_id, actor=actor, error=error,
+        extra={"fixed_fee_schedule_item_id": str(draw_id)},
+    )
 
 
 async def _record_unknown(
@@ -885,22 +872,10 @@ async def _record_unknown(
 ) -> None:
     """Record that we don't know. Deliberately touches neither the item's status
     nor the run's — `in_flight` and `executing` are the accurate answers."""
-    async with pool.acquire() as conn:
-        await audit.write_audit_event(
-            conn,
-            events.BILLING_INVOICE_UNKNOWN,
-            actor=actor,
-            payload={
-                "billing_run_id": str(run_id),
-                "billing_run_item_id": str(item_id),
-                "fixed_fee_schedule_item_id": str(draw_id),
-                "cause": cause[:2000],
-                "remedy": (
-                    "Check Harvest for an invoice matching this client and amount, "
-                    "then resolve the in-flight row (link it, or mark it failed)."
-                ),
-            },
-        )
+    await write_protocol.record_unknown(
+        pool, item_id=item_id, run_id=run_id, actor=actor, cause=cause,
+        extra={"fixed_fee_schedule_item_id": str(draw_id)},
+    )
 
 
 # ── Group-level summary, for the monthly run ────────────────────────────────

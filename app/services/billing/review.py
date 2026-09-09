@@ -1,11 +1,15 @@
-"""Per-group approval of a planned run.
+"""Per-group review of a planned run: approve, leave undecided, or reject.
 
 The pre-flight screen is where a human decides which invoices are allowed to
 exist. That decision is persisted here, on the ledger row itself, so closing
-the tab does not throw it away — and so the record of who approved what
+the tab does not throw it away — and so the record of who decided what
 survives the run.
 
-Three rules the service layer owns, not the UI:
+**Three outcomes, not two.** `planned` is undecided, `approved` will be sent,
+and `skipped` with a `rejected_by` will not — see `set_item_rejection` for why
+un-approving is not enough on its own.
+
+Four rules the service layer owns, not the UI:
 
   - **Nothing is approved by default.** The planner writes `planned`; only an
     explicit human action moves a row to `approved`.
@@ -21,10 +25,21 @@ Three rules the service layer owns, not the UI:
     a record of what the plan contained. Deliberately no override path: the
     entire point of a placeholder is that it cannot be forgotten, and an
     override is a way to forget it with a click.
+  - **Rejecting requires a reason; un-rejecting requires having rejected.**
+    A rejection is the only record of why a planned client got no invoice, and
+    a planner-skipped row (nothing to bill) is not something a click should be
+    able to turn into one.
 
-Approval here is *review state*, not the Unbreakable Rule #1 approval chain.
-The Harvest write in Phase 3 still goes through a real `approvals` row; this
-selection is what that row will carry.
+**Review outlives the first batch.** `execute` drafts the groups approved at
+the moment of the click and leaves the rest planned, which puts the run back in
+`awaiting_approval` — so these same four rules govern the second batch and the
+third. `close_run` at the bottom of this module is how an operator says there
+will not be another one.
+
+Review state here is not the Unbreakable Rule #1 approval chain. Since
+[ADR-0004](../../../docs/adr/0004-operator-initiated-writes.md) the monthly
+write is operator-initiated and carries no `approvals` row at all — this
+selection, plus the payload shown on the pre-flight, *is* the authorization.
 """
 from __future__ import annotations
 
@@ -36,14 +51,26 @@ import asyncpg
 
 from app.orchestrator import events
 from app.services import audit
-from app.services.billing import flags
+from app.services.billing import flags, write_protocol
 
 logger = logging.getLogger(__name__)
 
 # Run states in which the plan is still under review.
 _REVIEWABLE_RUN = ("planning", "awaiting_approval")
+# Rejection is allowed for longer than approval is. A run that halted on an
+# unknown outcome sits in `executing` with its remaining groups still
+# `approved`, and the operator resolving that halt may well decide one of them
+# should not go out after all. Approval is a narrower gesture and keeps the
+# narrower gate: once execution has begun, what was approved is what was
+# approved.
+_REJECTABLE_RUN = ("planning", "awaiting_approval", "executing")
 # Item states that can move between approved and unapproved.
 _REVIEWABLE_ITEM = ("planned", "approved")
+# Closing follows rejection rather than approval, and for the same reason: the
+# operator settling a run that stopped mid-batch is exactly the person who may
+# decide the groups it never reached are not going out at all. The in-flight
+# row itself still has to be resolved first — see `close_run`.
+_CLOSEABLE_RUN = ("awaiting_approval", "executing")
 
 
 class ApprovalError(Exception):
@@ -91,7 +118,7 @@ async def _unresolved_placeholders(conn: Any, item_id: UUID) -> list[str]:
 async def _load_item(conn: Any, run_id: UUID, item_id: UUID) -> asyncpg.Record | None:
     return await conn.fetchrow(
         """
-        SELECT i.id, i.status, i.error_override, i.billing_group_id,
+        SELECT i.id, i.status, i.error_override, i.billing_group_id, i.rejected_by,
                r.status AS run_status, g.name AS billing_group_name
         FROM billing_run_items i
         JOIN billing_runs r ON r.id = i.billing_run_id
@@ -222,6 +249,115 @@ async def set_item_approval(
     return True
 
 
+async def set_item_rejection(
+    pool: asyncpg.Pool,
+    run_id: UUID,
+    item_id: UUID,
+    *,
+    rejected: bool,
+    reason: str | None = None,
+    actor: str = "system",
+) -> bool:
+    """Decide against invoicing one group this run, or undo that decision.
+
+    **Rejection is not un-approval.** Un-approving returns a group to
+    *undecided*: the row stays live, it still counts against the month's one
+    live row per group, and the pre-flight keeps offering it. Rejection says
+    the invoice is not going out — most often because it already went out, by
+    hand, days earlier, which is the one case where drafting again would
+    produce a real duplicate at a real client.
+
+    **It reuses `skipped` rather than adding a status.** `skipped` already
+    means "this run will not bill this group", it is already excluded from
+    `billing_run_items_one_live_per_month` (so a rejection releases the month's
+    slot, which is right — the group is free to be planned again), and the
+    pre-flight already has a Skipped section. `rejected_by` is what separates
+    the operator's decision from the planner finding nothing to bill, and it is
+    also the guard on undo: a planner-skipped row must not be un-skipped into
+    an invoice nobody planned.
+
+    **The reason is required.** This row is the entire record of why a client
+    did not receive an invoice their run had planned. A blank one turns the
+    Skipped list into a list of names a month later, which is when someone asks.
+
+    Returns False if the item does not belong to the run.
+    """
+    if rejected and not (reason or "").strip():
+        raise ApprovalError(
+            "a reason is required to reject — it is the only record of why this "
+            "client did not get an invoice"
+        )
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            item = await _load_item(conn, run_id, item_id)
+            if item is None:
+                return False
+            if item["run_status"] not in _REJECTABLE_RUN:
+                raise ApprovalError(
+                    f"run is {item['run_status']}; rejection can only change while "
+                    "it is under review or mid-execution"
+                )
+
+            if rejected:
+                if item["status"] not in _REVIEWABLE_ITEM:
+                    raise ApprovalError(
+                        f"this group is {item['status']}; only a planned or approved "
+                        "group can be rejected"
+                    )
+                await conn.execute(
+                    """
+                    UPDATE billing_run_items
+                    SET status = 'skipped', skip_reason = $2,
+                        rejected_at = now(), rejected_by = $3,
+                        approved_at = NULL, approved_by = NULL, updated_at = now()
+                    WHERE id = $1
+                    """,
+                    item_id, (reason or "").strip(), actor,
+                )
+            else:
+                if item["status"] != "skipped" or item["rejected_by"] is None:
+                    raise ApprovalError(
+                        "only a group an operator rejected can be un-rejected; a "
+                        "group the planner skipped had nothing to bill, so re-plan "
+                        "the run instead"
+                    )
+                try:
+                    await conn.execute(
+                        """
+                        UPDATE billing_run_items
+                        SET status = 'planned', skip_reason = NULL,
+                            rejected_at = NULL, rejected_by = NULL, updated_at = now()
+                        WHERE id = $1
+                        """,
+                        item_id,
+                    )
+                except asyncpg.UniqueViolationError as exc:
+                    # `billing_run_items_one_live_per_month`. Rejecting released
+                    # the month's slot and something has since taken it — a
+                    # re-plan, most likely. Undoing here would mean two live
+                    # rows for one group in one month, which is the double-bill
+                    # the index exists to stop.
+                    raise ApprovalError(
+                        f"“{item['billing_group_name']}” already has a live row for "
+                        "this month in another run — that row is the one to work "
+                        "with, not this rejected one."
+                    ) from exc
+
+            await audit.write_audit_event(
+                conn,
+                events.BILLING_ITEM_REJECTED if rejected else events.BILLING_ITEM_UNREJECTED,
+                actor=actor,
+                payload={
+                    "billing_run_id": str(run_id),
+                    "billing_run_item_id": str(item_id),
+                    "billing_group": item["billing_group_name"],
+                    "reason": (reason or "").strip() or None,
+                },
+            )
+    return True
+
+
 async def set_all_approvals(
     pool: asyncpg.Pool, run_id: UUID, *, approved: bool, actor: str = "system"
 ) -> int:
@@ -301,3 +437,104 @@ async def set_all_approvals(
                 },
             )
     return len(rows)
+
+
+DEFAULT_CLOSE_REASON = "Not billed on this run — the operator closed the run."
+
+
+async def close_run(
+    pool: asyncpg.Pool,
+    run_id: UUID,
+    *,
+    reason: str | None = None,
+    actor: str = "system",
+) -> dict[str, Any]:
+    """Finish a partially-drafted run: nothing further goes out from it.
+
+    Since drafting is a batch (`execute`), a run whose operator drafted some
+    groups and not others sits in `awaiting_approval` with the rest still
+    planned — which is right while they are still deciding, and wrong once they
+    have decided. This is that decision, made once for the whole remainder
+    rather than group by group.
+
+    **The remainder is rejected, not left dangling.** Setting the run status
+    alone would leave live `planned` rows holding the month's one-live-row-per-
+    group slot, so those groups could not be planned into a later run — the
+    exact thing an operator who just closed the run is likely to want next.
+    They land in `skipped` with `rejected_by`, which is what `set_item_rejection`
+    writes and what the pre-flight's Skipped section already renders.
+
+    **A halted run must be resolved before it can be closed.** An `in_flight`
+    row may be a real invoice, and a run that ends with one unaccounted for has
+    not ended. Resolve it, then close what it stopped.
+
+    **A run that has drafted nothing is not closed, it is abandoned.** Closing
+    is the record of "these groups were considered and not billed" alongside
+    invoices that did go out; `planner.abandon_run` is the record of a plan
+    thrown away whole, and it is the right verb when there is nothing to stand
+    beside.
+
+    Returns the count skipped and the run's settled status.
+    """
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            run = await conn.fetchrow(
+                "SELECT status, kind FROM billing_runs WHERE id = $1 FOR UPDATE", run_id
+            )
+            if run is None:
+                return {}
+            if run["kind"] != "monthly":
+                raise ApprovalError(
+                    "a draw run bills one milestone and finishes on its own; there "
+                    "is no remainder to close"
+                )
+            if run["status"] not in _CLOSEABLE_RUN:
+                raise ApprovalError(
+                    f"run is {run['status']}; only a run between batches, or one "
+                    "stopped mid-batch, can be closed"
+                )
+
+            counts = await conn.fetchrow(
+                """
+                SELECT count(*) FILTER (WHERE status = 'in_flight') AS in_flight,
+                       count(*) FILTER (WHERE status IN ('created','failed')) AS attempted
+                FROM billing_run_items WHERE billing_run_id = $1
+                """,
+                run_id,
+            )
+            if counts["in_flight"]:
+                raise ApprovalError(
+                    "an invoice from this run is in flight — nobody knows whether "
+                    "Harvest created it. Resolve that row before closing the run."
+                )
+            if not counts["attempted"]:
+                raise ApprovalError(
+                    "this run has drafted nothing, so there is nothing for the "
+                    "remainder to stand beside — abandon the run instead"
+                )
+
+            skipped = await conn.fetch(
+                """
+                UPDATE billing_run_items
+                SET status = 'skipped', skip_reason = $2,
+                    rejected_at = now(), rejected_by = $3,
+                    approved_at = NULL, approved_by = NULL, updated_at = now()
+                WHERE billing_run_id = $1 AND status IN ('planned', 'approved')
+                RETURNING id
+                """,
+                run_id, (reason or "").strip() or DEFAULT_CLOSE_REASON, actor,
+            )
+            status = await write_protocol.settle_run_status(conn, run_id)
+            await audit.write_audit_event(
+                conn,
+                events.BILLING_RUN_CLOSED,
+                actor=actor,
+                payload={
+                    "billing_run_id": str(run_id),
+                    "status": status,
+                    "skipped_count": len(skipped),
+                    "reason": (reason or "").strip() or DEFAULT_CLOSE_REASON,
+                    "billing_run_item_ids": [str(r["id"]) for r in skipped],
+                },
+            )
+    return {"billing_run_id": run_id, "status": status, "skipped": len(skipped)}

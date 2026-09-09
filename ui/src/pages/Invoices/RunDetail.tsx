@@ -6,7 +6,6 @@ import {
   AlertOctagon, SkipForward, ExternalLink, Link2, Loader2, Check, Undo2, Ban,
   Pencil, Info,
 } from 'lucide-react';
-import StubBadge from '../../components/shared/StubBadge';
 import { FlagChip, FlagRow, SeverityCount } from './components/FlagChip';
 import {
   BillingTypeChip, TimingChip, ItemStatusChip, StatTile, Field, Delta,
@@ -15,12 +14,16 @@ import {
 import InFlightModal from './components/InFlightModal';
 import PlaceholderPanel from './components/PlaceholderPanel';
 import {
-  getBillingRun, planBillingRun, abandonBillingRun, setItemApproval, setRunApproval,
+  getBillingRun, planBillingRun, abandonBillingRun, closeBillingRun, setItemApproval,
+  setRunApproval, setItemRejection, executeRun,
 } from '../../api';
 import {
   blockingFlag, hasError, money, shortDate, dateTime, unresolvedPlaceholders,
+  wasRejected,
 } from '../../invoicing';
-import type { BillingRunDetail, RunItem } from '../../invoicing';
+import type {
+  BillingRunDetail, RunItem, RunExecutionResult,
+} from '../../invoicing';
 
 /** The approval decision for one group.
  *
@@ -87,12 +90,160 @@ function ApprovalControl({
   );
 }
 
+/** Decide against this invoice, with the reason attached.
+ *
+ *  Deliberately not a modal and deliberately not next to Approve. Rejecting is
+ *  rarer than approving and irreversible-feeling, so it opens in place, asks
+ *  for a sentence, and only then offers the button — the reason field *is* the
+ *  confirmation step. It is also required: this row becomes the only record of
+ *  why a client a run planned for received nothing.
+ */
+function RejectControl({
+  busy,
+  onReject,
+}: {
+  busy: boolean;
+  onReject: (reason: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        disabled={busy}
+        title="Do not invoice this group in this run — for example, because you already invoiced it by hand"
+        className="text-[11px] text-slate-500 hover:text-red-700 underline disabled:opacity-40"
+      >
+        Reject this invoice
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <input
+        autoFocus
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') setOpen(false);
+          if (e.key === 'Enter' && reason.trim()) onReject(reason.trim());
+        }}
+        placeholder="Why not? e.g. already invoiced by hand on the 1st"
+        className="flex-1 min-w-[260px] px-2 py-1 rounded-lg border border-slate-300 text-xs focus:outline-none focus:border-red-500/60"
+      />
+      <button
+        type="button"
+        onClick={() => onReject(reason.trim())}
+        disabled={busy || !reason.trim()}
+        title={reason.trim() ? 'Skip this group for this run' : 'A reason is required'}
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-red-500/50 bg-red-500/10 text-red-700 text-[11px] font-medium hover:bg-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+      >
+        <Ban className="w-3 h-3" />
+        Reject
+      </button>
+      <button
+        type="button"
+        onClick={() => setOpen(false)}
+        className="text-[11px] text-slate-500 hover:text-slate-700 underline"
+      >
+        Cancel
+      </button>
+    </div>
+  );
+}
+
+/** "Nothing more goes out from this run."
+ *
+ *  Modelled on `RejectControl`, and for the same reason: it decides against
+ *  invoices for real clients, so it opens in place and asks for a sentence
+ *  first. The reason is optional here where a single rejection's is required —
+ *  closing is one decision about a remainder ("the rest waits for next month"),
+ *  not a statement about any particular client — but the field is offered
+ *  because a month later it is the only thing that says why. */
+function CloseRunControl({
+  busy,
+  blocked,
+  remaining,
+  onClose,
+}: {
+  busy: boolean;
+  blocked: boolean;
+  remaining: number;
+  onClose: (reason: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        disabled={busy || blocked}
+        title={
+          blocked
+            ? 'An invoice from this run is in flight — resolve that row before finishing the run.'
+            : remaining > 0
+              ? `Finish this run without invoicing the remaining ${remaining} group${remaining === 1 ? '' : 's'}`
+              : 'Finish this run'
+        }
+        className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-300 text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+      >
+        {busy && <Loader2 className="w-3 h-3 animate-spin" />}
+        Close run
+      </button>
+    );
+  }
+
+  return (
+    <div className="ml-auto flex items-center gap-2 flex-wrap justify-end">
+      <span className="text-xs text-slate-600">
+        {remaining > 0
+          ? `${remaining} group${remaining === 1 ? '' : 's'} will get no invoice from this run.`
+          : 'Finish this run.'}
+      </span>
+      <input
+        autoFocus
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') setOpen(false);
+          if (e.key === 'Enter') onClose(reason.trim());
+        }}
+        placeholder="Why? e.g. the rest waits for September"
+        className="min-w-[240px] px-2 py-1 rounded-lg border border-slate-300 text-xs focus:outline-none focus:border-slate-500"
+      />
+      <button
+        type="button"
+        onClick={() => onClose(reason.trim())}
+        disabled={busy}
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-400 bg-slate-100 text-slate-700 text-[11px] font-medium hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+      >
+        {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+        Close run
+      </button>
+      <button
+        type="button"
+        onClick={() => setOpen(false)}
+        className="text-[11px] text-slate-500 hover:text-slate-700 underline"
+      >
+        Cancel
+      </button>
+    </div>
+  );
+}
+
 function PlannedItemCard({
   run,
   item,
   busy,
   onToggleSelect,
   onOverride,
+  onReject,
   onResolveInFlight,
 }: {
   run: BillingRunDetail;
@@ -100,6 +251,7 @@ function PlannedItemCard({
   busy: boolean;
   onToggleSelect: () => void;
   onOverride: () => void;
+  onReject: (reason: string) => void;
   onResolveInFlight: (item: RunItem) => void;
 }) {
   const undecided = unresolvedPlaceholders(item);
@@ -362,6 +514,10 @@ function PlannedItemCard({
               {JSON.stringify(item.planned_payload, null, 2)}
             </pre>
           </details>
+
+          <div className="pt-1 border-t border-slate-200">
+            <RejectControl busy={busy} onReject={onReject} />
+          </div>
         </div>
       )}
     </div>
@@ -370,10 +526,21 @@ function PlannedItemCard({
 
 function PreflightView({ run }: { run: BillingRunDetail }) {
   const queryClient = useQueryClient();
-  const planned = run.items.filter((i) => i.status !== 'skipped');
+  // Three groups, because a run can be visited more than once. Drafting bills
+  // what is approved at that moment and leaves the rest here, so a second visit
+  // finds `drafted` rows sitting alongside the ones still to decide — they are
+  // history by then, not something to approve, and must not be offered as such.
+  const planned = run.items.filter(
+    (i) => i.status === 'planned' || i.status === 'approved',
+  );
+  const drafted = run.items.filter(
+    (i) => i.status === 'created' || i.status === 'failed' || i.status === 'in_flight',
+  );
   const skipped = run.items.filter((i) => i.status === 'skipped');
+  const plannedTotal = planned.reduce((s, i) => s + i.planned_amount, 0);
 
   const [resolving, setResolving] = useState<RunItem | null>(null);
+  const [execution, setExecution] = useState<RunExecutionResult | null>(null);
 
   // Approval is persisted, so every gesture is a round trip. The response is
   // the whole run, which becomes the new cache entry.
@@ -391,9 +558,39 @@ function PreflightView({ run }: { run: BillingRunDetail }) {
     mutationFn: (approved: boolean) => setRunApproval(run.id, approved),
     onSuccess,
   });
+  const rejection = useMutation({
+    mutationFn: ({ id, ...body }: { id: string; rejected: boolean; reason?: string }) =>
+      setItemRejection(run.id, id, body),
+    onSuccess,
+  });
+  // "Nothing more goes out from this run." Only reachable once something has
+  // been drafted — a run that drafted nothing is abandoned, not closed, and the
+  // server says so.
+  const closeRun = useMutation({
+    mutationFn: (reason: string) => closeBillingRun(run.id, reason),
+    onSuccess,
+  });
 
-  const busy = itemApproval.isPending || bulkApproval.isPending;
-  const failure = (itemApproval.error ?? bulkApproval.error) as Error | null;
+  // The Harvest write. No optimistic UI and no cache patching — the response is
+  // a report, not the run, so refetch and let the server state redraw. The
+  // report is held in local state because the view it was produced by is about
+  // to unmount into `ResultView`, and a halt must not unmount with it.
+  const createDrafts = useMutation({
+    mutationFn: () => executeRun(run.id),
+    onSuccess: (result) => {
+      setExecution(result);
+      queryClient.invalidateQueries({ queryKey: ['billing-run', run.id] });
+      queryClient.invalidateQueries({ queryKey: ['billing-runs'] });
+      queryClient.invalidateQueries({ queryKey: ['billing-in-flight'] });
+      queryClient.invalidateQueries({ queryKey: ['created-invoices'] });
+    },
+  });
+
+  const busy = itemApproval.isPending || bulkApproval.isPending || rejection.isPending;
+  const failure = (
+    itemApproval.error ?? bulkApproval.error ?? rejection.error ?? createDrafts.error
+      ?? closeRun.error
+  ) as Error | null;
 
   const dormantFlags = run.run_flags.filter((f) => f.code === 'UNMAPPED_PROJECT_NO_TIME');
   const liveFlags = run.run_flags.filter((f) => f.code !== 'UNMAPPED_PROJECT_NO_TIME');
@@ -410,12 +607,22 @@ function PreflightView({ run }: { run: BillingRunDetail }) {
   const undecidedCount = planned.reduce(
     (n, i) => n + unresolvedPlaceholders(i).length, 0,
   );
+  // The server refuses too, but the button should say why rather than fail.
+  const hasInFlight = run.items.some((i) => i.status === 'in_flight');
 
   return (
     <>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatTile label="Invoices to create" value={planned.length} sub={`${skipped.length} groups skipped`} />
-        <StatTile label="Estimated value" value={money(run.planned_total)} />
+        <StatTile
+          label="Invoices to create"
+          value={planned.length}
+          sub={
+            drafted.length > 0
+              ? `${drafted.length} already drafted · ${skipped.length} skipped`
+              : `${skipped.length} groups skipped`
+          }
+        />
+        <StatTile label="Estimated value" value={money(plannedTotal)} />
         <StatTile
           label="Flags"
           value={
@@ -490,9 +697,14 @@ function PreflightView({ run }: { run: BillingRunDetail }) {
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">
-            {planned.length === 1
-              ? 'Planned invoice — not approved until you say so'
-              : `Planned invoices (${planned.length}) — nothing is approved until you say so`}
+            {/* Once a batch has gone out, "planned" is ambiguous — the drafted
+                ones were planned too. Name what is left by what can still
+                happen to it. */}
+            {drafted.length > 0
+              ? `Still to bill from this run (${planned.length})`
+              : planned.length === 1
+                ? 'Planned invoice — not approved until you say so'
+                : `Planned invoices (${planned.length}) — nothing is approved until you say so`}
           </p>
           {/* Bulk controls on a single item are just a second way to click the
               same checkbox. */}
@@ -522,9 +734,11 @@ function PreflightView({ run }: { run: BillingRunDetail }) {
         </div>
         {planned.length === 0 ? (
           <div className="bg-white border border-slate-200 rounded-xl px-4 py-10 text-center">
-            <p className="text-sm text-slate-600">No invoices to create for this run.</p>
+            <p className="text-sm text-slate-600">No invoices left to create for this run.</p>
             <p className="text-xs text-slate-400 mt-1">
-              Every active group was skipped — see the reasons below.
+              {drafted.length > 0
+                ? 'Every group was drafted, skipped, or decided against. Close the run to finish it.'
+                : 'Every active group was skipped — see the reasons below.'}
             </p>
           </div>
         ) : planned.map((item) => (
@@ -539,29 +753,121 @@ function PreflightView({ run }: { run: BillingRunDetail }) {
             onOverride={() => itemApproval.mutate({
               id: item.id, override: !item.error_override,
             })}
+            onReject={(reason) => rejection.mutate({
+              id: item.id, rejected: true, reason,
+            })}
             onResolveInFlight={setResolving}
           />
         ))}
       </div>
+
+      {/* What earlier batches already sent. Read-only: these invoices exist in
+          Harvest, and the one thing that could still be done about them —
+          settling a row whose write never returned — is the button below. */}
+      {drafted.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">
+            Already drafted in this run ({drafted.length})
+          </p>
+          {drafted.map((item) => (
+            <div
+              key={item.id}
+              className={`flex items-start gap-3 border rounded-lg px-4 py-2.5 bg-white ${
+                item.status === 'created'
+                  ? 'border-slate-200 border-l-4 border-l-emerald-500'
+                  : 'border-slate-300 border-l-4 border-l-red-400'
+              }`}
+            >
+              {item.status === 'created'
+                ? <Check className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0 mt-0.5" />
+                : <AlertOctagon className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm text-slate-700">{item.billing_group_name}</span>
+                  <ItemStatusChip status={item.status} />
+                  {item.harvest_invoice_number && (
+                    <span className="text-xs text-slate-500">
+                      #{item.harvest_invoice_number}
+                    </span>
+                  )}
+                </div>
+                {item.error_message && (
+                  <p className="text-xs text-red-700/90 mt-0.5 leading-relaxed">
+                    {item.error_message}
+                  </p>
+                )}
+              </div>
+              <div className="text-right flex-shrink-0">
+                <p className="text-sm text-slate-800 tabular-nums">
+                  {money(item.actual_amount ?? item.planned_amount)}
+                </p>
+                {item.status === 'in_flight' && (
+                  <button
+                    onClick={() => setResolving(item)}
+                    className="text-[11px] text-red-700 hover:text-red-800 font-medium underline"
+                  >
+                    Resolve
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {skipped.length > 0 && (
         <div className="space-y-2">
           <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">
             Skipped ({skipped.length})
           </p>
-          {skipped.map((item) => (
-            <div key={item.id} className="flex items-start gap-3 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5">
-              <SkipForward className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm text-slate-700">{item.billing_group_name}</span>
-                  {item.billing_type && <BillingTypeChip type={item.billing_type} />}
-                  {item.flags.map((f) => <FlagChip key={f.code} flag={f} />)}
+          {/* Two things land here and they are not the same news. A planner
+              skip means there was nothing to bill; a rejection means a human
+              decided against an invoice that was ready. Only the second names
+              a person, and only the second can be undone — undoing a planner
+              skip would conjure an invoice nobody planned. */}
+          {skipped.map((item) => {
+            const rejected = wasRejected(item);
+            return (
+              <div
+                key={item.id}
+                className={`flex items-start gap-3 border rounded-lg px-4 py-2.5 ${
+                  rejected
+                    ? 'bg-white border-slate-300 border-l-4 border-l-red-400'
+                    : 'bg-slate-50 border-slate-200'
+                }`}
+              >
+                {rejected
+                  ? <Ban className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
+                  : <SkipForward className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm text-slate-700">{item.billing_group_name}</span>
+                    {item.billing_type && <BillingTypeChip type={item.billing_type} />}
+                    {item.flags.map((f) => <FlagChip key={f.code} flag={f} />)}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {rejected && (
+                      <span className="text-red-700 font-medium">
+                        Rejected by {item.rejected_by} —{' '}
+                      </span>
+                    )}
+                    {item.skip_reason}
+                  </p>
                 </div>
-                <p className="text-xs text-slate-500 mt-0.5">{item.skip_reason}</p>
+                {rejected && (
+                  <button
+                    onClick={() => rejection.mutate({ id: item.id, rejected: false })}
+                    disabled={busy}
+                    title="Put this group back in the run as undecided"
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-slate-300 text-slate-600 text-[11px] font-medium hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+                  >
+                    <Undo2 className="w-3 h-3" />
+                    Undo
+                  </button>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -569,10 +875,60 @@ function PreflightView({ run }: { run: BillingRunDetail }) {
         <InFlightModal run={run} item={resolving} onClose={() => setResolving(null)} />
       )}
 
-      {/* Monthly-run execution is still unbuilt, and stays behind the reconcile
-          gate (plan a month, invoice it by hand, compare). The single-draw write
-          ships — that path is on the Draws tab, which is where a draw is drafted
-          anyway since it never rides a run. */}
+      {/* A halt has to outlive the card that produced it: resolving the row
+          re-renders this whole view, and the one message saying "an invoice may
+          exist in Harvest and nobody knows" must not go with it. Page level,
+          and it stays until the operator navigates away. */}
+      {execution?.halted && execution.unknown_item && (
+        <div className="bg-red-500/10 border border-red-500/50 rounded-xl px-4 py-3 space-y-2">
+          <div className="flex items-start gap-3">
+            <AlertOctagon className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-red-800">
+                The run stopped — one invoice's outcome is unknown
+              </p>
+              <p className="text-xs text-red-700 mt-1">{execution.unknown_item.message}</p>
+              <p className="text-xs text-red-700 mt-1">{execution.unknown_item.remedy}</p>
+              <p className="text-xs text-red-600/80 mt-1">
+                {execution.created} draft{execution.created === 1 ? '' : 's'} were created
+                before this. Resolve the in-flight row below, then click again to
+                pick up where it left off.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {execution && !execution.halted && (
+        <div className={`border rounded-xl px-4 py-3 ${
+          execution.failed > 0
+            ? 'bg-amber-400/10 border-amber-400/50'
+            : 'bg-emerald-500/10 border-emerald-500/50'
+        }`}>
+          <p className="text-sm font-medium text-slate-800">
+            {execution.created} draft{execution.created === 1 ? '' : 's'} created in Harvest
+            {execution.failed > 0 && `, ${execution.failed} failed`}.
+          </p>
+          {/* Without this the operator reads "2 drafts created" as the month
+              being billed. A batch is not the run. */}
+          {execution.remaining > 0 && (
+            <p className="text-xs text-slate-600 mt-1">
+              {execution.remaining} group{execution.remaining === 1 ? '' : 's'} in this run
+              still {execution.remaining === 1 ? 'has' : 'have'} no invoice — approve and
+              draft {execution.remaining === 1 ? 'it' : 'them'} whenever you are ready, or
+              close the run to decide against {execution.remaining === 1 ? 'it' : 'them'}.
+            </p>
+          )}
+          {execution.items.filter((i) => i.error).map((i) => (
+            <p key={i.billing_run_item_id} className="text-xs text-amber-800 mt-1">
+              <span className="font-medium">{i.billing_group_name}:</span> {i.error}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {/* The single-draw write lives on the Draws tab, because a draw never
+          rides a monthly run. This is its many-invoice counterpart. */}
       <div className="sticky bottom-0 -mx-6 px-6 py-3 bg-white/95 backdrop-blur border-t border-slate-200 flex items-center gap-4">
         <div className="text-sm">
           {run.kind === 'draw' ? (
@@ -597,6 +953,19 @@ function PreflightView({ run }: { run: BillingRunDetail }) {
             </span>
           )}
         </div>
+        {/* Closing sits beside drafting because it is the other answer to the
+            same question: this run has invoices out and groups left, and the
+            operator is either about to bill more of them or done. It appears
+            only once something has been drafted — before that, the run is a
+            plan to throw away, and Abandon in the header does that. */}
+        {run.kind !== 'draw' && drafted.length > 0 && (
+          <CloseRunControl
+            busy={closeRun.isPending}
+            blocked={hasInFlight}
+            remaining={planned.length}
+            onClose={(reason) => closeRun.mutate(reason)}
+          />
+        )}
         {run.kind === 'draw' ? (
           <Link
             to="/invoices/draws"
@@ -606,12 +975,21 @@ function PreflightView({ run }: { run: BillingRunDetail }) {
           </Link>
         ) : (
           <button
-            disabled
-            title="Monthly-run execution is not built yet, and is gated on reconciling a full month by hand. Draws are drafted from the Draws tab."
-            className="ml-auto flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 border border-slate-300 text-slate-500 cursor-not-allowed"
+            onClick={() => createDrafts.mutate()}
+            disabled={createDrafts.isPending || approved.length === 0 || hasInFlight}
+            title={
+              hasInFlight
+                ? 'An invoice from this run is in flight — nobody knows whether Harvest created it. Resolve that first; drafting again could duplicate a real invoice.'
+                : approved.length === 0
+                  ? 'Approve at least one group first'
+                  : `Create ${approved.length} draft invoice${approved.length === 1 ? '' : 's'} in Harvest. Drafts only — nothing is sent to a client.`
+            }
+            className="ml-auto flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/10 border border-emerald-500/50 text-emerald-700 hover:bg-emerald-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            Create {approved.length} draft{approved.length === 1 ? '' : 's'} in Harvest
-            <StubBadge />
+            {createDrafts.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+            {createDrafts.isPending
+              ? `Creating ${approved.length} draft${approved.length === 1 ? '' : 's'}…`
+              : `Create ${approved.length} draft${approved.length === 1 ? '' : 's'} in Harvest`}
           </button>
         )}
       </div>
@@ -719,12 +1097,26 @@ function ResultView({ run }: { run: BillingRunDetail }) {
                       {v === null ? '—' : `${v >= 0 ? '+' : ''}${money(v)}`}
                     </td>
                   </tr>
-                  {(item.error_message || item.flags.length > 0) && (
+                  {(item.error_message || item.flags.length > 0
+                    || (item.unbilled_hours_after ?? 0) > 0) && (
                     <tr className={i < run.items.length - 1 ? 'border-b border-slate-200' : ''}>
                       <td colSpan={6} className="px-4 pb-3 -mt-1">
                         {item.error_message && (
                           <p className="text-xs text-red-700/90 font-mono leading-relaxed">
                             {item.error_message}
+                          </p>
+                        )}
+                        {/* An observation about Harvest, not a failure. Zero is
+                            expected and renders nothing; null means the check
+                            did not run and also renders nothing. */}
+                        {(item.unbilled_hours_after ?? 0) > 0 && (
+                          <p className="text-xs text-amber-700 leading-relaxed">
+                            Harvest still reports {item.unbilled_hours_after} billable
+                            hrs unbilled for this period, across{' '}
+                            {item.unbilled_entries_after} entr
+                            {item.unbilled_entries_after === 1 ? 'y' : 'ies'}. The import
+                            did not pick them up — check for unapproved time or entries
+                            with no rate.
                           </p>
                         )}
                         {item.flags.map((f) => (
@@ -754,6 +1146,13 @@ export default function RunDetail() {
     queryKey: ['billing-run', runId],
     queryFn: () => getBillingRun(runId),
     enabled: !!runId,
+    // Never served stale, for the same reason the draw preview never is: each
+    // pending item's due date is computed from *today*, so a run left open
+    // overnight would show a due date the create will not use — and the whole
+    // ADR-0004 claim is that the payload on screen is the payload sent.
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   });
 
   const replan = useMutation({
@@ -794,6 +1193,13 @@ export default function RunDetail() {
   }
 
   const isPreflight = run.status === 'awaiting_approval' || run.status === 'planning';
+  // A run that has drafted into Harvest cannot be abandoned — `abandoned` reads
+  // everywhere as "this produced nothing", and its invoices are in front of
+  // clients. Closing it is the footer's job; the server refuses either way, but
+  // a button that always 409s is worse than no button.
+  const hasDrafted = run.items.some(
+    (i) => i.status === 'created' || i.status === 'failed' || i.status === 'in_flight',
+  );
   // A draw run bills one milestone off-cycle. It has no period to re-plan, so
   // the month framing and the Re-plan action would both be nonsense.
   const isDraw = run.kind === 'draw';
@@ -831,13 +1237,15 @@ export default function RunDetail() {
         </div>
         {isPreflight && (
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => abandon.mutate()}
-              disabled={abandon.isPending}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-50 transition-colors"
-            >
-              {isDraw ? 'Discard' : 'Abandon run'}
-            </button>
+            {!hasDrafted && (
+              <button
+                onClick={() => abandon.mutate()}
+                disabled={abandon.isPending}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-50 transition-colors"
+              >
+                {isDraw ? 'Discard' : 'Abandon run'}
+              </button>
+            )}
             {!isDraw && (
               <button
                 onClick={() => replan.mutate()}

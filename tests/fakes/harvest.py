@@ -118,10 +118,15 @@ class FakeHarvest:
         billable: bool = True, is_billed: bool = False,
         task_id: int = 1, task_name: str = "Engineering",
         user_name: str = "M. Alvarez", approval_status: str = "approved",
-        project_name: str | None = None,
+        project_name: str | None = None, importable: bool = True,
     ) -> None:
+        """`importable=False` means Harvest's own import leaves this entry
+        behind — locked, mid-approval, whatever. The reason is Harvest's
+        business; what this exists to test is that we *notice*, which is what
+        `verify.count_unbilled_after` is for."""
         project = next((p for p in self.projects if p["id"] == project_id), None)
         self.time_entries.setdefault(project_id, []).append({
+            "importable": importable,
             "id": len(self.time_entries.get(project_id, [])) + 1,
             "spent_date": spent_date,
             "hours": hours,
@@ -160,10 +165,38 @@ class FakeHarvest:
     def add_invoice(
         self, client_id: int, *, invoice_id: int, number: str,
         issue_date: str, amount: float,
+        project_ids: list[int] | None = None,
     ) -> None:
+        """`project_ids` builds one line item per project, as Harvest returns them.
+
+        The duplicate guard reads these to decide whether an invoice belongs to
+        the billing group being planned or to another engagement of the same
+        client, so the distinction has to be expressible here. Omit it for the
+        hand-typed case: an invoice whose lines carry no project at all, which
+        can be attributed to nobody.
+        """
+        line_items = [
+            {
+                "id": invoice_id * 100 + n,
+                "kind": "Service",
+                "description": f"Line {n}",
+                "amount": amount,
+                "project": {"id": pid, "name": f"Project {pid}", "code": ""},
+            }
+            for n, pid in enumerate(project_ids or [])
+        ] or [
+            {
+                "id": invoice_id * 100,
+                "kind": "Service",
+                "description": "Typed by hand",
+                "amount": amount,
+                "project": None,
+            }
+        ]
         self.invoices.setdefault(client_id, []).append({
             "id": invoice_id, "number": number,
             "issue_date": issue_date, "amount": amount, "state": "draft",
+            "line_items": line_items,
         })
 
     # ── Fake API surface ────────────────────────────────────────────────────
@@ -240,23 +273,80 @@ class FakeHarvest:
             raise self._create_failures.pop(0)
 
         self._next_invoice_id += 1
+        invoice = {
+            "id": self._next_invoice_id,
+            "number": f"INV-{self._next_invoice_id}",
+            "amount": 0.0,
+            "state": "draft",
+            "client": {"id": payload.get("client_id")},
+        }
+
         requested = sum(
             float(li.get("unit_price") or 0) * float(li.get("quantity") or 1)
             for li in payload.get("line_items", [])
         )
-        invoice = {
-            "id": self._next_invoice_id,
-            "number": f"INV-{self._next_invoice_id}",
-            "amount": (
-                self.create_invoice_amount
-                if self.create_invoice_amount is not None
-                else round(requested, 2)
-            ),
-            "state": "draft",
-            "client": {"id": payload.get("client_id")},
-        }
+        requested += self._import_and_mark_billed(payload, invoice)
+
+        invoice["amount"] = (
+            self.create_invoice_amount
+            if self.create_invoice_amount is not None
+            else round(requested, 2)
+        )
         self.created_invoices.append({"payload": dict(payload), "invoice": invoice})
         return invoice
+
+    def _import_and_mark_billed(self, payload: dict, invoice: dict) -> float:
+        """Harvest's `line_items_import` behaviour, which is the whole point.
+
+        Harvest generates the line items itself from the unbilled time (and
+        expenses) in the window, and **marks each record billed**, stamping the
+        invoice on it. `is_billed` is read-only on the real API, so this is the
+        only way it is ever set — a payload that sent free-form `line_items`
+        instead would leave every entry uninvoiced, and next month's plan would
+        bill the same hours again.
+
+        Modelling it here rather than faking a total means a change that drops
+        `line_items_import` fails loudly: nothing gets marked, and the
+        post-write check in `verify` reports the leftovers.
+        """
+        block = payload.get("line_items_import") or {}
+        stamp = {"id": invoice["id"], "number": invoice["number"]}
+        total = 0.0
+
+        time_block = block.get("time") or {}
+        if time_block:
+            for project_id in block.get("project_ids") or []:
+                for entry in self.time_entries.get(project_id, []):
+                    if not self._importable(entry, time_block):
+                        continue
+                    entry["is_billed"] = True
+                    entry["invoice"] = stamp
+                    total += float(entry["hours"]) * float(entry["billable_rate"] or 0)
+
+        expense_block = block.get("expenses") or {}
+        if expense_block:
+            for project_id in block.get("project_ids") or []:
+                for expense in self.expenses.get(project_id, []):
+                    if not self._importable(expense, expense_block):
+                        continue
+                    expense["is_billed"] = True
+                    expense["invoice"] = stamp
+                    total += float(expense["total_cost"] or 0)
+
+        return total
+
+    @staticmethod
+    def _importable(record: dict, window: dict) -> bool:
+        if record.get("is_billed") or not record.get("billable"):
+            return False
+        if not record.get("importable", True):
+            return False
+        from_, to = window.get("from"), window.get("to")
+        # Harvest pulls *all* unbilled records when the window is omitted, which
+        # is why the payload builder always sends both bounds.
+        if from_ and record["spent_date"] < from_:
+            return False
+        return not (to and record["spent_date"] > to)
 
     # ── Installation ────────────────────────────────────────────────────────
 
@@ -266,6 +356,8 @@ class FakeHarvest:
         "app.services.billing.estimator.harvest",
         "app.services.billing.duplicate_guard.harvest",
         "app.services.billing.draws.harvest",
+        "app.services.billing.execute.harvest",
+        "app.services.billing.verify.harvest",
     )
 
     def install(self, monkeypatch) -> "FakeHarvest":

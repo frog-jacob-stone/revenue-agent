@@ -5,11 +5,17 @@ UI, authenticated, and audited — and none of them is in any agent's
 `allowed_tools`.
 
 Unbreakable Rule #1 and ADR-0004: the rule requires a human to authorize the
-specific payload, not that an `approvals` row exist. For `POST /draws/{id}/invoice`
-— the one endpoint in this system that writes to Harvest — the operator has just
-read the exact invoice via `GET /draws/{id}/preview`, and their click is the
-authorization. There is no approval row and no executor. Everything else here
-writes only to our own store.
+specific payload, not that an `approvals` row exist. Two endpoints here write to
+Harvest, and both satisfy it the same way — by showing the exact body first:
+
+  - `POST /draws/{id}/invoice` — the operator has just read the invoice via
+    `GET /draws/{id}/preview`.
+  - `POST /runs/{run_id}/execute` — the operator has just read every approved
+    group's payload on the pre-flight, served by `GET /runs/{run_id}`.
+
+Neither takes the payload from the caller, precisely so the body sent cannot
+differ from the body seen. There is no approval row and no executor behind
+either. Everything else here writes only to our own store.
 """
 from __future__ import annotations
 
@@ -33,6 +39,7 @@ from app.models.billing import (
     BillingSettings,
     BillingSettingsUpdate,
     BulkApprovalRequest,
+    CloseRunRequest,
     CreatedInvoice,
     CreatedInvoiceTotals,
     DrawInvoiceRequest,
@@ -46,15 +53,18 @@ from app.models.billing import (
     InFlightItem,
     InvoiceItemCategory,
     ItemApprovalRequest,
+    ItemRejectionRequest,
     PlaceholderResolutionRequest,
     PlanRunRequest,
     ResolveInFlightRequest,
     ResolveInFlightResponse,
+    RunExecutionResult,
     SnapshotRefreshResponse,
 )
 from app.services.billing import (
     catalog,
     draws,
+    execute,
     harvest_snapshot,
     inflight,
     invoices,
@@ -545,6 +555,82 @@ async def set_item_approval(
     return BillingRunDetail.model_validate(await planner.get_run(pool, run_id))
 
 
+@router.post("/runs/{run_id}/execute", response_model=RunExecutionResult)
+async def execute_run(
+    run_id: UUID,
+    pool: asyncpg.Pool = Depends(_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Create a Harvest **draft** invoice for every approved group. Human-only.
+
+    Operator-initiated per ADR-0004, and the reason it takes no request body:
+    the payloads are the ones the pre-flight just displayed, served re-dated for
+    today by `GET /runs/{run_id}`, and the click is the authorization. Accepting
+    a body would let a caller send something other than what was on screen.
+    Nothing calls this but the UI — no scheduler, no agent, no executor.
+
+    **200 even when some invoices failed.** A run is many independent writes; a
+    422 from Harvest on one group says nothing about the next, so the loop
+    continues and the response body is the report. `created` and `failed` are
+    both counted there, per group.
+
+    **200 even when the run halted**, which is the one place this departs from
+    `POST /draws/{id}/invoice` and its 502. A halt means one POST returned no
+    verdict and its invoice may exist — but by then this run has usually created
+    real invoices, and answering 502 would throw away the only record of which.
+    So `halted` is true and `unknown_item` carries the same
+    `billing_run_id` / `billing_run_item_id` / `remedy` shape the draw path's
+    502 detail does. The caller must surface it just as loudly: the remaining
+    groups were not attempted, and the run resumes only once a human resolves
+    that row.
+
+    409 covers everything refused before a single POST: wrong run state, a draw
+    run, nothing approved, or an unresolved in-flight row from last time.
+    """
+    try:
+        result = await execute.execute_run(
+            pool, settings, run_id, actor=user.email or str(user.id),
+        )
+    except execute.RunNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except execute.RunExecutionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return RunExecutionResult.model_validate(result)
+
+
+@router.post("/runs/{run_id}/items/{item_id}/rejection", response_model=BillingRunDetail)
+async def set_item_rejection(
+    run_id: UUID,
+    item_id: UUID,
+    body: ItemRejectionRequest,
+    pool: asyncpg.Pool = Depends(_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Decide against invoicing one group this run, or undo that. Human-only.
+
+    Distinct from un-approving, which only returns the group to undecided.
+    Rejecting says the invoice is not going out and records why — the case this
+    exists for is a group already invoiced by hand, where drafting again would
+    put a duplicate in front of a real client.
+
+    409 covers every refused transition: a run past review, an item that has
+    already been sent, a rejection with no reason, or an undo on a row the
+    planner skipped rather than an operator rejected.
+    """
+    try:
+        found = await review.set_item_rejection(
+            pool, run_id, item_id,
+            rejected=body.rejected,
+            reason=body.reason,
+            actor=user.email or str(user.id),
+        )
+    except review.ApprovalError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not found:
+        raise HTTPException(status_code=404, detail="Billing run item not found")
+    return BillingRunDetail.model_validate(await planner.get_run(pool, run_id))
+
+
 @router.post(
     "/runs/{run_id}/items/{item_id}/placeholders/{line_item_id}",
     response_model=BillingRunDetail,
@@ -639,6 +725,36 @@ async def set_run_approval(
     if detail is None:
         raise HTTPException(status_code=404, detail="Billing run not found")
     return BillingRunDetail.model_validate(detail)
+
+
+@router.post("/runs/{run_id}/close", response_model=BillingRunDetail)
+async def close_billing_run(
+    run_id: UUID,
+    body: CloseRunRequest,
+    pool: asyncpg.Pool = Depends(_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Finish a run that has drafted some groups and will not draft the rest.
+
+    A click on "Create drafts" bills the groups approved at that moment and
+    leaves the run open for another batch, so something has to say the run is
+    over. This is it: the remaining groups are recorded as decided against —
+    reason and actor attached, visible in the run's Skipped section — and the
+    run settles to `completed` or `failed`.
+
+    409 when the run is not resting on the pre-flight, when a row is still in
+    flight (resolve it first; it may be an invoice), or when the run has drafted
+    nothing at all — that run is abandoned, not closed.
+    """
+    try:
+        result = await review.close_run(
+            pool, run_id, reason=body.reason, actor=user.email or str(user.id),
+        )
+    except review.ApprovalError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not result:
+        raise HTTPException(status_code=404, detail="Billing run not found")
+    return BillingRunDetail.model_validate(await planner.get_run(pool, run_id))
 
 
 @router.post("/runs/{run_id}/abandon", response_model=BillingRunDetail)

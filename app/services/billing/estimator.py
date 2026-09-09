@@ -44,7 +44,6 @@ class Estimate:
     unapproved_entries: list[dict[str, Any]] = field(default_factory=list)
     straggler_hours: float = 0.0
     straggler_earliest: date | None = None
-    late_hours: float = 0.0
     has_any_time: bool = False
 
 
@@ -119,9 +118,7 @@ async def estimate_group(
             bucket["hours"] += hours
             bucket["amount"] += hours * rate
 
-        await _collect_straggler_and_late(
-            cfg, est, project_id=project_id, period=period
-        )
+        await _collect_stragglers(cfg, est, project_id=project_id, period=period)
 
     for (label, detail), b in buckets.items():
         hours = round(b["hours"], 2)
@@ -183,18 +180,23 @@ async def _add_expenses(
         est.total += amount
 
 
-async def _collect_straggler_and_late(
+async def _collect_stragglers(
     cfg: Settings,
     est: Estimate,
     *,
     project_id: int,
     period: Period,
 ) -> None:
-    """Uninvoiced billable time sitting outside the service period.
+    """Uninvoiced billable time dated *before* the service period.
 
-    Stragglers (before the period) will not be captured by the bounded
-    from/to import and roll silently forward. Late time (after the period on an
-    arrears group) is next month's problem but worth surfacing now.
+    The import's `from`/`to` are bounded to the period, so this time is not
+    captured and rolls silently forward — which is why it needs saying.
+
+    There is deliberately no symmetric check for time logged *after* the
+    period. Billing August on 9 September always finds September time; that is
+    the next invoice doing its job, not a finding, and flagging it fired a
+    warning on every arrears group every month. Removing it also removes a
+    second Harvest round-trip per project per plan.
     """
     lookback_start = period.start - timedelta(days=STRAGGLER_LOOKBACK_DAYS)
     before = await harvest.list_time_entries(
@@ -213,17 +215,4 @@ async def _collect_straggler_and_late(
             if est.straggler_earliest is None or spent_date < est.straggler_earliest:
                 est.straggler_earliest = spent_date
 
-    today = date.today()
-    if period.end < today:
-        after = await harvest.list_time_entries(
-            cfg,
-            project_id=project_id,
-            from_=(period.end + timedelta(days=1)).isoformat(),
-            to=today.isoformat(),
-        )
-        for entry in after:
-            if rates.is_uninvoiced_billable(entry):
-                est.late_hours += rates.effective_hours(entry)
-
     est.straggler_hours = round(est.straggler_hours, 2)
-    est.late_hours = round(est.late_hours, 2)

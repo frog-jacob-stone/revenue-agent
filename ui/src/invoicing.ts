@@ -242,6 +242,10 @@ export interface ResolveInFlightResult {
   status: string;
   fixed_fee_schedule_item_id: string | null;
   harvest_invoice_id: number | null;
+  /** The run's status after the resolution — not always terminal. A monthly run
+   *  that halted here stays `executing` while approved groups still wait to be
+   *  drafted, and should be offered a resume rather than reported as done. */
+  run_status: RunStatus | null;
 }
 
 /** A draw as submitted by the group form. `id` is null for a new row. */
@@ -403,9 +407,70 @@ export interface RunItem {
   approved_at: string | null;
   approved_by: string | null;
   error_override: boolean;
+  /** `status === 'skipped'` covers two things. `rejected_by` set means an
+   *  operator decided against this invoice and `skip_reason` is their words;
+   *  null means the planner found nothing to bill. Only the first is undoable. */
+  rejected_at: string | null;
+  rejected_by: string | null;
+  /** Measured just after the invoice was created: billable time Harvest still
+   *  reports as unbilled for this item's projects over its service period.
+   *  Null = not checked (a free-form invoice, or the check itself failed). */
+  unbilled_hours_after: number | null;
+  unbilled_entries_after: number | null;
   estimated_line_items: EstimatedLineItem[];
   planned_payload: Record<string, unknown>;
   flags: Flag[];
+}
+
+/** Whether this skipped row was an operator's decision rather than the
+ *  planner's. Only these can be undone — a planner skip had nothing to bill. */
+export function wasRejected(item: RunItem): boolean {
+  return item.status === 'skipped' && item.rejected_by !== null;
+}
+
+/** What happened to one group's invoice during a run's execution. */
+export interface RunExecutionItem {
+  billing_run_item_id: string;
+  billing_group_name: string;
+  status: 'created' | 'failed' | 'in_flight' | 'skipped';
+  harvest_invoice_id: number | null;
+  harvest_invoice_number: string | null;
+  planned_amount: number;
+  actual_amount: number | null;
+  variance: number | null;
+  issue_date: string | null;
+  due_date: string | null;
+  error: string | null;
+  unbilled_hours_after: number | null;
+  unbilled_entries_after: number | null;
+}
+
+/**
+ * The outcome of one click on "Create drafts in Harvest".
+ *
+ * Per item, not a single verdict: a run is many independent writes and a
+ * refusal on one says nothing about the next. `halted` means execution stopped
+ * early on an unknown outcome — the remaining approved groups were never
+ * attempted and are still approved, and the run resumes only once a human
+ * settles `unknown_item`. This arrives as a 200; do not read the status code
+ * as "everything worked".
+ *
+ * A click drafts the groups approved at that moment, not the whole run, so
+ * `remaining` is how many groups this run could still bill afterwards. Non-zero
+ * means the run is back on the pre-flight (`awaiting_approval`) awaiting the
+ * next batch — say so, or the operator reads "3 drafts created" as the month
+ * being done.
+ */
+export interface RunExecutionResult {
+  billing_run_id: string;
+  status: RunStatus;
+  attempted: number;
+  created: number;
+  failed: number;
+  remaining: number;
+  items: RunExecutionItem[];
+  halted: boolean;
+  unknown_item: UnknownWriteDetail | null;
 }
 
 export type RunKind = 'monthly' | 'draw';

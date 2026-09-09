@@ -59,9 +59,21 @@ class AuditEvent(StrEnum):
     BILLING_GROUP_DEACTIVATED = "billing.group.deactivated"
     BILLING_RUN_PLANNED = "billing.run.planned"
     BILLING_RUN_ABANDONED = "billing.run.abandoned"
+    # Distinct from ABANDONED, and the distinction is whether invoices exist. A
+    # closed run drafted some groups and decided against the rest; an abandoned
+    # run drafted nothing and was thrown away. The payload lists the groups the
+    # close decided against, since each of them is a client who got no invoice.
+    BILLING_RUN_CLOSED = "billing.run.closed"
     BILLING_ITEM_APPROVED = "billing.item.approved"
     BILLING_ITEM_UNAPPROVED = "billing.item.unapproved"
     BILLING_ITEM_OVERRIDDEN = "billing.item.overridden"
+    # Rejection is not the opposite of approval — UNAPPROVED means undecided,
+    # REJECTED means decided against. The payload carries the reason and it is
+    # required, because this row is the only record of why a client did not get
+    # an invoice that a run had planned for them. "Why did Acme get nothing in
+    # September" is answerable only here.
+    BILLING_ITEM_REJECTED = "billing.item.rejected"
+    BILLING_ITEM_UNREJECTED = "billing.item.unrejected"
     # Placeholder resolution. The payload carries the amount, because this is
     # the one number on a recurring invoice that no config row can account for
     # — "who said August's hosting was $1,240" is the question worth answering
@@ -109,6 +121,12 @@ class AuditEvent(StrEnum):
     # created during an outage that never returned still has a record on our side.
     # UNKNOWN is the ambiguous one — a timeout or 5xx where the invoice may or may
     # not exist. It is never inferred to be a failure.
+    #
+    # The two RUN_EXECUTION_* events bracket a monthly run, which writes many
+    # invoices in one gesture. They carry the counts; the per-invoice detail is
+    # in the four events below, identically for a monthly item and a draw.
+    BILLING_RUN_EXECUTION_STARTED = "billing.run.execution.started"
+    BILLING_RUN_EXECUTED = "billing.run.executed"
     BILLING_INVOICE_ATTEMPTED = "billing.invoice.attempted"
     BILLING_INVOICE_CREATED = "billing.invoice.created"
     BILLING_INVOICE_FAILED = "billing.invoice.failed"
@@ -157,9 +175,12 @@ BILLING_GROUP_UPDATED = AuditEvent.BILLING_GROUP_UPDATED
 BILLING_GROUP_DEACTIVATED = AuditEvent.BILLING_GROUP_DEACTIVATED
 BILLING_RUN_PLANNED = AuditEvent.BILLING_RUN_PLANNED
 BILLING_RUN_ABANDONED = AuditEvent.BILLING_RUN_ABANDONED
+BILLING_RUN_CLOSED = AuditEvent.BILLING_RUN_CLOSED
 BILLING_ITEM_APPROVED = AuditEvent.BILLING_ITEM_APPROVED
 BILLING_ITEM_UNAPPROVED = AuditEvent.BILLING_ITEM_UNAPPROVED
 BILLING_ITEM_OVERRIDDEN = AuditEvent.BILLING_ITEM_OVERRIDDEN
+BILLING_ITEM_REJECTED = AuditEvent.BILLING_ITEM_REJECTED
+BILLING_ITEM_UNREJECTED = AuditEvent.BILLING_ITEM_UNREJECTED
 BILLING_PLACEHOLDER_RESOLVED = AuditEvent.BILLING_PLACEHOLDER_RESOLVED
 BILLING_PLACEHOLDER_CLEARED = AuditEvent.BILLING_PLACEHOLDER_CLEARED
 BILLING_DRAW_RELEASED = AuditEvent.BILLING_DRAW_RELEASED
@@ -172,6 +193,8 @@ CONTRACT_CLIENT_CREATED = AuditEvent.CONTRACT_CLIENT_CREATED
 CONTRACT_CLIENT_UPDATED = AuditEvent.CONTRACT_CLIENT_UPDATED
 CONTRACT_CLIENT_DELETED = AuditEvent.CONTRACT_CLIENT_DELETED
 CONTRACT_DRAFT_GENERATED = AuditEvent.CONTRACT_DRAFT_GENERATED
+BILLING_RUN_EXECUTION_STARTED = AuditEvent.BILLING_RUN_EXECUTION_STARTED
+BILLING_RUN_EXECUTED = AuditEvent.BILLING_RUN_EXECUTED
 BILLING_INVOICE_ATTEMPTED = AuditEvent.BILLING_INVOICE_ATTEMPTED
 BILLING_INVOICE_CREATED = AuditEvent.BILLING_INVOICE_CREATED
 BILLING_INVOICE_FAILED = AuditEvent.BILLING_INVOICE_FAILED

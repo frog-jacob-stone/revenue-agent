@@ -213,7 +213,7 @@ Phase 4 (partial) — Recurring monthly — `[x]`
 - [x] `in_flight` — the fourth derived state, read from the live ledger row. Keeps a draw mid-write out of the billable queue and locks its billable fields
 - [x] `DRAW_OVERDUE` / `DRAWS_AWAITING_RELEASE` / `DRAWS_READY_TO_BILL` on the monthly run, so a delivered milestone can't sit unbilled unnoticed
 
-Phase 3 — Execution — `[~]` **the single-draw write path ships; the monthly run's does not.**
+Phase 3 — Execution — `[x]` **both write paths ship** — one draw at a time, and the monthly run (2026-09-09).
 Plan: `.agent/plans/23.draw-invoice-write-path.md`. Operator-initiated with no approval
 row ([ADR-0004](docs/adr/0004-operator-initiated-writes.md)) — the system is
 automation-first now, and the click on a screen showing the exact payload *is* the
@@ -232,17 +232,26 @@ authorization.
 - [x] **A billed draw no longer vanishes.** Three separate causes, all fixed: the in-card success banner unmounted with the card the moment the draw became `invoiced`; nothing listed billed draws; and draw runs were filtered out of the runs list by default. Now a dismissible page-level confirmation on Draws, plus `/invoices/runs?kind=draw` pre-selecting the draw filter
 - [x] **Drafted tab** (`/invoices/drafted`, `GET /billing/invoices` + `/totals`, `app/services/billing/invoices.py`) — every invoice the system created, both kinds in one list, because the ledger records both and "what have we drafted" is not a question about runs. Named "Drafted" rather than "Billed": the system pushes a draft to Harvest and stops, and billing happens when a human sends it from there. Kind-agnostic by construction: monthly rows appear once that execution ships, with no code change. Filters by kind, can show failed attempts separately, and never counts `failed` or `in_flight` as drafted. Ordered by creation with `harvest_invoice_id` as tiebreak — issue dates are backdated for monthly runs, and one transaction stamps a single `now()`
 - [x] `HARVEST_BASE_URI` for linking out to a created invoice — no API exposes the account web address. Unset, the UI omits the link rather than guessing a subdomain
-- [ ] **Decide the monthly run's dating rule before its execution ships.** `resolve_period` dates those to the period boundary (PRD §2.3), so a July-arrears run executed 3 Sep would be issued 31 Jul and already overdue on net 30. The draw behaviour above does **not** carry over automatically
-- [ ] Monthly-run execution (`create_harvest_draft_invoices` across many groups, sequential, partial-failure handling)
-- [ ] Post-run variance reconciliation
+- [x] **The monthly run's dating rule, decided 2026-09-09: issued on the period boundary, due from the draft day.** PRD §2.3's issue date is the right accounting answer and stays; what could not stay is a July-arrears run drafted 3 September arriving already overdue on net 30. `dates.resolve_draft_dating` moves only the due date. The cost is that every monthly payload now goes out as `payment_term: "custom"` — Harvest derives the due date from the issue date for every enum term, so there is no other way to split them. Net days come from the frozen row (`due_date − issue_date`), never from live group config
+- [x] **Monthly-run execution** — `app/services/billing/execute.py`, `POST /billing/runs/{run_id}/execute`, and the live button on the pre-flight (was a disabled stub). Sequential, same §8 protocol per item as a draw, with the one rule a batch adds: a 4xx fails that group and the loop continues, but an **unknown outcome halts the run** — remaining groups stay approved and un-attempted, the run stays `executing`, and clicking again after a human resolves the row resumes. Answers 200 even when halted, because by then it has usually created real invoices and a 502 would discard the record of which; the unknown rides in the body as `halted` + `unknown_item`
+- [x] **`write_protocol.py`** — the failure/unknown recorders and `settle_run_status`, shared by draws and the monthly run. `inflight.resolve_item` used to mark the run completed unconditionally, which is right for a one-item draw run and would have stranded a monthly run's remaining groups
+- [x] **Post-write verification** (`app/services/billing/verify.py`, migration `38`) — after each T&M invoice, count the billable time Harvest still reports unbilled for those projects over that period, and record it. Zero is expected: `line_items_import` is what marks the time billed, and nothing had ever checked that it did. Non-zero is shown as an observation and blocks nothing — unapproved time and rate-less entries are ordinary causes
+- [x] **Reject one invoice from a run** (migration `39`, `review.set_item_rejection`, `POST /billing/runs/{run_id}/items/{item_id}/rejection`). Un-approving only means undecided; the case that needed more is a recurring group already invoiced by hand, where the run wants to create a duplicate. Reuses `skipped` with `rejected_by` marking an operator's decision, and requires a reason — that row is the only record of why a planned client got nothing
+- [x] **`EXISTING_HARVEST_INVOICE` is scoped to the group's projects**, not the client. A firm with several engagements was warned every month because a different project's invoice went out. Invoices with no project on any line become `UNATTRIBUTED_HARVEST_INVOICE` at `info` rather than disappearing
+- [x] **`LATE_TIME` deleted.** Billing August in September always finds September time; the flag fired on every arrears group every month and had no action behind it. `STRAGGLER_TIME` — uninvoiced time *before* the period, which the bounded import will miss again — is the half worth saying. Also removes a Harvest round-trip per project per plan
+- [ ] Post-run variance reconciliation (per-row variance is stored; there is still no run-level report or threshold flag)
 - [ ] Candidate-invoice picker for in-flight resolution (today: paste the id from Harvest)
+- [x] **Drafting a subset no longer finishes the run** (2026-09-09). Approving one group of nine and clicking used to mark the whole run `completed`, which locked the other eight out of the run they were planned in — `execute` and `review` both refuse a completed run. A click is now a batch over whatever is approved at that moment: `settle_run_status` sends a run with leftover `planned` rows back to `awaiting_approval`, and the response carries `remaining` so the banner does not read as "the month is billed". The run ends by being closed (`review.close_run`, `POST /billing/runs/{id}/close` — the remainder is rejected with a reason and an actor) or by the month being re-planned, which sweeps the same remainder and settles the old run rather than relabelling it `abandoned`. Abandoning is refused once a run has drafted anything
+- [ ] Per-group subset *selection* at execute time is still **decided against** — a checkbox at the button is not how a group is taken out of a run; rejection is, and it leaves a reason behind. The fix above is about *when* approved groups are drafted, not *which*
 
 Phase 4 — remainder — `[x]`. Every `billing_type` is handled: T&M and `recurring_monthly` plan, `fixed_fee_schedule` bills off-cycle from the Draws tab, `manual` is skipped with no ledger row.
 
-**Gate before monthly-run execution:** run the pre-flight against production Harvest
-and reconcile a full month by hand. Note the ordering trap — the estimator only counts
-time Harvest has not marked `is_billed`, so an already-invoiced month re-plans to
-empty. Plan first, invoice by hand second, compare third.
+**Gate before the monthly run's first live use:** run the pre-flight against production
+Harvest and reconcile a full month by hand. The code does not enforce this — it is an
+operating instruction, and the button now works. Note the ordering trap: the estimator
+only counts time Harvest has not marked `is_billed`, so an already-invoiced month
+re-plans to empty. Plan first, invoice by hand second, compare third. And on the first
+real run, approve one group rather than all of them.
 
 The gate does **not** cover the draw path and never did: a draw's amount is a number a
 human typed into the schedule and released, so there is no estimate to reconcile.

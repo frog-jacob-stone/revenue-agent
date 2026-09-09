@@ -131,6 +131,28 @@ def build_time_and_materials_payload(
     return payload
 
 
+def apply_draft_dating(
+    body: dict[str, Any], *, payment_term: str, due_date: date
+) -> dict[str, Any]:
+    """A copy of `body` re-dated for the day it is actually being drafted.
+
+    Pure, and deliberately so: the run-detail read and the executor both call
+    it, which is what makes the payload on screen literally the payload that
+    gets sent ([ADR-0004](../../../docs/adr/0004-operator-initiated-writes.md)
+    condition 1). If only the executor applied it, the operator would approve
+    one due date and the client would receive another.
+
+    Only the dating changes. `issue_date`, the line items, the notes, and
+    everything else the planner froze are carried through untouched.
+    """
+    dated = {**body, "payment_term": payment_term}
+    if payment_term == "custom":
+        dated["due_date"] = due_date.isoformat()
+    else:
+        dated.pop("due_date", None)
+    return dated
+
+
 def build_free_form_payload(
     *,
     harvest_client_id: int,

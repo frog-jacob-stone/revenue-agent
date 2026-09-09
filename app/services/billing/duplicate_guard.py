@@ -7,19 +7,30 @@ Two layers:
      says. (The partial unique index enforces this at the DB level too; this
      produces the readable flag.)
 
-  2. **Harvest** — an invoice already exists for this client in the period
-     window.
+  2. **Harvest** — an invoice already exists for this group's projects in the
+     period window.
 
-Layer 2 needs care. `GET /v2/invoices` filters by **client**, not by billing
-group, so a client with more than one group will legitimately have several
-invoices in the window — one per group. Flagging on client alone would fire on
-every multi-group client every month, and a warning that always fires is a
-warning nobody reads.
+Layer 2 needs care, and got it wrong the first time. `GET /v2/invoices` filters
+by **client**, not by billing group, so a client with more than one engagement
+will legitimately have several invoices in the window. The original version
+cross-referenced the ledger and flagged whatever this system had not created —
+which still fired on every hand-made invoice for a *different* project of the
+same client, monthly, on exactly the clients most likely to have one. A warning
+that always fires is a warning nobody reads.
 
-So: cross-reference the ledger and flag only invoices this system did not
-create. An invoice we recorded is expected. One we didn't — created by hand in
-the Harvest UI, or by an earlier run whose ledger row was lost — is worth a
-human look.
+Two filters now, in order:
+
+  1. **Drop invoices we created.** A ledger row means it was expected,
+     including one belonging to another group of the same client.
+  2. **Keep only invoices that touch this group's projects.** Every invoice
+     line item carries a `project`, whether Harvest generated it from
+     `line_items_import` or a human typed it in the UI against a project. An
+     invoice whose lines all point elsewhere is another engagement's business.
+
+An invoice with no project on any line is the residue: hand-typed, attributable
+to nobody. It is returned separately rather than dropped, because a
+hand-created duplicate is precisely what this guard exists to catch, and the
+caller flags it at `info` — visible, blocking nothing.
 """
 from __future__ import annotations
 
@@ -74,18 +85,37 @@ async def find_created_this_month(
     return dict(row) if row else None
 
 
+def invoice_project_ids(invoice: dict[str, Any]) -> set[int]:
+    """Every project referenced by an invoice's line items.
+
+    Empty means the invoice carries no project attribution at all — its lines
+    were typed by hand with no project attached, so it cannot be assigned to a
+    billing group or ruled out of one.
+    """
+    found: set[int] = set()
+    for line in invoice.get("line_items") or []:
+        project = line.get("project") or {}
+        pid = project.get("id")
+        if pid is not None:
+            found.add(int(pid))
+    return found
+
+
 async def find_unrecognized_harvest_invoices(
     pool: asyncpg.Pool,
     cfg: Settings,
     *,
     harvest_client_id: int,
+    project_ids: list[int],
     window_start: date,
     window_end: date,
-) -> list[dict[str, Any]]:
-    """Invoices in the window that this system has no ledger row for.
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """`(on_this_group, unattributable)` — invoices in the window with no ledger row.
 
-    Invoices we created are expected — including the ones belonging to a
-    *different* billing group of the same client.
+    The first list touches at least one of `project_ids` and is the real
+    duplicate signal. The second carries no project on any line and so cannot
+    be placed. Invoices belonging wholly to another engagement of the same
+    client appear in neither; see the module docstring.
     """
     invoices = await harvest.list_invoices(
         cfg,
@@ -94,7 +124,7 @@ async def find_unrecognized_harvest_invoices(
         to=window_end.isoformat(),
     )
     if not invoices:
-        return []
+        return [], []
 
     known = {
         r["harvest_invoice_id"]
@@ -105,9 +135,22 @@ async def find_unrecognized_harvest_invoices(
         )
     }
     unrecognized = [i for i in invoices if int(i.get("id", 0)) not in known]
+
+    ours = set(project_ids)
+    on_this_group: list[dict[str, Any]] = []
+    unattributable: list[dict[str, Any]] = []
+    for invoice in unrecognized:
+        touched = invoice_project_ids(invoice)
+        if not touched:
+            unattributable.append(invoice)
+        elif touched & ours:
+            on_this_group.append(invoice)
+
     if unrecognized:
         logger.info(
-            "duplicate guard: %d of %d invoices for client %s are not in the ledger",
+            "duplicate guard: %d of %d invoices for client %s are not in the ledger; "
+            "%d touch this group's projects, %d carry no project",
             len(unrecognized), len(invoices), harvest_client_id,
+            len(on_this_group), len(unattributable),
         )
-    return unrecognized
+    return on_this_group, unattributable

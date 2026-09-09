@@ -5,7 +5,7 @@ so a planner that tried would fail with AttributeError.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -83,7 +83,6 @@ async def test_plans_a_tm_group_with_estimate_and_payload(fake):
     assert body["client_id"] == ACME
     assert body["subject"] == "Acme Corp — July 2026"
     assert body["issue_date"] == "2026-07-31"
-    assert body["payment_term"] == "net 30"
     assert body["purchase_order"] == "PO-4471"
     assert body["line_items_import"]["project_ids"] == [PLATFORM, MOBILE]
     assert body["line_items_import"]["time"] == {
@@ -91,8 +90,33 @@ async def test_plans_a_tm_group_with_estimate_and_payload(fake):
     }
     # Expenses off → the key must be absent, not an empty object.
     assert "expenses" not in body["line_items_import"]
-    # Enum term → Harvest owns the due date, so we don't send one.
-    assert "due_date" not in body
+    # The reason this matters more than anything else here: `line_items_import`
+    # is what makes Harvest mark the underlying time entries billed. A payload
+    # that computed its own `line_items` would bill the client for time Harvest
+    # still reported as uninvoiced.
+    assert "line_items" not in body
+
+
+async def test_the_due_date_starts_on_the_draft_day_not_the_period_end(fake):
+    """Issued 31 July, but the client's thirty days start when the draft exists.
+
+    Which forces `payment_term: "custom"` — Harvest derives the due date from
+    the issue date for every enum term, so `net 30` cannot express this.
+    """
+    pool = await get_pool()
+    fake.add_time(PLATFORM, spent_date="2026-07-06", hours=10, rate=185)
+    await _group(pool, "Acme — Platform", ACME, [PLATFORM])
+
+    run = await planner.get_run(
+        pool, await planner.plan_run(pool, settings, run_month=AUGUST)
+    )
+    body = run["items"][0]["planned_payload"]
+    expected = max(date.today(), date(2026, 7, 31)) + timedelta(days=30)
+
+    assert body["issue_date"] == "2026-07-31"
+    assert body["payment_term"] == "custom"
+    assert body["due_date"] == expected.isoformat()
+    assert run["items"][0]["due_date"] == expected
 
 
 async def test_arrears_and_advance_groups_get_different_periods(fake):
@@ -115,6 +139,8 @@ async def test_arrears_and_advance_groups_get_different_periods(fake):
 
 
 async def test_custom_payment_term_sends_a_computed_due_date(fake):
+    """A custom term is carried through as its net-day count, not as its
+    plan-time date — 20 days from the draft day, not from 31 July."""
     pool = await get_pool()
     fake.add_time(PLATFORM, spent_date="2026-07-06", hours=10, rate=185)
     await _group(pool, "Ridgeway", ACME, [PLATFORM],
@@ -125,7 +151,26 @@ async def test_custom_payment_term_sends_a_computed_due_date(fake):
     )
     body = run["items"][0]["planned_payload"]
     assert body["payment_term"] == "custom"
-    assert body["due_date"] == "2026-08-20"
+    assert body["due_date"] == (
+        max(date.today(), date(2026, 7, 31)) + timedelta(days=20)
+    ).isoformat()
+
+
+async def test_the_plan_snapshot_keeps_the_planner_s_own_dating(fake):
+    """`plan_snapshot` is a frozen record of what the planner produced. Only
+    `get_run` re-dates; rewriting the snapshot would make the one artefact meant
+    to preserve plan-time state drift with the calendar."""
+    pool = await get_pool()
+    fake.add_time(PLATFORM, spent_date="2026-07-06", hours=10, rate=185)
+    await _group(pool, "Acme — Platform", ACME, [PLATFORM])
+
+    run_id = await planner.plan_run(pool, settings, run_month=AUGUST)
+    snapshot = await pool.fetchval(
+        "SELECT plan_snapshot FROM billing_runs WHERE id = $1", run_id
+    )
+    body = snapshot["items"][0]["planned_payload"]
+    assert body["payment_term"] == "net 30"
+    assert "due_date" not in body
 
 
 # ── Skips ───────────────────────────────────────────────────────────────────
@@ -241,13 +286,14 @@ async def test_created_group_cannot_be_replanned_in_the_same_month(fake):
 
 
 async def test_invoice_created_by_hand_in_harvest_is_flagged(fake):
-    """The other half: an invoice we have no ledger row for is exactly what
-    the operator needs to know about."""
+    """The other half: an invoice we have no ledger row for, billed against a
+    project in this group, is exactly what the operator needs to know about."""
     pool = await get_pool()
     fake.add_time(PLATFORM, spent_date="2026-07-06", hours=10, rate=185)
     group = await _group(pool, "Acme — Platform", ACME, [PLATFORM])
     fake.add_invoice(ACME, invoice_id=99887766, number="1099",
-                     issue_date="2026-07-31", amount=5000.0)
+                     issue_date="2026-07-31", amount=5000.0,
+                     project_ids=[PLATFORM])
 
     run = await planner.get_run(
         pool, await planner.plan_run(pool, settings, run_month=AUGUST)
@@ -255,6 +301,88 @@ async def test_invoice_created_by_hand_in_harvest_is_flagged(fake):
     item = _item_for(run, group["id"])
     assert "EXISTING_HARVEST_INVOICE" in _codes(item)
     assert item["status"] == "planned"  # a warning, not a block
+
+
+async def test_another_engagement_s_invoice_does_not_flag_this_group(fake):
+    """The noise this scoping exists to remove.
+
+    A client with several engagements bills them separately; a fixed-fee
+    invoice on the Lab project says nothing about the Platform group, and
+    flagging it fired on the busiest clients every single month.
+    """
+    pool = await get_pool()
+    fake.add_time(PLATFORM, spent_date="2026-07-06", hours=10, rate=185)
+    group = await _group(pool, "Acme — Platform", ACME, [PLATFORM])
+    fake.add_invoice(ACME, invoice_id=99887767, number="1100",
+                     issue_date="2026-07-30", amount=25000.0,
+                     project_ids=[LAB])
+
+    run = await planner.get_run(
+        pool, await planner.plan_run(pool, settings, run_month=AUGUST)
+    )
+    codes = _codes(_item_for(run, group["id"]))
+    assert "EXISTING_HARVEST_INVOICE" not in codes
+    assert "UNATTRIBUTED_HARVEST_INVOICE" not in codes
+
+
+async def test_an_invoice_with_no_project_on_any_line_is_info_not_warning(fake):
+    """Hand-typed with no project attached: it cannot be attributed to this
+    group, and it cannot be ruled out either. Named, but blocking nothing."""
+    pool = await get_pool()
+    fake.add_time(PLATFORM, spent_date="2026-07-06", hours=10, rate=185)
+    group = await _group(pool, "Acme — Platform", ACME, [PLATFORM])
+    fake.add_invoice(ACME, invoice_id=99887768, number="1101",
+                     issue_date="2026-07-29", amount=1200.0)
+
+    run = await planner.get_run(
+        pool, await planner.plan_run(pool, settings, run_month=AUGUST)
+    )
+    item = _item_for(run, group["id"])
+    assert "UNATTRIBUTED_HARVEST_INVOICE" in _codes(item)
+    assert "EXISTING_HARVEST_INVOICE" not in _codes(item)
+    severity = next(
+        f["severity"] for f in item["flags"]
+        if f["code"] == "UNATTRIBUTED_HARVEST_INVOICE"
+    )
+    assert severity == "info"
+    assert item["status"] == "planned"
+
+
+async def test_september_time_does_not_flag_an_august_arrears_plan(fake):
+    """There is no LATE_TIME flag any more, deliberately. Billing August in
+    September always finds September time; a warning that fires on every
+    arrears group every month is one nobody reads."""
+    pool = await get_pool()
+    fake.add_time(PLATFORM, spent_date="2026-07-06", hours=10, rate=185)
+    fake.add_time(PLATFORM, spent_date="2026-08-14", hours=40, rate=185)
+    group = await _group(pool, "Acme — Platform", ACME, [PLATFORM])
+
+    run = await planner.get_run(
+        pool, await planner.plan_run(pool, settings, run_month=AUGUST)
+    )
+    item = _item_for(run, group["id"])
+    assert "LATE_TIME" not in _codes(item)
+    # And the invoice still covers only July, so the later time is untouched.
+    assert item["planned_payload"]["line_items_import"]["time"]["to"] == "2026-07-31"
+
+
+async def test_time_before_the_period_still_flags_as_a_straggler(fake):
+    """The asymmetric half, which is what Jacob actually wants told: work from
+    before this period that no invoice has picked up, and that this one's
+    bounded import window will miss again."""
+    pool = await get_pool()
+    fake.add_time(PLATFORM, spent_date="2026-07-06", hours=10, rate=185)
+    fake.add_time(PLATFORM, spent_date="2026-05-11", hours=6, rate=185)
+    group = await _group(pool, "Acme — Platform", ACME, [PLATFORM])
+
+    run = await planner.get_run(
+        pool, await planner.plan_run(pool, settings, run_month=AUGUST)
+    )
+    item = _item_for(run, group["id"])
+    assert "STRAGGLER_TIME" in _codes(item)
+    straggler = next(f for f in item["flags"] if f["code"] == "STRAGGLER_TIME")
+    assert straggler["context"]["hours"] == 6
+    assert straggler["context"]["earliest"] == "2026-05-11"
 
 
 async def test_unresolved_in_flight_row_blocks_the_group(fake):

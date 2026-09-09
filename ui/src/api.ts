@@ -387,6 +387,7 @@ import type {
   PlaceholderResolutionInput,
   ResolveInFlightRequest,
   ResolveInFlightResult,
+  RunExecutionResult,
   SnapshotRefreshResult,
 } from './invoicing';
 
@@ -582,6 +583,19 @@ export function abandonBillingRun(id: string): Promise<BillingRunDetail> {
   return apiFetch<BillingRunDetail>(`/billing/runs/${id}/abandon`, { method: 'POST' });
 }
 
+/** Finish a run that drafted some groups and will not draft the rest. The
+ *  remaining groups are recorded as decided against, with this reason. */
+export function closeBillingRun(
+  id: string,
+  reason?: string,
+): Promise<BillingRunDetail> {
+  return apiFetch<BillingRunDetail>(`/billing/runs/${id}/close`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason: reason?.trim() || null }),
+  });
+}
+
 /** Approve / un-approve one group, and/or record an error override. Both
  *  fields are independent; the override is sticky. */
 export function setItemApproval(
@@ -593,6 +607,42 @@ export function setItemApproval(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Decide against invoicing one group this run, or undo that.
+ *
+ * Not the same as un-approving, which only returns the group to undecided.
+ * Rejecting says the invoice is not going out and records why — the case it
+ * exists for is a group already invoiced by hand, where drafting again would
+ * put a duplicate in front of a real client. A reason is required.
+ */
+export function setItemRejection(
+  runId: string,
+  itemId: string,
+  body: { rejected: boolean; reason?: string },
+): Promise<BillingRunDetail> {
+  return apiFetch<BillingRunDetail>(`/billing/runs/${runId}/items/${itemId}/rejection`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Create a Harvest draft invoice for every approved group in a run.
+ *
+ * The payload is deliberately NOT sent — the server uses the bodies the
+ * pre-flight just displayed, so what gets created is what was on screen.
+ *
+ * Resolves 200 even when invoices failed, and even when the run halted: a run
+ * is many independent writes and the body is the report. Read `halted` and
+ * `unknown_item` before telling anyone it worked.
+ */
+export function executeRun(runId: string): Promise<RunExecutionResult> {
+  return apiFetch<RunExecutionResult>(`/billing/runs/${runId}/execute`, {
+    method: 'POST',
   });
 }
 

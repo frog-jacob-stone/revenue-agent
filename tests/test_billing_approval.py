@@ -525,3 +525,191 @@ async def test_api_refuses_an_undecided_placeholder_with_409(placeholder_run, cl
     )
     assert res.status_code == 409
     assert "Hosting pass-through" in res.json()["detail"]
+
+
+# ── Rejection ───────────────────────────────────────────────────────────────
+#
+# Un-approving means *undecided*: the row stays live and says nothing about
+# why. Rejecting says the invoice is not going out, and records the reason —
+# the case it exists for is a group already invoiced by hand, where drafting
+# again would put a duplicate in front of a real client.
+
+
+async def test_rejecting_skips_the_group_and_records_who_and_why(run):
+    pool = await get_pool()
+    target = _items(run)[0]
+
+    assert await review.set_item_rejection(
+        pool, run["id"], target["id"], rejected=True,
+        reason="already invoiced by hand on the 1st",
+        actor="jacob@frogslayer.com",
+    )
+
+    fresh = next(
+        i for i in (await planner.get_run(pool, run["id"]))["items"]
+        if i["id"] == target["id"]
+    )
+    assert fresh["status"] == "skipped"
+    assert fresh["skip_reason"] == "already invoiced by hand on the 1st"
+    assert fresh["rejected_by"] == "jacob@frogslayer.com"
+    assert fresh["rejected_at"] is not None
+
+    event = await pool.fetchrow(
+        "SELECT * FROM audit_log WHERE event_type = 'billing.item.rejected'"
+    )
+    assert event["actor"] == "jacob@frogslayer.com"
+    assert event["payload"]["reason"] == "already invoiced by hand on the 1st"
+
+
+async def test_rejecting_an_approved_group_withdraws_the_approval(run):
+    """Approval describes an invoice that is going to be created. Leaving it
+    stamped on a row that will produce nothing would misread later."""
+    pool = await get_pool()
+    target = _items(run)[0]
+    await review.set_item_approval(
+        pool, run["id"], target["id"], approved=True, actor="jacob@frogslayer.com"
+    )
+
+    await review.set_item_rejection(
+        pool, run["id"], target["id"], rejected=True,
+        reason="signed on the 1st, billed then", actor="jacob@frogslayer.com",
+    )
+
+    fresh = next(
+        i for i in (await planner.get_run(pool, run["id"]))["items"]
+        if i["id"] == target["id"]
+    )
+    assert fresh["status"] == "skipped"
+    assert fresh["approved_at"] is None
+    assert fresh["approved_by"] is None
+
+
+async def test_rejecting_without_a_reason_is_refused(run):
+    """The row becomes the only record of why a client got no invoice. A blank
+    one turns the Skipped list into a list of names a month later."""
+    pool = await get_pool()
+    target = _items(run)[0]
+
+    for blank in (None, "", "   "):
+        with pytest.raises(review.ApprovalError, match="reason is required"):
+            await review.set_item_rejection(
+                pool, run["id"], target["id"], rejected=True, reason=blank,
+            )
+
+    fresh = next(
+        i for i in (await planner.get_run(pool, run["id"]))["items"]
+        if i["id"] == target["id"]
+    )
+    assert fresh["status"] == "planned"
+
+
+async def test_un_rejecting_returns_the_group_to_undecided(run):
+    pool = await get_pool()
+    target = _items(run)[0]
+    await review.set_item_rejection(
+        pool, run["id"], target["id"], rejected=True,
+        reason="billed by hand", actor="jacob@frogslayer.com",
+    )
+
+    await review.set_item_rejection(
+        pool, run["id"], target["id"], rejected=False, actor="jacob@frogslayer.com",
+    )
+
+    fresh = next(
+        i for i in (await planner.get_run(pool, run["id"]))["items"]
+        if i["id"] == target["id"]
+    )
+    assert fresh["status"] == "planned"
+    assert fresh["rejected_by"] is None
+    assert fresh["rejected_at"] is None
+    assert fresh["skip_reason"] is None
+
+
+async def test_a_planner_skip_cannot_be_un_rejected(fake):
+    """Nothing to bill is not a decision a click may reverse — undoing it would
+    conjure an invoice the planner never produced a payload for."""
+    pool = await get_pool()
+    await _group(pool, "Brightline — Hosting", HOSTING, 1500)
+    run_id = await planner.plan_run(pool, settings, run_month=AUGUST)
+    # A group with no recurring items in effect is skipped by the planner.
+    await pool.execute(
+        "UPDATE billing_run_items SET status='skipped', "
+        "skip_reason='No recurring line items in effect' WHERE billing_run_id=$1",
+        run_id,
+    )
+    item_id = await pool.fetchval(
+        "SELECT id FROM billing_run_items WHERE billing_run_id = $1", run_id
+    )
+
+    with pytest.raises(review.ApprovalError, match="planner skipped"):
+        await review.set_item_rejection(pool, run_id, item_id, rejected=False)
+
+
+async def test_a_created_row_cannot_be_rejected(run):
+    """Only a group that has not been sent yet. Rejecting a real invoice would
+    be a claim this system has no way to make good on."""
+    pool = await get_pool()
+    target = _items(run)[0]
+    await pool.execute(
+        "UPDATE billing_run_items SET status='created' WHERE id = $1", target["id"]
+    )
+
+    with pytest.raises(review.ApprovalError, match="only a planned or approved"):
+        await review.set_item_rejection(
+            pool, run["id"], target["id"], rejected=True, reason="too late",
+        )
+
+
+async def test_rejection_is_allowed_while_a_run_is_executing(run):
+    """A run halted on an unknown outcome sits in `executing` with its
+    remaining groups approved. The operator resolving that halt may well decide
+    one of them should not go out after all — approval keeps the narrower gate,
+    rejection does not."""
+    pool = await get_pool()
+    target = _items(run)[0]
+    await pool.execute(
+        "UPDATE billing_runs SET status='executing' WHERE id = $1", run["id"]
+    )
+
+    assert await review.set_item_rejection(
+        pool, run["id"], target["id"], rejected=True,
+        reason="client asked us to hold it", actor="jacob@frogslayer.com",
+    )
+    # But approving is not.
+    other = _items(run)[1]
+    with pytest.raises(review.ApprovalError, match="under review"):
+        await review.set_item_approval(pool, run["id"], other["id"], approved=True)
+
+
+async def test_api_rejects_and_returns_the_whole_run(run, client):
+    item = _items(run)[0]
+
+    res = await client.post(
+        f"/billing/runs/{run['id']}/items/{item['id']}/rejection",
+        json={"rejected": True, "reason": "already invoiced by hand on the 1st"},
+    )
+    assert res.status_code == 200
+    fresh = next(i for i in res.json()["items"] if i["id"] == str(item["id"]))
+    assert fresh["status"] == "skipped"
+    assert fresh["rejected_by"]
+    assert fresh["skip_reason"] == "already invoiced by hand on the 1st"
+
+
+async def test_api_refuses_a_reasonless_rejection_with_409(run, client):
+    item = _items(run)[0]
+
+    res = await client.post(
+        f"/billing/runs/{run['id']}/items/{item['id']}/rejection",
+        json={"rejected": True},
+    )
+    assert res.status_code == 409
+    assert "reason is required" in res.json()["detail"]
+
+
+async def test_api_404s_for_an_item_outside_the_run(run, client):
+    res = await client.post(
+        f"/billing/runs/{run['id']}/items/"
+        f"00000000-0000-0000-0000-000000000000/rejection",
+        json={"rejected": True, "reason": "nope"},
+    )
+    assert res.status_code == 404
