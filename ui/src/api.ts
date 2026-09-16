@@ -974,3 +974,265 @@ export function previewTmDraft(body: TmDraftRequest): Promise<TmDraftPreview> {
     body: JSON.stringify(body),
   });
 }
+
+// ── Revenue recognition ─────────────────────────────────────────────────────
+
+export type RevenueType =
+  | 'fixed_fee'
+  | 'time_and_materials'
+  | 'msf'
+  | 'hosting'
+  | 'retainer';
+
+export type RevenueRunStatus = 'draft' | 'recognized' | 'abandoned';
+
+/**
+ * One project's revenue for one month.
+ *
+ * Amounts arrive as decimal **strings**, not numbers — the API serializes
+ * `numeric(12,2)` rather than routing money through a binary float. Parse with
+ * `num()` at the point of use; do not change the type to `number` here, which
+ * would only move the precision loss one layer up.
+ *
+ * `recognized_amount` is the revenue for that month and is what every rollup
+ * uses. `cumulative_recognized` is since project inception and cannot be summed
+ * across rows without counting every earlier month again.
+ */
+export interface RevenueEntry {
+  id: string;
+  /** ISO first-of-month. Periods are months, not dates. */
+  period_month: string;
+  harvest_project_id: number;
+  /** Snapshotted when recognized, so a renamed project reads as it did then. */
+  harvest_project_name: string;
+  /** Joined live from the Harvest cache; both null if the project has left it. */
+  client_id: number | null;
+  client_name: string | null;
+  revenue_type: RevenueType;
+  recognized_amount: string;
+  /** What the system computed before any override. */
+  computed_amount: string;
+  logged_hours: string | null;
+  scheduled_hours: string | null;
+  /** 0–1, fixed fee only. */
+  percent_complete: string | null;
+  contracted_fees: string | null;
+  invoiced_to_date: string | null;
+  notes: string | null;
+  override_reason: string | null;
+  overridden_by: string | null;
+  overridden_at: string | null;
+}
+
+/** A ledger row, carrying the project's running total at that month. */
+export interface LedgerEntry extends RevenueEntry {
+  cumulative_recognized: string;
+}
+
+/** A client with revenue in the window — one option in the client filter.
+ *  Carries its total so the list is a summary as well as a control. */
+export interface RevenueClient {
+  client_id: number;
+  client_name: string | null;
+  recognized_amount: string;
+  project_count: number;
+}
+
+/** One month of the trend. Revenue per hour is deliberately not a field —
+ *  across several months it has to be blended, which the caller decides. */
+export interface RevenueMonth {
+  period_month: string;
+  recognized_amount: string;
+  logged_hours: string | null;
+  entry_count: number;
+}
+
+export interface RevenueRunSummary {
+  id: string;
+  period_month: string;
+  status: RevenueRunStatus;
+  created_at: string;
+  created_by: string;
+  finalized_at: string | null;
+  finalized_by: string | null;
+  abandoned_at: string | null;
+  abandoned_by: string | null;
+  entry_count: number;
+  /** For a draft, what it currently proposes rather than what was booked. */
+  total_recognized: string;
+}
+
+export interface RevenueRunDetail extends Omit<RevenueRunSummary, 'entry_count'> {
+  entries: RevenueEntry[];
+}
+
+/** Decimal string -> number, for arithmetic and formatting. Null and blank
+ *  collapse to 0 so callers can sum without guarding every field. */
+export function num(value: string | null | undefined): number {
+  return value == null || value === '' ? 0 : Number(value);
+}
+
+/**
+ * Ledger rows, newest month first, each with its cumulative total.
+ *
+ * Only entries of finalized runs — a draft is a proposal, not history. Bounds
+ * are inclusive and month-granular, so any date within a month selects it.
+ */
+export function getRevenueEntries(
+  opts: {
+    date_from?: string;
+    date_to?: string;
+    harvest_project_id?: number;
+    /** Restrict to these Harvest clients. Empty or omitted means all. */
+    client_ids?: number[];
+    /** Drop projects that recognized nothing across the whole window. A
+     *  project-level filter: one that qualifies keeps every entry, zeros
+     *  included, so the revenue-per-hour blend is unaffected. */
+    exclude_empty_projects?: boolean;
+  } = {},
+): Promise<LedgerEntry[]> {
+  const params = new URLSearchParams();
+  if (opts.date_from) params.set('date_from', opts.date_from);
+  if (opts.date_to) params.set('date_to', opts.date_to);
+  if (opts.harvest_project_id !== undefined) {
+    params.set('harvest_project_id', String(opts.harvest_project_id));
+  }
+  for (const id of opts.client_ids ?? []) params.append('client_ids', String(id));
+  if (opts.exclude_empty_projects) params.set('exclude_empty_projects', 'true');
+  const qs = params.toString();
+  return apiFetch<LedgerEntry[]>(`/revenue/entries${qs ? `?${qs}` : ''}`);
+}
+
+/**
+ * Recognized revenue and hours per month, **oldest first** — it is a chart,
+ * unlike the entry and run lists, which are lookups and read newest first.
+ *
+ * Bounds match `getRevenueEntries`: inclusive and month-granular. Unbounded
+ * returns every month the ledger covers, which is what the Overview tab wants
+ * so it can offer the years the data actually spans.
+ */
+export function getRevenueSummary(
+  opts: { date_from?: string; date_to?: string; client_ids?: number[] } = {},
+): Promise<RevenueMonth[]> {
+  const params = new URLSearchParams();
+  if (opts.date_from) params.set('date_from', opts.date_from);
+  if (opts.date_to) params.set('date_to', opts.date_to);
+  for (const id of opts.client_ids ?? []) params.append('client_ids', String(id));
+  const qs = params.toString();
+  return apiFetch<RevenueMonth[]>(`/revenue/summary${qs ? `?${qs}` : ''}`);
+}
+
+/**
+ * Clients with revenue in the window — the options for the client filter.
+ *
+ * Deliberately not derived from `getRevenueEntries`: a faceted filter's
+ * options must come from the unfiltered set, or each selection would remove
+ * the others from the list and leave no way back.
+ */
+export function getRevenueClients(
+  opts: { date_from?: string; date_to?: string } = {},
+): Promise<RevenueClient[]> {
+  const params = new URLSearchParams();
+  if (opts.date_from) params.set('date_from', opts.date_from);
+  if (opts.date_to) params.set('date_to', opts.date_to);
+  const qs = params.toString();
+  return apiFetch<RevenueClient[]>(`/revenue/clients${qs ? `?${qs}` : ''}`);
+}
+
+/** Run history, newest month first. Every status, including drafts. */
+export function getRevenueRuns(limit = 24): Promise<RevenueRunSummary[]> {
+  return apiFetch<RevenueRunSummary[]>(`/revenue/runs?limit=${limit}`);
+}
+
+/** One run and its entries, whatever its status. */
+export function getRevenueRun(runId: string): Promise<RevenueRunDetail> {
+  return apiFetch<RevenueRunDetail>(`/revenue/runs/${runId}`);
+}
+
+/** One project's recognition setup. `revenue_type` null means unconfigured —
+ *  the list is a LEFT JOIN from the project, because the useful question is
+ *  what still needs setting up. */
+export interface RevenueProjectConfig {
+  harvest_project_id: number;
+  harvest_project_name: string;
+  client_name: string | null;
+  revenue_type: RevenueType | null;
+  contracted_fees: string | null;
+  notes: string | null;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+/** Shape of the 409 body when a run is planned with projects still
+ *  unconfigured. The list rides along so the UI can name them and link. */
+export interface UnconfiguredProjectsDetail {
+  message: string;
+  unconfigured_projects: { harvest_project_id: number; harvest_project_name: string }[];
+}
+
+export function getRevenueConfig(): Promise<RevenueProjectConfig[]> {
+  return apiFetch<RevenueProjectConfig[]>('/revenue/config');
+}
+
+/** Configure a project. Idempotent — creates or replaces. */
+export function setRevenueConfig(
+  harvestProjectId: number,
+  body: { revenue_type: RevenueType; contracted_fees?: string | null; notes?: string | null },
+): Promise<RevenueProjectConfig> {
+  return apiFetch<RevenueProjectConfig>(`/revenue/config/${harvestProjectId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function removeRevenueConfig(harvestProjectId: number): Promise<void> {
+  const res = await authedFetch(`/revenue/config/${harvestProjectId}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, (body as { detail?: unknown }).detail);
+  }
+}
+
+/**
+ * Draft a month. Read-only against Harvest and Forecast; nothing counts until
+ * it is finalized.
+ *
+ * Throws `ApiError` with status 409 on two distinct conditions: a live run
+ * already owns the month (detail is a string), or projects are unconfigured
+ * (detail is `UnconfiguredProjectsDetail`). The caller distinguishes them by
+ * checking whether `detail` is an object — which is why `ApiError` carries the
+ * raw detail rather than flattening it to a string.
+ */
+export function planRevenueRun(periodMonth: string): Promise<RevenueRunDetail> {
+  return apiFetch<RevenueRunDetail>('/revenue/runs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ period_month: periodMonth }),
+  });
+}
+
+/** Replace a computed figure with a human's. Draft runs only; the reason is
+ *  required and becomes the only record of why the two differ. */
+export function overrideRevenueEntry(
+  runId: string,
+  entryId: string,
+  body: { recognized_amount: string; override_reason: string },
+): Promise<RevenueEntry> {
+  return apiFetch<RevenueEntry>(`/revenue/runs/${runId}/entries/${entryId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+/** Make a draft the ledger. The authorizing click (ADR-0004) — the operator
+ *  has just read this exact run. Writes nothing outside Postgres. */
+export function finalizeRevenueRun(runId: string): Promise<RevenueRunDetail> {
+  return apiFetch<RevenueRunDetail>(`/revenue/runs/${runId}/finalize`, { method: 'POST' });
+}
+
+/** Discard a draft, freeing its month to be planned again. */
+export function abandonRevenueRun(runId: string): Promise<RevenueRunDetail> {
+  return apiFetch<RevenueRunDetail>(`/revenue/runs/${runId}/abandon`, { method: 'POST' });
+}

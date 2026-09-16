@@ -2,7 +2,7 @@
 
 The durable shape of the system. Update this when boundaries, layering, or integration flow change.
 
-The system has two coequal pillars. **Revenue operations automation** — Harvest billing/invoicing (`app/services/billing/`) and revenue recognition (`app/services/revenue.py`) — is deterministic and has no agent or LLM anywhere in its write path; see "Billing / invoicing" below. The **agent framework** — `chief-of-staff` and its domain agents, the approval inbox, executors — handles conversational and judgment-requiring tasks under the Propose/Approve/Execute pattern. Neither is layered on top of the other; a new reader should not assume agents are the primary mechanism just because the framework is documented first below.
+The system has two coequal pillars. **Revenue operations automation** — Harvest billing/invoicing (`app/services/billing/`) and revenue recognition (`app/services/revenue_ledger.py`, `app/services/revenue.py`) — is deterministic and has no agent or LLM anywhere in its write path; see "Billing / invoicing" and "Revenue recognition" below. The **agent framework** — `chief-of-staff` and its domain agents, the approval inbox, executors — handles conversational and judgment-requiring tasks under the Propose/Approve/Execute pattern. Neither is layered on top of the other; a new reader should not assume agents are the primary mechanism just because the framework is documented first below.
 
 ## Stack
 
@@ -453,7 +453,7 @@ Settings screen that knows nothing about billing groups.
 A document generator, and only that. It produces a draft T&M agreement as a
 Word file and remembers the counterparty's legal identity so the next draft for
 the same client is not retyping. It does **not** model a signed contract or its
-lifecycle: `contracted_fees` stays in the Airtable rev rec ledger, payment terms
+lifecycle: `contracted_fees` stays in `revenue_project_config`, payment terms
 and draw schedules stay in `billing_groups`, and nothing here tries to unify
 them. Contract *intake* — ingesting a signed contract — is the inverse problem
 and is not built.
@@ -506,6 +506,95 @@ plain `{{ tag }}` rather than docxtpl's `{{r tag }}` (which discards the tag
 run's formatting), `autoescape=True` (without which an `&` in an entity name
 corrupts the document), and highlighting as a post-render pass (which is what
 lets a marker inherit the formatting of the text it replaced).
+
+## Revenue recognition (`app/services/revenue_ledger.py`, migration `0040`)
+
+Recognized revenue lives in Postgres, and the run that produces it is
+operator-initiated. It lived in Airtable until 2026-09-16; the four-phase
+migration is `.agent/plans/28.rev-rec-to-postgres.md`, and Phase 4 (deleting the
+Airtable integration) is still open.
+
+    revenue_config.py   which projects recognize, and how (the run's gate)
+    revenue_run.py      plan → override → finalize | abandon
+    revenue_ledger.py   every read
+    revenue.py          calc_revenue, a pure function, plus the agent's slim read
+
+Four decisions are the shape of this subsystem.
+
+**The Harvest project is the project entity.** `revenue_project_config` keys on
+`harvest_project_id bigint` with no FK, exactly as `excluded_harvest_clients`
+and `forecast_project_schedule` do, because `harvest_projects` is a
+read-through cache documented as safe to truncate and operator intent must
+survive a resync. No second project entity was created: the Harvest id is
+already the system-wide join key, and a parallel one would need reconciling
+against the first forever. This is why the Airtable Clients and Projects tables
+have no successor — they were a Harvest mirror plus three hand-typed fields,
+and only those three fields survived.
+
+**The period amount is the stored fact; cumulative is derived.** Airtable
+stored `Total Recognized Revenue` (cumulative-to-date) and computed the period
+amount as a formula. `revenue_entries.recognized_amount` inverts that: it is
+the revenue recognized *in that month*, and cumulative-to-date is summed at
+read time. The consequence is not cosmetic. Every billing type's computation
+naturally yields a cumulative figure (fixed fee = contracted × percent
+complete; T&M = Harvest invoiced-to-date), so a run computes
+`period = cumulative_target − SUM(prior periods)` — which means **a correction
+to a closed month absorbs into the next open month** instead of silently
+restating history. It also removed a trap: there is no longer a field that
+sounds like "the revenue" but isn't.
+
+**`logged_hours` is a period quantity too.** It is the denominator of revenue
+per billable hour and `recognized_amount` is the numerator, so a cumulative
+denominator would make the figure fall every month on a healthy project. Both
+sources answer cumulatively, so the runner bounds its Harvest sweep to the
+period and the backfill differences consecutive Airtable records.
+`scheduled_hours`, `invoiced_to_date` and `contracted_fees` are deliberately
+*not* period quantities — they are forward-looking or contractual snapshots and
+must never be summed across months.
+
+**Aggregation is inline SQL, not a view.** There are no views anywhere in this
+schema; `billing/planner.py` and `billing/invoices.py` established that
+aggregates live in the service query. `revenue_ledger` follows them, with the
+one genuinely shared piece — the predicate *"this entry belongs to a finalized
+run"* — extracted as `recognized_only_sql()`, a bind-param-free SQL fragment
+shaped like `client_exclusions.not_excluded_sql()`. Two consumers want
+different things from it: the run needs one scalar (`prior_recognized`), the
+report needs a running total per row.
+
+A **draft run's entries count for nothing** — not a report, and not a
+prior-period sum. That second exclusion is the load-bearing one: without it,
+merely *planning* a month would change what the next month computes.
+`get_run` is the deliberate exception and does not filter by status, because it
+is the payload an operator reads before finalizing, and under ADR-0004 that
+reading is what makes the click an authorization.
+
+**The run is operator-initiated, and finalizing touches nothing outside
+Postgres.** `plan_run` reads Harvest and Forecast and writes a `draft` — one
+entry per in-scope project, counting toward nothing. The operator reads those
+exact entries on the run detail screen, adjusts what needs judgement, and
+finalizes. That satisfies ADR-0004 without an approval row on all three counts:
+the payload is shown before the click, nothing here is agent-reachable, and
+every transition audits.
+
+It is materially safer than `draws.invoice_draw`, the billing endpoint it is
+modelled on. There is no vendor call at the end, so no in-flight state, no
+unknown outcome, and nothing to reconcile afterwards — a month that goes wrong
+is abandoned and planned again. Two guards carry real weight: the config gate
+refuses to plan while any in-scope project is unconfigured (409 with the list,
+so the UI can name them), and `finalize_run` refuses while any retainer still
+sits at zero with no override. A retainer computes to zero *by design* — the
+amount is a judgement call — so a zero there means nobody has decided, not that
+nothing was earned, and letting it through would under-recognize a month with
+nothing downstream to catch it.
+
+Scope — billable, active, not an excluded client's — is one SQL fragment
+(`revenue_config.IN_SCOPE_SQL`) shared by the setup screen and the runner, so
+the screen cannot report "all configured" while a run refuses to start.
+
+`calc_revenue` stays a pure function and returns a **cumulative** figure; the
+subtraction against `prior_recognized` happens in the runner. Doing it inside
+would mean the function needed the ledger, which is the one thing keeping it
+trivially testable.
 
 ## Projects & Forecast snapshot
 
@@ -615,7 +704,7 @@ router  →  service  →  (agent | integration client | db)
 - **Agents** are services that drive LLM tool-call loops. They propose actions by returning `AwaitingApproval` from a tool. They never call third-party systems on their own.
 - **Tools** (`app/agents/tools/`) are the unit of agent capability. A tool returns one of `Done | AwaitingApproval | Blocked`. The runtime — `app/orchestrator/dispatch.py::dispatch_tool` — pattern-matches the return shape, writes audit + (for `AwaitingApproval`) approval rows, and hands a status dict back to the LLM.
 - **Executors** (`app/executors/`) are the post-approval side-effect performers. They live in a registry separate from tools, indexed by name, and are invoked only by the approval grant handler. Never added to any agent's `allowed_tools`.
-- **Integration clients** (Harvest, Forecast, Airtable, Gmail) are called by executors, by read-only services, and — since [ADR-0004](adr/0004-operator-initiated-writes.md) — by operator-initiated services behind a human-only endpoint (`draws.invoice_draw` is the only one).
+- **Integration clients** (Harvest, Forecast, Airtable, Gmail) are called by executors, by read-only services, and — since [ADR-0004](adr/0004-operator-initiated-writes.md) — by operator-initiated services behind a human-only endpoint (`draws.invoice_draw` and `revenue_run.plan_run`; the latter only *reads* from them).
 - All DB, HTTP, and agent calls are async.
 
 ## LLM dispatch
@@ -665,7 +754,9 @@ A tool exports a `ToolDefinition` constant — name, description, OpenAI input s
 
 Today's production tools: revenue analysis (`get_revenue_data`) and the agent-delegation tool (`ask_agent`). The three read-only HubSpot lookups (`get_contact_by_email`, `get_company_by_id`, `get_form_submission`) were deleted on 2026-08-10 when HubSpot was removed; they were the BDR agent's only tools, so the BDR is now toolless by design and drafts from supplied context.
 
-**No agent holds a tool that proposes an approval.** `trigger_revenue_recognition` still exists and still returns `AwaitingApproval`, but ADR-0004 removed it from `RevenueOpsAgent` — running rev rec is an operator action now. `tests/test_no_agent_approval_tools.py` scans every reachable tool's handler source and fails the build if this regresses.
+**No agent holds a tool that proposes an approval.** `trigger_revenue_recognition` still exists and still returns `AwaitingApproval`, but ADR-0004 removed it from `RevenueOpsAgent` — running rev rec is an operator action now. `tests/test_no_agent_approval_tools.py` scans every reachable tool's handler source and fails the build if this regresses. Both that tool and its executor are deleted once the operator-initiated runner lands (`.agent/plans/28.rev-rec-to-postgres.md`, Phase 3–4).
+
+`get_revenue_data` reads Postgres as of migration `0040` — see "Revenue recognition" below.
 
 ## Executors (`app/executors/`)
 

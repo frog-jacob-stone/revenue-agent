@@ -110,21 +110,33 @@ run state, revenue recognition status, exceptions needing a human — is not sco
 - [x] Duplicate guard — refuses to run twice for the same period
 
 #### Conversational Querying — `[-]`
-- [-] Slim payload for LLM context — `get_revenue_data_slim` maps Airtable fields to compact slim keys and derives `blended_rate`; defaults to last 12 months when no range given (`app/services/revenue.py`)
-- [-] Date-filtered Airtable pulls — `get_revenue_records` accepts `date_from` / `date_to` and pushes the filter into Airtable's `filterByFormula` (`app/integrations/airtable.py`)
-- [-] Agent prompt guidance — system prompt documents slim fields, distinguishes `revenue_delta` vs `total_recognized_revenue`, instructs narrowest-date-range usage, and forbids inventing profit/margin numbers (`app/agents/revenue.py`)
-- [ ] Wire `get_revenue_data_slim` into the agent's `get_revenue_data` tool surface — verify the tool actually calls the slim variant, not the full pull
+- [x] **Slim payload reads Postgres** (2026-09-16) — `get_revenue_data_slim` now calls `revenue_ledger.list_entries` instead of Airtable (`app/services/revenue.py`). Defaults to the last 12 months when no range is given. Emits floats rather than `Decimal`: this is the one consumer where serializability matters and exactness does not, since the rows go into a JSON tool result for an LLM, not into anything that reconciles
+- [x] **`blended_rate` dropped** (2026-09-16) — it divided *cumulative* revenue by a *single period's* hours, so it climbed every month regardless of performance. Both its inputs are still on the row; the prompt now explains that a multi-row rate has to be blended (sum revenue ÷ sum hours), which is a decision the caller makes rather than a column
+- [x] **Prompt re-vocabularied** (2026-09-16) — `recognized_amount` / `cumulative_recognized` replace `revenue_delta` / `total_recognized_revenue`. The rename is the point: the Airtable names meant the field that *sounded* like "the revenue" was the one you almost never wanted, and a paragraph of prompt had to warn about it. Pinned by `tests/test_revenue_ops_agent.py`
+- [x] Wire `get_revenue_data_slim` into the agent's `get_revenue_data` tool surface — was already done; the checkbox was stale
 - [ ] Token-budget guardrail — cap rows returned (or summarize) when a wide date range would blow context; current default is 12-month window but no row cap
 
-### Revenue Reporting & Project Tracking — `[~]` (Projects tab live; revenue still mocked)
-The **revenue** half is unbuilt in code and schema: no revenue-per-type view, no Postgres-backed rev-rec data, and no rev-rec endpoints in `ui/src/api.ts`. Recognised revenue still lives only in Airtable. Added to scope in `PRD.md`.
+### Revenue Reporting & Project Tracking — `[~]` (built end to end; awaiting the backfill)
+The **revenue** half is Postgres-backed, the `/revenue` mockup is gone, and the runner is live. Migration `0040` (2026-09-16) creates `revenue_project_config`, `revenue_runs` and `revenue_entries`; `revenue_ledger.py` reads them, `revenue_config.py` and `revenue_run.py` write them, and `/revenue/*` serves both halves. Four tabs: Overview, Runs (with a run detail review screen), Entries, Setup. See `.agent/plans/28.rev-rec-to-postgres.md`: Phases 1–3 done, Phase 4 (deleting Airtable) open.
+
+**The ledger is still empty.** The backfill has not run — two Airtable records blocked it (see below), and until it does, every historical month is missing. Verified against the live account on 2026-09-16: 29 projects are in scope, all 29 unconfigured, and `POST /revenue/runs` correctly 409s in 6.8s without writing a row.
+
+**Two things to do before this is usable:** run the backfill, then configure those 29 projects at `/revenue/setup`.
+
+Two decisions in that schema are worth knowing before touching it. The Harvest project stays the project entity: config keys on `harvest_project_id` with no FK, following `excluded_harvest_clients` and `forecast_project_schedule`, because `harvest_projects` is a truncate-safe cache and operator intent must survive a resync. And the ledger stores the **period** amount (`recognized_amount`), not the cumulative one — Airtable had it the other way round because its formulas wanted that. Since every billing type's computation naturally produces a cumulative figure, a run computes `period = cumulative_target − prior sum`, which means a correction to a closed month absorbs into the next open month rather than silently restating history. Cumulative is summed at read time in the service layer; deliberately **not** a view, as there are none anywhere in this schema.
+
+`scripts/backfill_rev_rec.py` imports the Airtable history and refuses to write unless replaying the deltas reproduces every historical cumulative total to the cent. **Dry-run against the live base on 2026-09-16: 958 entries, 89 projects, 21 months, zero mismatches, zero duplicate project-months** — the proof that inverting the ledger is lossless, now verified against real data rather than a reading of the code. Both it and its tests are deleted in Phase 4.
+
+Blocked on two records only: `recdpXZZ8XSqHsuMk` and `recroInhTKdvLKUyX`, both "Call Box Catchall" (Harvest Id 8 — not a real Harvest project), +$4,387.50 in Jan 2025 and −$4,387.50 in Sep 2025, netting zero, neither with a Billing Type. Jacob is setting one in Airtable; then the import runs.
+
+**A real correction came out of that dry run.** Airtable's `Logged Hours` is cumulative-to-date — all 76 projects with three or more months show hours that never decrease — but `revenue_entries.logged_hours` stores the **period's** hours, because it is the denominator of revenue-per-hour and `recognized_amount` is the numerator. The mockup generated per-month hours, so the mismatch was invisible until real data hit it; the Phase 2 claim that the per-hour grid was "simply correct" was wrong. The runner now bounds its Harvest sweep to the period and the backfill differences consecutive records. Where a project's hours history starts *after* its revenue history (the live base has one: revenue from 2024-12, hours from 2025-04) the first hours figure is nulled rather than reported — it spans four months of hours against one month of revenue and reads as $12/hour on a project running at $155.
 
 The **project-roster** half is live as of 2026-08-14 — `GET /projects` over the Harvest snapshot cache, see the Projects bullet below. There is still no `projects` table this system owns; the tab reads `harvest_projects`, so it can show what Harvest knows (name, client, start, end) and nothing Harvest doesn't (committed end, completion, forecast). Fuller architecture for this cache and its Forecast sync is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#projects--forecast-snapshot).
 
-A **non-functional UI mockup** now exists at `/revenue` (`ui/src/pages/Revenue/`, plan `.claude/tasks/24.revenue-tab-mockup.md`) — Overview / Runs / Entries, built to the Invoices tab's conventions so the shape can be reviewed before the backend is designed. Every figure comes from `pages/Revenue/mockData.ts`, whose types deliberately mirror the real slim schema (`app/services/revenue.py::_SLIM_FIELDS`) so live wiring replaces that one file rather than redesigning the screens. An amber "sample data — not live" banner renders once in `RevenueLayout`. Recharts was added to `ui/package.json` for the TTM bar chart; it is the app's only chart library.
+The `/revenue` tab (`ui/src/pages/Revenue/`) is live against those endpoints as of 2026-09-16. It began as a mockup (plan `.claude/tasks/24.revenue-tab-mockup.md`) built to the Invoices tab's conventions so its shape could be reviewed before the backend existed; that bet paid off — wiring it was a swap of `mockData.ts` for `useQuery`, not a redesign. Recharts stays for the TTM bar chart; it is the app's only chart library.
 
-Overview carries two project × month grids (shared renderer, `pages/Revenue/components/MonthGrid.tsx`): revenue, and **revenue per billable hour**. The per-hour cell is that month's `revenue_delta` ÷ that month's `logged_hours`; row and column totals are blended (total revenue ÷ total hours), never a mean of the cells, which would weight a light month like a heavy one. **This is not the same as `blended_rate` in `app/services/revenue.py`**, which divides *cumulative* `total_recognized_revenue` by a *single period's* `logged_hours` — a figure that climbs every month regardless of performance and cannot be trended. Anything wiring this grid to real data must recompute the ratio, not reuse that field.
-- [ ] Revenue dashboard — business-facing revenue metrics, distinct from the agent-status dashboard in Module 2. Mocked, not built: needs a rev-rec data source in Postgres and an API before the mockup can be wired
+Overview carries two project × month grids (shared renderer, `pages/Revenue/components/MonthGrid.tsx`): revenue, and **revenue per billable hour**. The per-hour cell is that month's `recognized_amount` ÷ that month's `logged_hours`; row and column totals are blended (total revenue ÷ total hours), never a mean of the cells, which would weight a light month like a heavy one. The old `blended_rate` field this used to warn about is **gone** — it divided *cumulative* revenue by a *single period's* hours, so it climbed every month regardless of performance. Storing the period amount rather than the cumulative one removed the trap at its source: there is no longer a field that invites the wrong ratio.
+- [x] **Revenue dashboard** (2026-09-16) — business-facing revenue metrics at `/revenue/overview`, distinct from the agent-status dashboard in Module 2. TTM bar chart plus two project × month grids, over `GET /revenue/summary` and `GET /revenue/entries`. Two queries with two jobs: the summary defines the window and every month total, so the chart, the stat tiles and the grid footers all read one server-side aggregate rather than three browser-side re-derivations that could drift apart; the entries fill in the per-project cells, which is the one thing the summary cannot answer
 - [x] **Projects tab, Harvest-backed** — `/projects` is live, not a mockup (`ui/src/pages/Projects/ProjectList.tsx` → `GET /projects` → `app/routers/projects.py` → `app/services/projects.py`). Four columns: project / client / start / end date, over billable projects in the `harvest_projects` snapshot cache. Active is the default; "See archived" **swaps** the list rather than extending it — the two sets are disjoint, and the archived count is deliberately not shown (it would cost a second query to tell you something you cannot act on). Migration `0030` added `starts_on` / `ends_on`; Harvest always returned them on `/v2/projects` and the snapshot upsert had been discarding both. Fixtures deleted: `pages/Projects/mockData.ts` is gone, as is the `MOCK_PROJECTS` export it borrowed from the Revenue mock
 - [x] **Projected end, from Forecast** (2026-08-14) — `forecast_project_schedule` (migration `0032`), the last day a **person** is booked on each project. Placeholder bookings are excluded: they are capacity held open, not someone scheduled, and counting them moved three projects later on a booking with no name against it. Forecast projects carry a `harvest_id`, so the join resolves at sync time. `app/services/forecast_snapshot.py`; read-only against Forecast, audited as `forecast.schedule.refreshed`. Live coverage: 27 of 29 active projects — the two blanks are Managed Hosting, where nobody is scheduled by design, so null is the honest answer rather than a gap. The tab ambers a projected end that runs past the Harvest end date: **8 of 29** are booked past their planned end, one by 153 days. The column is shown for active work only — archived projects have already ended, so the archived view drops it (four columns rather than five with one dead). The endpoint still serves the field for both, so "no forecast" and "not provided" stay distinguishable for any other consumer. Forecast costs exactly **2 HTTP calls** per sync (`/projects` for the `harvest_id` map, `/assignments` as one bulk window) — already the floor, so narrowing what is displayed buys nothing there
 - [ ] Project-completion tracking — still nothing. Harvest's `is_active` is the only notion of "closed", and it is Harvest's flag, not one this system owns. **Committed end** is still deliberately absent: Harvest's `ends_on` is editable and moves when a project slips, so the tab calls it "End date" rather than pretending it is a commitment. A real committed date needs a project record this system owns
@@ -256,11 +268,25 @@ real run, approve one group rather than all of them.
 The gate does **not** cover the draw path and never did: a draw's amount is a number a
 human typed into the schedule and released, so there is no estimate to reconcile.
 
-**Not built and deliberately so:** rev rec has no runner. `TRIGGER_REVENUE_RECOGNITION`
-came out of `revenue-ops` under ADR-0004 and no operator-initiated endpoint has replaced
-it. The Revenue tab's "Run Revenue Recognition" button exists but is a mockup control —
-permanently disabled and badged `NOT IMPLEMENTED`, wired to nothing. The
-`write_rev_rec_entries` executor is untouched and waiting.
+**Rev rec has a runner again** (2026-09-16). `app/services/revenue_run.py`, operator-initiated
+under ADR-0004 and modelled on `POST /billing/draws/{id}/invoice`: plan → review and override
+entries → finalize, with abandon freeing a month to be planned again. Safer than the billing
+precedent in one real way — finalizing writes nothing outside Postgres, so there is no
+in-flight state, no unknown outcome, and nothing to reconcile against a vendor.
+
+Two guards carry weight. The config gate refuses to plan while any in-scope project is
+unconfigured (409 carrying the list, so the UI names them and links to `/revenue/setup`).
+And `finalize_run` refuses while any retainer still sits at zero with no override: a retainer
+computes to zero *by design*, so a zero means nobody has decided, not that nothing was
+earned. An explicit zero with a reason clears it.
+
+`TRIGGER_REVENUE_RECOGNITION` and the `write_rev_rec_entries` executor still exist and are
+still agent-unreachable; Phase 4 deletes both. They were kept compiling through Phase 3
+(a small Airtable-label shim in the tool) rather than deleted early, so the old path stays
+*intact* rather than merely unreachable until a month has been recognized in Postgres.
+That executor is the **only** registered one (ADR-0006), so removing it leaves `EXECUTORS`
+empty — the registry and approval machinery stay, since they are the trust boundary, but the
+inbox becomes permanently empty rather than merely empty by construction.
 
 ---
 

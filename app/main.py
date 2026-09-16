@@ -18,6 +18,7 @@ from app.routers import (
     contracts,
     llm_calls,
     projects,
+    revenue,
 )
 from app.seed import seed_agents
 from app.services.chat_sessions import mark_orphaned_streaming_failed
@@ -81,6 +82,7 @@ app.include_router(chat.router, dependencies=_auth)
 app.include_router(approvals.router, dependencies=_auth)
 app.include_router(billing.router, dependencies=_auth)
 app.include_router(projects.router, dependencies=_auth)
+app.include_router(revenue.router, dependencies=_auth)
 app.include_router(client_exclusions.router, dependencies=_auth)
 app.include_router(contracts.router, dependencies=_auth)
 

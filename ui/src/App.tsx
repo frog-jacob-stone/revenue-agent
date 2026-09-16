@@ -18,6 +18,8 @@ import RevenueLayout from './pages/Revenue/RevenueLayout';
 import RevenueOverview from './pages/Revenue/Overview';
 import RevenueRuns from './pages/Revenue/Runs';
 import RevenueEntries from './pages/Revenue/Entries';
+import RevenueRunDetail from './pages/Revenue/RunDetail';
+import RevenueSetup from './pages/Revenue/Setup';
 import Projects from './pages/Projects/ProjectList';
 import ContractsLayout from './pages/Contracts/ContractsLayout';
 import NewTM from './pages/Contracts/NewTM';
@@ -63,13 +65,15 @@ export default function App() {
           <Route path="/invoices/groups/new" element={<GroupForm />} />
           <Route path="/invoices/groups/:groupId/edit" element={<GroupForm />} />
           <Route path="/invoices/groups/:groupId" element={<GroupDetail />} />
-          {/* Mockup only — every figure under here comes from
-              pages/Revenue/mockData.ts. See RevenueLayout. */}
           <Route path="/revenue" element={<RevenueLayout />}>
             <Route index element={<Navigate to="overview" replace />} />
             <Route path="overview" element={<RevenueOverview />} />
             <Route path="runs" element={<RevenueRuns />} />
+            {/* Inside the layout, so the tabs stay put while a run is
+                reviewed — the same shape as the Invoices run detail. */}
+            <Route path="runs/:runId" element={<RevenueRunDetail />} />
             <Route path="entries" element={<RevenueEntries />} />
+            <Route path="setup" element={<RevenueSetup />} />
           </Route>
           {/* Projects is still a nav destination ahead of its feature — a
               sample-data stub. */}

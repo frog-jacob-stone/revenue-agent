@@ -1,4 +1,6 @@
-import type { RevenueMonth } from '../mockData';
+import { useMemo, useState } from 'react';
+import { ArrowDown, ArrowUp } from 'lucide-react';
+import type { Period } from '../periods';
 
 export interface GridRow {
   name: string;
@@ -8,11 +10,13 @@ export interface GridRow {
 }
 
 interface Props {
-  months: RevenueMonth[];
+  months: Period[];
   rows: GridRow[];
   footer: { label: string; cells: (number | null)[]; total: number | null };
   fmt: (n: number) => string;
 }
+
+type SortKey = 'name' | 'total';
 
 /**
  * Project × month grid with a sticky project column and a totals row.
@@ -21,8 +25,52 @@ interface Props {
  * and does not derive them: a rate column cannot be summed the way a currency
  * column can, so each caller computes its own totals and hands them over. The
  * component never adds anything up itself.
+ *
+ * Sorting is local to each grid rather than lifted, so the two can be ordered
+ * independently — "who earned the most" and "who earns the most per hour" are
+ * different questions and sorting one by the other's answer helps nobody. Both
+ * open on project name, so in the default state a project still sits on the
+ * same line in each.
  */
 export default function MonthGrid({ months, rows, footer, fmt }: Props) {
+  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({
+    key: 'name',
+    desc: false,
+  });
+
+  const sorted = useMemo(() => {
+    const dir = sort.desc ? -1 : 1;
+    return [...rows].sort((a, b) => {
+      if (sort.key === 'name') return dir * a.name.localeCompare(b.name);
+      // Nulls last in both directions: a project with no rate is missing a
+      // denominator, not sitting at the bottom of the range, and floating it
+      // to the top on one click would read as the worst performer.
+      if (a.total == null || b.total == null) {
+        return a.total == null ? (b.total == null ? 0 : 1) : -1;
+      }
+      return dir * (a.total - b.total);
+    });
+  }, [rows, sort]);
+
+  // Clicking the column you are already on flips direction; a new column
+  // starts ascending for a name and descending for a number, which is what
+  // each is nearly always wanted in first.
+  const toggle = (key: SortKey) =>
+    setSort((s) => (s.key === key ? { key, desc: !s.desc } : { key, desc: key === 'total' }));
+
+  const Arrow = sort.desc ? ArrowDown : ArrowUp;
+  const sortable = (key: SortKey, label: string, align: string) => (
+    <button
+      onClick={() => toggle(key)}
+      className={`flex items-center gap-1 w-full ${align} hover:text-slate-800 transition-colors ${
+        sort.key === key ? 'text-slate-800' : ''
+      }`}
+    >
+      {label}
+      {sort.key === key && <Arrow className="w-3 h-3" />}
+    </button>
+  );
+
   const cell = (v: number | null) =>
     v == null || v === 0 ? <span className="text-slate-300">—</span> : fmt(v);
 
@@ -34,7 +82,7 @@ export default function MonthGrid({ months, rows, footer, fmt }: Props) {
             {/* Sticky so the project name stays readable while the twelve
                 month columns scroll under it. */}
             <th className="sticky left-0 z-10 bg-white text-left px-4 py-3 font-medium min-w-[200px]">
-              Project
+              {sortable('name', 'Project', 'justify-start')}
             </th>
             {months.map((m) => (
               <th key={m.key} className="text-right px-3 py-3 font-medium whitespace-nowrap">
@@ -42,12 +90,12 @@ export default function MonthGrid({ months, rows, footer, fmt }: Props) {
               </th>
             ))}
             <th className="text-right px-4 py-3 font-medium bg-slate-50 whitespace-nowrap">
-              {footer.label}
+              {sortable('total', footer.label, 'justify-end')}
             </th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {sorted.map((row) => (
             <tr key={row.name} className="border-b border-slate-100 last:border-0 hover:bg-slate-50 group">
               <td className="sticky left-0 z-10 bg-white group-hover:bg-slate-50 px-4 py-2.5 text-slate-900 font-medium whitespace-nowrap">
                 {row.name}

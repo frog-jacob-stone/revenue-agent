@@ -16,7 +16,6 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from app.agents.base import Agent
-from app.agents.registry import AGENTS
 from app.agents.tools.base import ProgressEmitter, ToolContext
 from app.db import get_pool
 from app.integrations.llm import Attribution, dispatch
@@ -41,6 +40,19 @@ class NodeContext:
 
 
 def _agent_class_for_slug(slug: str) -> type[Agent]:
+    # Imported here, not at module scope, to keep `app.orchestrator` importable
+    # from a service. The package `__init__` pulls this module in so that
+    # `from app.orchestrator import events` works — and every service that
+    # writes an audit event does exactly that — so a module-level registry
+    # import means importing the audit vocabulary costs you the whole agent
+    # system. That is a cycle whenever an agent tool reaches a service that
+    # audits: registry → agent → tool → service → events → here → registry,
+    # which is still initializing.
+    #
+    # A runtime lookup by slug, so there is nothing to gain from binding it
+    # early anyway.
+    from app.agents.registry import AGENTS
+
     for cls in AGENTS:
         if getattr(cls, "slug", None) == slug:
             return cls

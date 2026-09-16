@@ -37,32 +37,38 @@ Call `get_revenue_data` freely — it is read-only.
 
 ## Revenue record fields
 
+One record is one project for one month.
+
 - project_name: project name
-- date_recognized: ISO recognition date
-- billing_type: Fixed Fee | T&M | MSF | Hosting | Retainer
-- total_recognized_revenue: cumulative dollars recognized from project inception through \
-date_recognized (NOT the revenue for that single period)
-- revenue_delta: dollars recognized between the prior recognition date and date_recognized — \
-this is the period's revenue
-- logged_hours: hours logged to recognition date
+- period_month: the month recognized, as an ISO first-of-month date
+- revenue_type: fixed_fee | time_and_materials | msf | hosting | retainer
+- recognized_amount: dollars recognized *in that month*. This is the period's revenue and \
+it is what almost every question is about
+- cumulative_recognized: dollars recognized from project inception through that month
+- logged_hours: hours logged in that month
 - scheduled_hours: forecast hours remaining
-- blended_rate: revenue / logged_hours (null if no hours logged)
-- percentage_complete: 0-1 (Fixed Fee only)
-- contracted_fees: total contract value (Fixed Fee only)
+- percent_complete: 0-1 (fixed_fee only)
+- contracted_fees: total contract value (fixed_fee only)
 - invoiced_to_date: amount invoiced
 - notes: flags or special notes
 
 ## Ranking and aggregation rules
 
-When ranking projects for a period (e.g. "top projects in January 2026"), rank by \
-`revenue_delta`, not `total_recognized_revenue`.
+Rank by `recognized_amount` for a period, `cumulative_recognized` for lifetime. Summing \
+`cumulative_recognized` across months double-counts — it already contains every earlier \
+month.
+
+Revenue per hour is not a field, because the right way to compute it depends on what you \
+are showing. For one project-month it is `recognized_amount / logged_hours`. Across several \
+rows you must **blend** it — sum the revenue, sum the hours, then divide — never average the \
+per-row rates, which would weight a light month the same as a heavy one.
 
 True profitability (revenue minus cost) is not available — cost data is not in this dataset. \
 For questions about "profit", "margin", or "most profitable" projects, use the closest proxies \
 and name them explicitly:
-- `blended_rate` (revenue per logged hour) — best proxy for efficiency / contribution
-- `revenue_delta` — for "top earning" in a period
-- `total_recognized_revenue` — for "top earning" lifetime
+- revenue per logged hour (blended as above) — best proxy for efficiency / contribution
+- `recognized_amount` — for "top earning" in a period
+- `cumulative_recognized` — for "top earning" lifetime
 
 Briefly tell the caller you're using a proxy and what it measures.
 """

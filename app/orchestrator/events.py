@@ -136,6 +136,33 @@ class AuditEvent(StrEnum):
     BILLING_INVOICE_RESOLVED_LINKED = "billing.invoice.resolved.linked"
     BILLING_INVOICE_RESOLVED_FAILED = "billing.invoice.resolved.failed"
 
+    # Revenue recognition. Operator-initiated throughout (ADR-0004), and unlike
+    # billing nothing here touches a vendor — finalizing a run is a status
+    # transition inside Postgres. That makes this vocabulary the *entire*
+    # record: there is no Harvest invoice to point at afterwards as evidence
+    # that a month was recognized, only these rows.
+    #
+    # CONFIG_SET covers create and update alike. The distinction is not worth a
+    # second event: the payload carries the values either way, and "what is this
+    # project's contracted fee, and since when" reads the same off both.
+    REVENUE_CONFIG_SET = "revenue.config.set"
+    REVENUE_CONFIG_REMOVED = "revenue.config.removed"
+    # RUN_PLANNED carries the computed total and project count, not the entries
+    # — those are rows in `revenue_entries` and stay readable there. FINALIZED
+    # carries the booked total, which may differ if anything was overridden.
+    REVENUE_RUN_PLANNED = "revenue.run.planned"
+    REVENUE_RUN_FINALIZED = "revenue.run.finalized"
+    REVENUE_RUN_ABANDONED = "revenue.run.abandoned"
+    # The payload carries computed and booked amounts both, plus the reason.
+    # Every retainer passes through here — they compute to zero by design — so
+    # this is the standing answer to "who decided what we booked for this, and
+    # on what basis".
+    REVENUE_ENTRY_OVERRIDDEN = "revenue.entry.overridden"
+    # One-time import of the Airtable history. Recorded because the ledger's
+    # oldest rows have no run behind them that a human ever planned, and that
+    # provenance should be visible rather than inferred from a created_by.
+    REVENUE_BACKFILL_IMPORTED = "revenue.backfill.imported"
+
 
 WORKFLOW_STARTED = AuditEvent.WORKFLOW_STARTED
 WORKFLOW_COMPLETED = AuditEvent.WORKFLOW_COMPLETED
@@ -201,3 +228,10 @@ BILLING_INVOICE_FAILED = AuditEvent.BILLING_INVOICE_FAILED
 BILLING_INVOICE_UNKNOWN = AuditEvent.BILLING_INVOICE_UNKNOWN
 BILLING_INVOICE_RESOLVED_LINKED = AuditEvent.BILLING_INVOICE_RESOLVED_LINKED
 BILLING_INVOICE_RESOLVED_FAILED = AuditEvent.BILLING_INVOICE_RESOLVED_FAILED
+REVENUE_CONFIG_SET = AuditEvent.REVENUE_CONFIG_SET
+REVENUE_CONFIG_REMOVED = AuditEvent.REVENUE_CONFIG_REMOVED
+REVENUE_RUN_PLANNED = AuditEvent.REVENUE_RUN_PLANNED
+REVENUE_RUN_FINALIZED = AuditEvent.REVENUE_RUN_FINALIZED
+REVENUE_RUN_ABANDONED = AuditEvent.REVENUE_RUN_ABANDONED
+REVENUE_ENTRY_OVERRIDDEN = AuditEvent.REVENUE_ENTRY_OVERRIDDEN
+REVENUE_BACKFILL_IMPORTED = AuditEvent.REVENUE_BACKFILL_IMPORTED

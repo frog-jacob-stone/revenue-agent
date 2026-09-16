@@ -34,6 +34,23 @@ logger = logging.getLogger(__name__)
 TOOL_NAME = "trigger_revenue_recognition"
 ACTION_TYPE_WRITE = "write_rev_rec"
 
+#: Airtable's `Billing Type` -> the `revenue_type` vocabulary `calc_revenue`
+#: now speaks (migration 0040).
+#:
+#: A shim, and a short-lived one. This whole module is deleted in Phase 4 of
+#: `.agent/plans/28.rev-rec-to-postgres.md`, once the operator-initiated runner
+#: has produced a month that reconciles. It is kept compiling rather than
+#: deleted early so the Airtable path stays intact until then — it is already
+#: unreachable (ADR-0004 removed it from every agent's `allowed_tools`), but
+#: unreachable and *broken* are different states to retreat to.
+_REVENUE_TYPE_BY_BILLING_TYPE = {
+    "Fixed Fee": "fixed_fee",
+    "T&M": "time_and_materials",
+    "MSF": "msf",
+    "Hosting": "hosting",
+    "Retainer": "retainer",
+}
+
 
 def _emit(progress: ProgressEmitter | None, event: dict[str, Any]) -> None:
     if progress is not None:
@@ -112,14 +129,21 @@ async def _compute_entries(
                 settings, int(harvest_id), date_recognized
             )
 
-        project["_hours_logged"] = hours_logged
-        project["_forecast_hours"] = float(
-            scheduled_hours_map.get(int(harvest_id or 0), 0)
-        )
+        forecast_hours = float(scheduled_hours_map.get(int(harvest_id or 0), 0))
         invoice_data = invoice_totals_map.get(int(harvest_id or 0), {})
 
-        revenue, percent_complete, notes = calc_revenue(project, invoice_data)
-        total_projected = hours_logged + project["_forecast_hours"]
+        billing_type = project.get("Billing Type")
+        revenue, percent_complete, notes = calc_revenue(
+            revenue_type=_REVENUE_TYPE_BY_BILLING_TYPE.get(
+                billing_type, str(billing_type)
+            ),
+            hours_logged=hours_logged,
+            forecast_hours=forecast_hours,
+            contracted_fees=project.get("Contracted Fees"),
+            invoiced_to_date=invoice_data.get("total_amount", 0.0),
+            billable_expenses=invoice_data.get("billable_expenses", 0.0),
+        )
+        total_projected = hours_logged + forecast_hours
         blended_rate = _round2(revenue / hours_logged) if hours_logged > 0 else None
 
         entries.append({
@@ -128,7 +152,7 @@ async def _compute_entries(
             "Date Recognized": date_recognized,
             "Total Recognized Revenue": revenue,
             "Percentage Complete": percent_complete,
-            "Scheduled Hours": project["_forecast_hours"],
+            "Scheduled Hours": forecast_hours,
             "Logged Hours": hours_logged,
             "Contracted Fees": project.get("Contracted Fees"),
             "Billing Type": project.get("Billing Type"),

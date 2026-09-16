@@ -1,11 +1,11 @@
 # Supabase Schema — Revenue Operations System
 
 > Source of truth for the database. Update this file when the schema changes.
-> Matches migrations: `supabase/migrations/20250101000001_initial_schema.sql` through `20250101000035_security_lints.sql`
+> Matches migrations: `supabase/migrations/20250101000001_initial_schema.sql` through `20250101000040_revenue_recognition.sql`
 
 ## Overview
 
-Two groups of tables, plus pgvector (installed in the `extensions` schema, not `public` — see migration `0035`). Every table has RLS enabled from day one so policies can be added without a migration later.
+Three groups of tables, plus pgvector (installed in the `extensions` schema, not `public` — see migration `0035`). Every table has RLS enabled from day one so policies can be added without a migration later.
 
 **Agent framework** (nine core tables):
 
@@ -36,6 +36,14 @@ billing_runs                    → a monthly or draw billing run
 billing_run_items               → per-group/per-draw ledger row: planned → approved → in_flight → created | failed
 billing_run_flags               → error/warning/info catalog surfaced on a run
 billing_settings                → account-level billing preferences (e.g. default invoice notes)
+```
+
+**Revenue recognition** (migration `0040` — operator-initiated, no agent in the write path):
+
+```
+revenue_project_config → per-project: how it recognizes, and against what contract value
+revenue_runs           → one run per month: draft → recognized | abandoned
+revenue_entries        → the ledger: one row per project per month, storing the PERIOD amount
 ```
 
 ## Design Principles
@@ -460,6 +468,103 @@ refused at the service layer no matter what that column says.
 `billing_run_flags` — flags from the §7 catalog. `billing_run_item_id` is null
 for run-level flags such as `UNMAPPED_PROJECT`, which belong to no group.
 
+### Revenue recognition tables
+
+Migration `0040`. Replaces three Airtable tables: a Clients and a Projects table
+that were a Harvest mirror plus three hand-typed fields, and a Revenue table that
+was the ledger itself.
+
+**Two enums.** `revenue_type` (`fixed_fee`, `time_and_materials`, `msf`,
+`hosting`, `retainer`) is *how revenue is recognized* — deliberately a different
+vocabulary from `billing_groups.billing_type`, which is how a client is
+*invoiced*. A project can be invoiced on a draw schedule and recognized
+percent-complete; conflating the two would be a bug waiting. `revenue_run_status`
+is `draft | recognized | abandoned`.
+
+**`revenue_project_config`** — PK `harvest_project_id bigint`, plus
+`revenue_type`, `contracted_fees numeric(12,2)`, `notes`, and the usual
+created/updated by/at. A CHECK requires `contracted_fees` for `fixed_fee`,
+because such a project with no contract value does not compute to zero — it
+computes to nonsense, silently, every month.
+
+No FK to `harvest_projects`, and no new project entity, for the reason
+`excluded_harvest_clients` and `forecast_project_schedule` give: that table is a
+read-through cache documented as safe to truncate, and this is operator intent
+that must outlive a resync. The Harvest project *is* the project; the Harvest id
+is already the system-wide join key. The Airtable `Client Id` field has no
+successor — `harvest_projects.client_id` already answers it.
+
+**`revenue_runs`** — `id uuid`, `period_month date` (first-of-month by CHECK,
+matching `billing_runs.run_month`), `status`, created/finalized/abandoned by/at.
+A partial unique index `revenue_runs_one_live_per_month` on `period_month`
+`WHERE status <> 'abandoned'` is the duplicate-run guard; it replaces reading
+Airtable's most recent entry and comparing dates, which could only catch the
+common case and raced with itself. Abandoned runs are excluded so a discarded
+month can be planned again.
+
+Unlike `billing_runs` there is no external write at the end of this. Finalizing
+is a status transition inside Postgres, so there is no in-flight state, no
+unknown outcome, and nothing to reconcile against a vendor afterwards.
+
+**`revenue_entries`** — the ledger. `revenue_run_id` (CASCADE), `period_month`
+(denormalized as `billing_run_items.run_month` is), `harvest_project_id`,
+`harvest_project_name` and `revenue_type` (both snapshotted, since projects get
+renamed and config changes), then:
+
+- **`recognized_amount numeric(12,2)`** — revenue recognized *in this period*.
+  The only monetary fact stored.
+- `computed_amount` — what the system calculated, kept even when overridden.
+  The pair answers "what did it say, what did we book, and who changed it" in
+  one row.
+- Evidence: `logged_hours`, `scheduled_hours`, `percent_complete`,
+  `contracted_fees`, `invoiced_to_date`, `notes`. Kept so a figure can be
+  defended months later without re-querying Harvest for a period that has since
+  moved — not because anything reports on them.
+
+  **`logged_hours` is the period's own hours, not cumulative-to-date** — the
+  same convention as `recognized_amount`, and for the same reason: the two are
+  divided by each other to get revenue per billable hour, and a period
+  numerator over a cumulative denominator produces a figure that falls every
+  month on a healthy project. Both sources answer cumulatively (Harvest's
+  `get_time_entries` sums to a date; Airtable stored a running total — verified
+  against the live base, where all 76 projects with three or more months never
+  decrease), so the runner bounds its sweep to the period and the backfill
+  differences consecutive records.
+
+  `scheduled_hours` is deliberately **not** a period quantity: it is
+  forward-looking, the hours still booked in Forecast as of the period end.
+  `invoiced_to_date` and `contracted_fees` are likewise snapshots. Only
+  `recognized_amount` and `logged_hours` may be summed across months.
+- Override: `override_reason`, `overridden_by`, `overridden_at`. Null means
+  nobody intervened.
+
+`unique (revenue_run_id, harvest_project_id)`.
+
+**The period amount is the fact; cumulative is derived.** Airtable stored
+`Total Recognized Revenue` (cumulative-to-date) and derived `Revenue Delta` as a
+formula. That was an Airtable constraint, not a modelling choice, and this
+inverts it. Cumulative-to-date is `SUM(recognized_amount)`, computed at read time
+in `app/services/revenue_ledger.py` — deliberately **not** a view, since there
+are none anywhere in this schema and the established pattern for aggregation is
+SQL inline in a service query.
+
+The payoff is not only tidiness. Every billing type's computation naturally
+produces a cumulative number (fixed fee = contracted × percent complete; T&M =
+Harvest invoiced-to-date), so a run computes
+`period_amount = cumulative_target − SUM(all prior periods)` — which means a
+correction to a closed month absorbs into the next open month rather than
+silently restating history.
+
+Dropped from the Airtable field set as pure derivations: `Total Recognized
+Revenue`, `Total Projected Hours` (= logged + scheduled), blended rate, the
+`Project Id` link, and the `Archive` checkbox (`harvest_projects.is_active` plus
+`excluded_harvest_clients` already answer that).
+
+There is deliberately no unique index on `(harvest_project_id, period_month)`:
+one live run per month plus one entry per project per run already prevents two
+live entries in a period. Abandoned runs may duplicate, and every reader filters
+on the run being `recognized`.
+
 ## Agent Types
 
 **Front-door agent** — `chief-of-staff`. The only conversational agent users chat with. Owns no domain tools; delegates revenue and BDR work to domain agents via `ask_agent`. Drives an OpenAI tool-call loop inside one chat turn via `app/services/chat_turn.py`.
@@ -490,6 +595,23 @@ Keep this list stable; it becomes grep-able forensics. Constants live in `app/or
 - `billing.snapshot.refreshed`
 - `billing.group.created`, `billing.group.updated`, `billing.group.deactivated`
 - `billing.run.planned`, `billing.run.abandoned`
+
+**Revenue recognition:**
+- `revenue.config.set`, `revenue.config.removed`
+- `revenue.run.planned`, `revenue.run.finalized`, `revenue.run.abandoned`
+- `revenue.entry.overridden`
+- `revenue.backfill.imported`
+
+Operator-initiated throughout (ADR-0004), and unlike billing nothing here
+touches a vendor — finalizing a run is a status transition inside Postgres. That
+makes this vocabulary the *entire* record: there is no Harvest invoice to point
+at afterwards as evidence that a month was recognized, only these rows.
+`revenue.entry.overridden` carries computed and booked amounts both, plus the
+reason; every retainer passes through it, since they compute to zero by design.
+`revenue.config.set` covers create and update alike — the payload carries the
+values either way. `revenue.backfill.imported` records the one-time Airtable
+import, because the ledger's oldest rows have no run a human ever planned and
+that provenance should be visible rather than inferred.
 
 **Client exclusions:**
 - `client.excluded`, `client.exclusion.removed`
@@ -533,6 +655,15 @@ Historical audit_log rows may carry retired vocabulary (`workflow.*`, `node.*`, 
 | `POST /billing/snapshot/refresh` | Refresh the Harvest read-through cache |
 | `GET /billing/harvest/clients`, `/billing/harvest/projects`, `/billing/harvest/item-categories` | Snapshot catalog backing the group-config form |
 | `GET/POST /billing/runs`, `GET /billing/runs/{id}`, `POST /billing/runs/{id}/abandon` | Pre-flight planning. Read-only against Harvest |
+| `GET /revenue/entries` | The ledger, newest month first, each row with its cumulative total. Finalized runs only |
+| `GET /revenue/summary?months=` | Recognized revenue and hours per month, **oldest first** — it is a chart, not a lookup |
+| `GET /revenue/runs` | Run history, every status including drafts |
+| `GET /revenue/runs/{id}` | One run and its entries, whatever its status — deliberately serves drafts, since this is the payload an operator reads before finalizing |
+| `GET /revenue/config`, `PATCH`/`DELETE /revenue/config/{harvest_project_id}` | Per-project recognition setup. Human-only (ADR-0004) |
+| `POST /revenue/runs` | Plan a month. Read-only against Harvest and Forecast; 409 with the project list if any in-scope project is unconfigured |
+| `PATCH /revenue/runs/{id}/entries/{entry_id}` | Operator override of a computed figure. Draft runs only; a reason is required |
+| `POST /revenue/runs/{id}/finalize` | The authorizing click — the entries become the ledger. Writes nothing outside Postgres |
+| `POST /revenue/runs/{id}/abandon` | Discard a draft, freeing its month to be planned again |
 
 ## RLS Status
 
@@ -613,6 +744,8 @@ Migrations run in filename order; each is idempotent.
 38. `20250101000038_billing_post_write_check.sql` — adds `unbilled_hours_after` and `unbilled_entries_after` to `billing_run_items`, written immediately after a T&M invoice is created. A T&M payload uses `line_items_import`, and that is the mechanism — the only one, since `is_billed` is read-only on Harvest's API — that makes Harvest mark the underlying time entries billed. It is load-bearing: without it a client is billed for hours Harvest still reports as uninvoiced, and next month's plan bills them again. Nothing had ever verified that Harvest did its half, so these columns record the answer. Nullable because the check legitimately does not run — a free-form `recurring_monthly` invoice imports no time, and a check that raises is swallowed rather than allowed to unwind an invoice that already exists. Non-zero is shown on the run result as an observation and blocks nothing, because unapproved time and entries with no resolvable rate are ordinary reasons for it
 
 39. `20250101000039_billing_run_item_rejection.sql` — adds `rejected_at` / `rejected_by` to `billing_run_items`. Un-approving a group only returns it to *undecided*: the row stays live, still holds the month's slot, and records nothing about why. The case that needed more is a recurring invoice already sent by hand — the next run wants to create a duplicate, and the operator needs to say so and have it remembered. Reuses the existing `skipped` status rather than adding an enum value, since `skipped` already means "this run will not bill this group", is already excluded from `billing_run_items_one_live_per_month` (so a rejection frees the slot, which is correct here), and already has a section in the pre-flight. The two columns are the distinction the status cannot make: `rejected_by` set means a human decided, null means the planner found nothing to bill, and only the former can be undone. A non-empty reason is required at the service layer and lands in `skip_reason` — this row becomes the only record of why a client a run planned for received no invoice
+
+40. `20250101000040_revenue_recognition.sql` — creates `revenue_type` and `revenue_run_status` enums plus `revenue_project_config`, `revenue_runs` and `revenue_entries`, bringing revenue recognition into this system and retiring the three Airtable tables that held it. Two decisions are load-bearing. The Harvest project stays the project entity — config keys on `harvest_project_id` with no FK, following `excluded_harvest_clients` and `forecast_project_schedule`, because `harvest_projects` is a truncate-safe cache and operator intent must outlive a resync; a second project entity would need reconciling against the first forever and buy nothing. And the ledger stores the *period* amount (`recognized_amount`), not the cumulative one: Airtable had it the other way round because its formulas wanted that, but every billing type's computation naturally produces a cumulative figure, so a run computes `period − prior sum` and a correction to a closed month absorbs into the next open month instead of silently restating history. Cumulative is summed at read time in the service layer, deliberately not a view — there are none in this schema. The duplicate-run guard is now structural (`revenue_runs_one_live_per_month`) rather than a date comparison against Airtable's most recent entry, which raced with itself. Historical data is imported by `scripts/backfill_rev_rec.py`, which refuses to write unless replaying the deltas reproduces every historical cumulative total to the cent
 
 ## Open Questions
 

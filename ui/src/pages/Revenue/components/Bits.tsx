@@ -1,40 +1,53 @@
 // Revenue-specific badges. Deliberately not shared with the Invoices ones in
-// `pages/Invoices/components/Bits.tsx`: the words overlap ("billing type",
-// "run status") but the vocabularies do not. Invoicing's billing types come
-// from this system's own config; rev rec's come from Airtable, and its runs
-// have three states rather than six.
+// `pages/Invoices/components/Bits.tsx`: the words overlap ("type", "run
+// status") but the vocabularies do not. Invoicing's `billing_type` is how a
+// client is *invoiced*; `revenue_type` here is how a project *recognizes*, and
+// a project can be invoiced on a draw schedule while recognizing
+// percent-complete. Keeping the two chip sets apart keeps that distinction
+// visible.
 
-import type { BillingType, RevRecRunStatus } from '../mockData';
+import type { RevenueType, RevenueRunStatus } from '../../../api';
 
-const TYPE_STYLES: Record<BillingType, string> = {
-  'Fixed Fee': 'bg-violet-500/15 text-violet-700 border-violet-500/40',
-  'T&M': 'bg-indigo-500/15 text-indigo-700 border-indigo-500/40',
-  MSF: 'bg-teal-500/15 text-teal-700 border-teal-500/40',
-  Hosting: 'bg-sky-500/15 text-sky-700 border-sky-500/40',
-  Retainer: 'bg-cyan-500/15 text-cyan-700 border-cyan-500/40',
+const TYPE_STYLES: Record<RevenueType, string> = {
+  fixed_fee: 'bg-violet-500/15 text-violet-700 border-violet-500/40',
+  time_and_materials: 'bg-indigo-500/15 text-indigo-700 border-indigo-500/40',
+  msf: 'bg-teal-500/15 text-teal-700 border-teal-500/40',
+  hosting: 'bg-sky-500/15 text-sky-700 border-sky-500/40',
+  retainer: 'bg-cyan-500/15 text-cyan-700 border-cyan-500/40',
 };
 
-export function BillingTypeChip({ type }: { type: BillingType }) {
+const TYPE_LABEL: Record<RevenueType, string> = {
+  fixed_fee: 'Fixed Fee',
+  time_and_materials: 'T&M',
+  msf: 'MSF',
+  hosting: 'Hosting',
+  retainer: 'Retainer',
+};
+
+export function RevenueTypeChip({ type }: { type: RevenueType }) {
   return (
     <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap ${TYPE_STYLES[type]}`}>
-      {type}
+      {TYPE_LABEL[type]}
     </span>
   );
 }
 
-const RUN_STATUS_STYLES: Record<RevRecRunStatus, string> = {
-  completed: 'bg-emerald-500/15 text-emerald-600 border-emerald-500/40',
-  awaiting_approval: 'bg-amber-400/15 text-amber-600 border-amber-400/40',
-  blocked: 'bg-red-500/15 text-red-600 border-red-500/40',
+// Three states, and only one of them is the ledger. A draft is a proposal
+// nobody has decided yet; an abandoned run is a discarded draft kept rather
+// than deleted. Neither counts toward any reported figure.
+const RUN_STATUS_STYLES: Record<RevenueRunStatus, string> = {
+  recognized: 'bg-emerald-500/15 text-emerald-600 border-emerald-500/40',
+  draft: 'bg-amber-400/15 text-amber-600 border-amber-400/40',
+  abandoned: 'bg-slate-400/15 text-slate-500 border-slate-400/40',
 };
 
-const RUN_STATUS_LABEL: Record<RevRecRunStatus, string> = {
-  completed: 'Completed',
-  awaiting_approval: 'Awaiting approval',
-  blocked: 'Blocked',
+const RUN_STATUS_LABEL: Record<RevenueRunStatus, string> = {
+  recognized: 'Recognized',
+  draft: 'Draft',
+  abandoned: 'Abandoned',
 };
 
-export function RunStatusChip({ status }: { status: RevRecRunStatus }) {
+export function RunStatusChip({ status }: { status: RevenueRunStatus }) {
   return (
     <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-xs font-medium whitespace-nowrap ${RUN_STATUS_STYLES[status]}`}>
       <span className="w-1.5 h-1.5 rounded-full bg-current" />
@@ -43,7 +56,7 @@ export function RunStatusChip({ status }: { status: RevRecRunStatus }) {
   );
 }
 
-/** Percent complete only means something for Fixed Fee — everything else has no
+/** Percent complete only means something for fixed fee — everything else has no
  *  fixed denominator to be a percentage of. */
 export function PercentComplete({ value }: { value: number | null }) {
   if (value === null) return <span className="text-slate-300">—</span>;

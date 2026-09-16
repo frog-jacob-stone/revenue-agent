@@ -25,9 +25,20 @@ def test_revenue_ops_is_analysis_only():
 def test_system_prompt_carries_domain_rules():
     inst = RevenueOpsAgent(agent_id=uuid4())
     prompt = inst.get_system_prompt()
-    # Key domain rules the rev-rec specialist must encode.
-    assert "revenue_delta" in prompt
-    assert "blended_rate" in prompt
+    # The two ledger fields, by their current names. `revenue_delta` and
+    # `total_recognized_revenue` were the Airtable vocabulary and are gone.
+    assert "recognized_amount" in prompt
+    assert "cumulative_recognized" in prompt
+
+
+def test_system_prompt_warns_against_the_two_aggregation_traps():
+    """Both are easy mistakes that produce a plausible wrong number, which is
+    the worst kind — nothing downstream catches it."""
+    prompt = RevenueOpsAgent(agent_id=uuid4()).get_system_prompt().lower()
+    # Summing a cumulative column across months.
+    assert "double-count" in prompt
+    # Averaging per-row rates instead of blending them.
+    assert "blend" in prompt
 
 
 def test_system_prompt_says_it_cannot_run_rev_rec():
