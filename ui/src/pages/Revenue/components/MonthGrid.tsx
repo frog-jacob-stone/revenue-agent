@@ -21,16 +21,14 @@ type SortKey = 'name' | 'total';
 /**
  * Project × month grid with a sticky project column and a totals row.
  *
- * Shared by the revenue grid and the revenue-per-hour grid. It renders numbers
- * and does not derive them: a rate column cannot be summed the way a currency
- * column can, so each caller computes its own totals and hands them over. The
- * component never adds anything up itself.
+ * It renders numbers and does not derive them. Whichever metric the Overview
+ * has selected owns what a cell and a total mean — a rate column cannot be
+ * summed the way a currency column can — so the caller computes both and hands
+ * them over. The component never adds anything up itself.
  *
- * Sorting is local to each grid rather than lifted, so the two can be ordered
- * independently — "who earned the most" and "who earns the most per hour" are
- * different questions and sorting one by the other's answer helps nobody. Both
- * open on project name, so in the default state a project still sits on the
- * same line in each.
+ * Sorting is local, and it persists across a metric switch: sorted by the total
+ * column, the grid re-sorts by whatever that column now measures, which is what
+ * someone comparing the same ranking across two measures is asking for.
  */
 export default function MonthGrid({ months, rows, footer, fmt }: Props) {
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({

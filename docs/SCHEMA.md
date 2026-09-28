@@ -655,8 +655,9 @@ Historical audit_log rows may carry retired vocabulary (`workflow.*`, `node.*`, 
 | `POST /billing/snapshot/refresh` | Refresh the Harvest read-through cache |
 | `GET /billing/harvest/clients`, `/billing/harvest/projects`, `/billing/harvest/item-categories` | Snapshot catalog backing the group-config form |
 | `GET/POST /billing/runs`, `GET /billing/runs/{id}`, `POST /billing/runs/{id}/abandon` | Pre-flight planning. Read-only against Harvest |
-| `GET /revenue/entries` | The ledger, newest month first, each row with its cumulative total. Finalized runs only |
-| `GET /revenue/summary?months=` | Recognized revenue and hours per month, **oldest first** — it is a chart, not a lookup |
+| `GET /revenue/entries` | The ledger, newest month first, each row with its cumulative total. Finalized runs only. Filters: `date_from`/`date_to` (inclusive, month-granular), `harvest_project_id`, repeated `client_ids`, and `non_empty` |
+| `GET /revenue/summary` | Recognized revenue and hours per month, **oldest first** — it is a chart, not a lookup. Takes the same `date_from`/`date_to`/`client_ids`, so the chart and the grid beside it narrow to the same book |
+| `GET /revenue/clients` | Options for the Overview's client filter, alphabetical. Deliberately its own endpoint: a faceted filter's options must come from the *unfiltered* set, or each selection removes the others and leaves no way back. Revenue **or** hours qualifies, and both totals come back, so the list neither changes nor needs re-fetching when the metric selector does |
 | `GET /revenue/runs` | Run history, every status including drafts |
 | `GET /revenue/runs/{id}` | One run and its entries, whatever its status — deliberately serves drafts, since this is the payload an operator reads before finalizing |
 | `GET /revenue/config`, `PATCH`/`DELETE /revenue/config/{harvest_project_id}` | Per-project recognition setup. Human-only (ADR-0004) |
@@ -664,6 +665,18 @@ Historical audit_log rows may carry retired vocabulary (`workflow.*`, `node.*`, 
 | `PATCH /revenue/runs/{id}/entries/{entry_id}` | Operator override of a computed figure. Draft runs only; a reason is required |
 | `POST /revenue/runs/{id}/finalize` | The authorizing click — the entries become the ledger. Writes nothing outside Postgres |
 | `POST /revenue/runs/{id}/abandon` | Discard a draft, freeing its month to be planned again |
+
+**`non_empty` on `/revenue/entries`** names a *measure* — `revenue` or `hours` —
+rather than being a boolean, because the Overview is read through a metric
+selector and what counts as an all-dashes row depends on which of the three
+views is open. `revenue` drops projects that recognized nothing in the window;
+`hours` drops those that logged nothing. The revenue-per-hour view asks for
+`hours`, since a rate has no value without a denominator — but a project with
+hours and no revenue is kept there deliberately, reading $0/hr, which is real
+(unrecognized work). It is a **project**-level filter: one that qualifies keeps
+every entry it has, zeros included, so dropping rows never silently changes the
+blend for everyone else. Omitting it keeps every project, which is what the
+Entries tab wants — a ledger shows what is there.
 
 ## RLS Status
 

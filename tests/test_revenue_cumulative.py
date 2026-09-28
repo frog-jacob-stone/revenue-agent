@@ -211,9 +211,12 @@ async def test_prior_recognized_ignores_a_draft(client):
 
 # ── Excluding projects with nothing in the window ───────────────────────────
 #
-# The Overview grid's rows are its projects, so "don't show projects with no
-# revenue this period" is a question about which rows exist — answered where
+# The Overview grid's rows are its projects, so "don't show projects with
+# nothing this period" is a question about which rows exist — answered where
 # the rows come from, not by dropping them in the browser after they arrive.
+#
+# What counts as "nothing" depends on the metric being viewed, which is why
+# `non_empty` names a measure rather than being a boolean.
 
 
 async def test_a_project_with_nothing_in_the_window_is_dropped(client):
@@ -227,8 +230,56 @@ async def test_a_project_with_nothing_in_the_window_is_dropped(client):
     assert len({r["harvest_project_id"] for r in
                 await revenue_ledger.list_entries(pool)} ) == 2
 
-    rows = await revenue_ledger.list_entries(pool, exclude_empty_projects=True)
+    rows = await revenue_ledger.list_entries(pool, non_empty="revenue")
     assert {r["harvest_project_id"] for r in rows} == {ACME}
+
+
+async def test_omitting_non_empty_keeps_every_project(client):
+    """The Entries tab is a ledger, not a report — it shows what is there."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        jan = await _run(conn, date(2026, 1, 1))
+        await _entry(conn, jan, date(2026, 1, 1), "1000.00")
+        await _entry(conn, jan, date(2026, 1, 1), "0.00",
+                     project_id=BETA, name="Beta")
+
+    rows = await revenue_ledger.list_entries(pool)
+    assert {r["harvest_project_id"] for r in rows} == {ACME, BETA}
+
+
+async def test_the_two_measures_drop_different_projects(client):
+    """The crossing case, and the whole reason this is not a boolean.
+
+    Acme recognized revenue without logging hours — its first imported month is
+    a catch-up lump covering years of prior work. Beta logged hours and
+    recognized nothing, which is real unrecognized work. Each belongs in
+    exactly one of the two views.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        jan = await _run(conn, date(2026, 1, 1))
+        await _entry(conn, jan, date(2026, 1, 1), "1000.00", hours=None)
+        await _entry(conn, jan, date(2026, 1, 1), "0.00", hours="40",
+                     project_id=BETA, name="Beta")
+
+    by_revenue = await revenue_ledger.list_entries(pool, non_empty="revenue")
+    assert {r["harvest_project_id"] for r in by_revenue} == {ACME}
+
+    by_hours = await revenue_ledger.list_entries(pool, non_empty="hours")
+    assert {r["harvest_project_id"] for r in by_hours} == {BETA}
+
+
+async def test_hours_keeps_a_project_earning_nothing(client):
+    """Under `hours` it reads $0/hr, which is exactly what someone looking at
+    rates wants to see: work went in and nothing came out."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        jan = await _run(conn, date(2026, 1, 1))
+        await _entry(conn, jan, date(2026, 1, 1), "0.00", hours="40")
+
+    rows = await revenue_ledger.list_entries(pool, non_empty="hours")
+    assert [r["logged_hours"] for r in rows] == [Decimal("40.00")]
+    assert rows[0]["recognized_amount"] == Decimal("0.00")
 
 
 async def test_it_is_project_level_not_row_level(client):
@@ -242,7 +293,7 @@ async def test_it_is_project_level_not_row_level(client):
         await _entry(conn, jan, date(2026, 1, 1), "1000.00", hours="10")
         await _entry(conn, feb, date(2026, 2, 1), "0.00", hours="40")
 
-    rows = await revenue_ledger.list_entries(pool, exclude_empty_projects=True)
+    rows = await revenue_ledger.list_entries(pool, non_empty="revenue")
     assert [r["recognized_amount"] for r in rows] == [
         Decimal("0.00"), Decimal("1000.00")
     ]
@@ -263,13 +314,31 @@ async def test_empty_means_empty_for_this_window_not_ever(client):
         await _entry(conn, mar, date(2026, 3, 1), "0.00", project_id=BETA, name="Beta")
 
     rows = await revenue_ledger.list_entries(
-        pool, date_from=date(2026, 3, 1), exclude_empty_projects=True
+        pool, date_from=date(2026, 3, 1), non_empty="revenue"
     )
     assert {r["harvest_project_id"] for r in rows} == {ACME}
 
     # Widen the window and Beta comes back, because January is now in scope.
-    rows = await revenue_ledger.list_entries(pool, exclude_empty_projects=True)
+    rows = await revenue_ledger.list_entries(pool, non_empty="revenue")
     assert {r["harvest_project_id"] for r in rows} == {ACME, BETA}
+
+
+async def test_the_hours_window_is_bounded_the_same_way(client):
+    """Same remembered placeholders, so both measures see the same window."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        jan = await _run(conn, date(2026, 1, 1))
+        await _entry(conn, jan, date(2026, 1, 1), "0.00", hours="40",
+                     project_id=BETA, name="Beta")
+        mar = await _run(conn, date(2026, 3, 1))
+        await _entry(conn, mar, date(2026, 3, 1), "1000.00", hours="10")
+        await _entry(conn, mar, date(2026, 3, 1), "0.00", hours=None,
+                     project_id=BETA, name="Beta")
+
+    rows = await revenue_ledger.list_entries(
+        pool, date_from=date(2026, 3, 1), non_empty="hours"
+    )
+    assert {r["harvest_project_id"] for r in rows} == {ACME}
 
 
 async def test_a_draft_does_not_rescue_an_empty_project(client):
@@ -280,9 +349,10 @@ async def test_a_draft_does_not_rescue_an_empty_project(client):
         jan = await _run(conn, date(2026, 1, 1))
         await _entry(conn, jan, date(2026, 1, 1), "0.00")
         draft = await _run(conn, date(2026, 2, 1), status="draft")
-        await _entry(conn, draft, date(2026, 2, 1), "9999.00")
+        await _entry(conn, draft, date(2026, 2, 1), "9999.00", hours="80")
 
-    assert await revenue_ledger.list_entries(pool, exclude_empty_projects=True) == []
+    assert await revenue_ledger.list_entries(pool, non_empty="revenue") == []
+    assert await revenue_ledger.list_entries(pool, non_empty="hours") == []
 
 
 # ── The client filter ───────────────────────────────────────────────────────
@@ -357,6 +427,9 @@ async def test_client_options_come_with_their_totals(client):
     assert [c["client_name"] for c in clients] == ["Acme", "Beta"]  # alphabetical
     assert clients[0]["recognized_amount"] == Decimal("1000.00")
     assert clients[0]["project_count"] == 1
+    # Hours ride along so the number beside each name can follow the metric
+    # the Overview is currently showing.
+    assert clients[0]["logged_hours"] == Decimal("10.00")
 
 
 async def test_client_options_are_bounded_by_the_period(client):
@@ -372,18 +445,42 @@ async def test_client_options_are_bounded_by_the_period(client):
     assert [c["client_name"] for c in clients] == ["Acme"]
 
 
-async def test_a_client_with_only_zeros_is_not_offered(client):
+async def test_a_client_with_nothing_at_all_is_not_offered(client):
     """Picking it could only ever empty the screen — the same noise
-    `exclude_empty_projects` keeps out of the grid."""
+    `non_empty` keeps out of the grid."""
     pool = await get_pool()
     async with pool.acquire() as conn:
         await _two_clients(conn)
         await conn.execute(
-            "UPDATE revenue_entries SET recognized_amount = 0 "
+            "UPDATE revenue_entries SET recognized_amount = 0, logged_hours = 0 "
             "WHERE harvest_project_id = $1", BETA,
         )
 
     assert [c["client_name"] for c in await revenue_ledger.list_clients(pool)] == ["Acme"]
+
+
+async def test_the_option_list_does_not_move_when_the_metric_does(client):
+    """Revenue *or* hours qualifies, so the same names are offered whichever
+    view the reader is in. A client disappearing out from under a selection
+    because they switched to hours would be worse than one extra option."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await _two_clients(conn)
+        # Beta logged hours but recognized nothing; Acme the reverse.
+        await conn.execute(
+            "UPDATE revenue_entries SET recognized_amount = 0 "
+            "WHERE harvest_project_id = $1", BETA,
+        )
+        await conn.execute(
+            "UPDATE revenue_entries SET logged_hours = NULL "
+            "WHERE harvest_project_id = $1", ACME,
+        )
+
+    clients = await revenue_ledger.list_clients(pool)
+    assert [c["client_name"] for c in clients] == ["Acme", "Beta"]
+    assert clients[0]["logged_hours"] is None
+    assert clients[1]["recognized_amount"] == Decimal("0.00")
+    assert clients[1]["logged_hours"] == Decimal("5.00")
 
 
 async def test_a_draft_does_not_put_a_client_in_the_list(client):

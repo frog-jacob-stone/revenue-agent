@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 import asyncpg
@@ -85,22 +85,28 @@ async def list_clients(
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> list[dict[str, Any]]:
-    """Clients with revenue in the window, alphabetical — the filter's options.
+    """Clients with activity in the window, alphabetical — the filter's options.
 
     Its own query rather than derived from `list_entries`, because a faceted
     filter's options have to come from the *unfiltered* set: building them from
     the filtered rows would make each selection remove the others from the
     list, and there would be no way back.
 
-    Only clients that recognized something. A client whose projects all sat at
-    zero is not a filter anyone wants to pick, and offering it would be the
-    same noise `exclude_empty_projects` removes from the grid.
+    "Activity" means revenue **or** hours, not revenue alone. The Overview is
+    read through a metric selector, and this list must not change when the
+    metric does — a client vanishing out from under a selection because the
+    reader switched to hours is worse than one extra option in the list. A
+    client with neither is dropped, which is the same noise `non_empty` removes
+    from the grid.
+
+    Both totals come back for the same reason: the number shown beside each
+    name is whichever measure is currently on screen.
     """
     conditions = [
         recognized_only_sql(),
         "p.harvest_id IS NOT NULL",
         not_excluded_sql(),
-        "e.recognized_amount <> 0",
+        "(e.recognized_amount <> 0 OR coalesce(e.logged_hours, 0) <> 0)",
     ]
     params: list[Any] = []
 
@@ -116,6 +122,7 @@ async def list_clients(
         SELECT p.client_id,
                max(p.client_name)       AS client_name,
                sum(e.recognized_amount) AS recognized_amount,
+               sum(e.logged_hours)      AS logged_hours,
                count(DISTINCT e.harvest_project_id) AS project_count
         FROM revenue_entries e
         JOIN harvest_projects p ON p.harvest_id = e.harvest_project_id
@@ -135,7 +142,7 @@ async def list_entries(
     date_to: date | None = None,
     harvest_project_id: int | None = None,
     client_ids: list[int] | None = None,
-    exclude_empty_projects: bool = False,
+    non_empty: Literal["revenue", "hours"] | None = None,
 ) -> list[dict[str, Any]]:
     """Ledger rows, newest first, with cumulative-to-date on each.
 
@@ -154,13 +161,24 @@ async def list_entries(
     own company is a Harvest client), so it applies here exactly as it does to
     the Projects roster.
 
-    `exclude_empty_projects` drops projects that recognized nothing across the
-    whole window — a grid row of dashes tells the reader only that the project
-    exists. It is a **project**-level filter, not a row-level one: a project
-    that qualifies keeps every entry it has, zeros included. Dropping the zero
-    rows themselves would silently change the revenue-per-hour blend, because a
-    month with hours but no revenue is real (unrecognized work) and should drag
-    the rate down.
+    `non_empty` drops projects that have nothing to show across the whole
+    window — a grid row of dashes tells the reader only that the project
+    exists. Which measure counts as "something" depends on what is being
+    looked at, so the caller says:
+
+        "revenue"  the project recognized nothing      → drop
+        "hours"    the project logged nothing          → drop
+
+    The revenue view asks for `"revenue"`; the hours and revenue-per-hour views
+    both ask for `"hours"`, since a rate cell has no value without a
+    denominator. A project with hours but no revenue is deliberately kept under
+    `"hours"` — it reads $0/hr, which is real (unrecognized work) and is
+    precisely what someone looking at rates wants to see.
+
+    It is a **project**-level filter, not a row-level one: a project that
+    qualifies keeps every entry it has, zeros included. Dropping the zero rows
+    themselves would silently change the revenue-per-hour blend for everyone
+    else on the screen.
     """
     # The exclusion goes in as an ordinary condition so the WHERE clause is
     # never empty and the optional filters need no special-casing.
@@ -188,7 +206,7 @@ async def list_entries(
         params.append(client_ids)
         conditions.append(f"p.client_id = ANY(${len(params)})")
 
-    if exclude_empty_projects:
+    if non_empty is not None:
         # Correlated on the project and bounded by the same window, so "empty"
         # means empty *for this period* rather than ever.
         window = ""
@@ -196,11 +214,16 @@ async def list_entries(
             window += f" AND z.period_month >= {from_ph}"
         if to_ph:
             window += f" AND z.period_month <= {to_ph}"
+        has = (
+            "z.recognized_amount <> 0"
+            if non_empty == "revenue"
+            else "coalesce(z.logged_hours, 0) <> 0"
+        )
         conditions.append(
             f"""EXISTS (
                 SELECT 1 FROM revenue_entries z
                 WHERE z.harvest_project_id = e.harvest_project_id
-                  AND z.recognized_amount <> 0
+                  AND {has}
                   AND {recognized_only_sql("z")}{window}
             )"""
         )

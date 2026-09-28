@@ -66,15 +66,21 @@ class LedgerEntry(RevenueEntry):
 
 
 class RevenueClient(ORMBase):
-    """A client with revenue in the window — one option in the client filter.
+    """A client with activity in the window — one option in the client filter.
 
-    Carries its total and project count so the filter can show what picking it
+    Carries its totals and project count so the filter can show what picking it
     would be worth, rather than being a bare list of names.
+
+    Both measures ride along because the Overview is read through a metric
+    selector: the number beside each name is revenue, hours or a rate depending
+    on what is being looked at, and re-fetching this list on every switch would
+    make the options move under the cursor.
     """
 
     client_id: int
     client_name: str | None = None
     recognized_amount: Decimal
+    logged_hours: Decimal | None = None
     project_count: int
 
 

@@ -1,15 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, X } from 'lucide-react';
-import { money } from '../../../invoicing';
 import { num } from '../../../api';
 import type { RevenueClient } from '../../../api';
+import { METRICS } from '../metrics';
+import type { MetricKey } from '../metrics';
 
 /**
- * Multi-select over the clients with revenue in the current period.
+ * Multi-select over the clients with activity in the current period.
  *
  * The options come from `/revenue/clients` rather than from the rows already on
  * screen. A faceted filter built from its own filtered output collapses: pick
  * one client and every other option disappears, leaving no way back.
+ *
+ * The list is the same in all three metric views — revenue *or* hours puts a
+ * client in it — so switching metric changes only the figure beside each name.
+ * A client vanishing out from under a selection because the reader switched to
+ * hours would be worse than one option that reads as a dash.
  *
  * Empty selection means *all*, not *none*. It is the state the screen opens in,
  * and "no clients selected" showing an empty report would be a trap rather than
@@ -21,9 +27,11 @@ interface Props {
   /** Selected client ids. Empty means every client. */
   value: number[];
   onChange: (ids: number[]) => void;
+  /** Which measure to show beside each name — whatever is on screen. */
+  metric: MetricKey;
 }
 
-export default function ClientFilter({ clients, value, onChange }: Props) {
+export default function ClientFilter({ clients, value, onChange, metric }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -37,6 +45,14 @@ export default function ClientFilter({ clients, value, onChange }: Props) {
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
+
+  const m = METRICS[metric];
+  // Same pair, same metric function as everything else on the page, so the
+  // number here agrees with the grid rather than being a second opinion.
+  const worth = (c: RevenueClient) => {
+    const v = m.value({ rev: num(c.recognized_amount), hours: num(c.logged_hours) });
+    return v == null ? '—' : m.fmt(v);
+  };
 
   const selected = new Set(value);
   const toggle = (id: number) => {
@@ -81,7 +97,7 @@ export default function ClientFilter({ clients, value, onChange }: Props) {
         <div className="absolute z-20 mt-1 w-80 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1">
           {clients.length === 0 && (
             <p className="px-3 py-3 text-xs text-slate-500">
-              No clients recognized revenue in this period.
+              No client had any activity in this period.
             </p>
           )}
           {clients.map((c) => {
@@ -102,10 +118,10 @@ export default function ClientFilter({ clients, value, onChange }: Props) {
                 <span className="text-xs text-slate-800 flex-1 truncate">
                   {c.client_name ?? `Client ${c.client_id}`}
                 </span>
-                {/* What picking this is worth, so the list is a summary as
-                    well as a control. */}
+                {/* What picking this is worth, in whatever is being looked at,
+                    so the list is a summary as well as a control. */}
                 <span className="text-[11px] text-slate-400 tabular-nums whitespace-nowrap">
-                  {money(num(c.recognized_amount))}
+                  {worth(c)}
                 </span>
               </button>
             );

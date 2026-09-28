@@ -1029,12 +1029,17 @@ export interface LedgerEntry extends RevenueEntry {
   cumulative_recognized: string;
 }
 
-/** A client with revenue in the window — one option in the client filter.
- *  Carries its total so the list is a summary as well as a control. */
+/** A client with activity in the window — one option in the client filter.
+ *
+ *  Carries both measures so the list is a summary as well as a control, and so
+ *  the number beside each name can follow the Overview's metric selector
+ *  without the option list itself having to be re-fetched. Revenue *or* hours
+ *  qualifies, so the same names are offered in every view. */
 export interface RevenueClient {
   client_id: number;
   client_name: string | null;
   recognized_amount: string;
+  logged_hours: string | null;
   project_count: number;
 }
 
@@ -1085,10 +1090,12 @@ export function getRevenueEntries(
     harvest_project_id?: number;
     /** Restrict to these Harvest clients. Empty or omitted means all. */
     client_ids?: number[];
-    /** Drop projects that recognized nothing across the whole window. A
-     *  project-level filter: one that qualifies keeps every entry, zeros
-     *  included, so the revenue-per-hour blend is unaffected. */
-    exclude_empty_projects?: boolean;
+    /** Drop projects with nothing to show across the whole window: `revenue`
+     *  drops those that recognized nothing, `hours` those that logged nothing.
+     *  Which one is right depends on the metric being viewed. Project-level —
+     *  one that qualifies keeps every entry, zeros included, so the
+     *  revenue-per-hour blend is unaffected. Omit to keep every project. */
+    non_empty?: 'revenue' | 'hours';
   } = {},
 ): Promise<LedgerEntry[]> {
   const params = new URLSearchParams();
@@ -1098,7 +1105,7 @@ export function getRevenueEntries(
     params.set('harvest_project_id', String(opts.harvest_project_id));
   }
   for (const id of opts.client_ids ?? []) params.append('client_ids', String(id));
-  if (opts.exclude_empty_projects) params.set('exclude_empty_projects', 'true');
+  if (opts.non_empty) params.set('non_empty', opts.non_empty);
   const qs = params.toString();
   return apiFetch<LedgerEntry[]>(`/revenue/entries${qs ? `?${qs}` : ''}`);
 }
@@ -1123,11 +1130,14 @@ export function getRevenueSummary(
 }
 
 /**
- * Clients with revenue in the window — the options for the client filter.
+ * Clients with activity in the window — the options for the client filter.
  *
  * Deliberately not derived from `getRevenueEntries`: a faceted filter's
  * options must come from the unfiltered set, or each selection would remove
  * the others from the list and leave no way back.
+ *
+ * Revenue **or** hours qualifies, and both come back, so the list neither
+ * changes nor needs re-fetching when the Overview's metric does.
  */
 export function getRevenueClients(
   opts: { date_from?: string; date_to?: string } = {},

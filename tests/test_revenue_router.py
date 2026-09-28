@@ -85,8 +85,12 @@ async def test_entry_date_bounds_are_month_granular(client):
 
 async def test_entries_can_exclude_projects_with_nothing_in_the_window(client):
     """What the Overview grid asks for: its rows are its projects, so a project
-    with no revenue this period should never be sent rather than sent and
-    hidden."""
+    with nothing this period should never be sent rather than sent and hidden.
+
+    Which measure counts as "nothing" follows the metric being viewed, so a
+    project that logged hours without recognizing anything is dropped by
+    `revenue` and kept by `hours`.
+    """
     pool = await get_pool()
     async with pool.acquire() as conn:
         runs = await _seed(conn)
@@ -95,18 +99,26 @@ async def test_entries_can_exclude_projects_with_nothing_in_the_window(client):
             INSERT INTO revenue_entries (
                 revenue_run_id, period_month, harvest_project_id,
                 harvest_project_name, revenue_type, recognized_amount,
-                computed_amount
-            ) VALUES ($1, '2026-01-01', 999, 'Dormant', 'hosting', 0, 0)
+                computed_amount, logged_hours
+            ) VALUES ($1, '2026-01-01', 999, 'Unbilled', 'hosting', 0, 0, 40)
             """,
             runs[date(2026, 1, 1)],
         )
 
     assert len((await client.get("/revenue/entries")).json()) == 3
 
-    res = await client.get(
-        "/revenue/entries", params={"exclude_empty_projects": "true"}
-    )
+    res = await client.get("/revenue/entries", params={"non_empty": "revenue"})
     assert {r["harvest_project_id"] for r in res.json()} == {ACME}
+
+    res = await client.get("/revenue/entries", params={"non_empty": "hours"})
+    assert {r["harvest_project_id"] for r in res.json()} == {ACME, 999}
+
+
+async def test_an_unknown_non_empty_measure_is_rejected(client):
+    """422 rather than silently filtering nothing — a typo in the query string
+    would otherwise read as "this project genuinely has revenue"."""
+    res = await client.get("/revenue/entries", params={"non_empty": "margin"})
+    assert res.status_code == 422
 
 
 async def test_client_filter_narrows_entries_and_summary_alike(client):
@@ -155,6 +167,9 @@ async def test_client_options_endpoint(client):
         "client_id": 500,
         "client_name": "Acme",
         "recognized_amount": "1500.00",
+        # Both measures, so the filter can show whichever one the Overview is
+        # currently reporting without re-fetching its own options.
+        "logged_hours": "20.00",
         "project_count": 1,
     }]
 

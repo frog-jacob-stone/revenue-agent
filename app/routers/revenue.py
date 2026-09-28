@@ -17,6 +17,7 @@ permanently empty.
 from __future__ import annotations
 
 from datetime import date
+from typing import Literal
 from uuid import UUID
 
 import asyncpg
@@ -67,12 +68,13 @@ async def list_entries(
             "several. Omit for all."
         ),
     ),
-    exclude_empty_projects: bool = Query(
-        False,
+    non_empty: Literal["revenue", "hours"] | None = Query(
+        None,
         description=(
-            "Drop projects that recognized nothing across the whole window. "
-            "Project-level: a project that qualifies keeps every entry, zeros "
-            "included."
+            "Drop projects with nothing to show across the whole window: "
+            "'revenue' drops those that recognized nothing, 'hours' those that "
+            "logged nothing. Project-level — a project that qualifies keeps "
+            "every entry, zeros included. Omit to keep every project."
         ),
     ),
     pool: asyncpg.Pool = Depends(_db),
@@ -93,7 +95,7 @@ async def list_entries(
         date_to=_first_of_month(date_to),
         harvest_project_id=harvest_project_id,
         client_ids=client_ids,
-        exclude_empty_projects=exclude_empty_projects,
+        non_empty=non_empty,
     )
     return [LedgerEntry.model_validate(r) for r in rows]
 
@@ -104,11 +106,15 @@ async def list_clients(
     date_to: date | None = Query(None),
     pool: asyncpg.Pool = Depends(_db),
 ):
-    """Clients with revenue in the window — the options for the client filter.
+    """Clients with activity in the window — the options for the client filter.
 
     Deliberately not derived from `/revenue/entries`: a faceted filter's
     options must come from the unfiltered set, or each selection would remove
     the others from the list and leave no way back.
+
+    Revenue **or** hours qualifies, and both totals come back. The Overview
+    reads through a metric selector, and the option list must not shift when
+    the metric does.
     """
     rows = await revenue_ledger.list_clients(
         pool,
