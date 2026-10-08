@@ -145,6 +145,44 @@ files, in filename order.
 Finally, create your login user: **Authentication → Users → Add user**. The app
 has no signup flow; users are created here by hand.
 
+### 1b. Leave the Data API disabled, and silence its log spam
+
+This app never touches Supabase's Data API (PostgREST). The backend talks to
+Postgres directly over asyncpg; `supabase-js` in the UI is used only for
+`supabase.auth.*`, which is a separate service. So the Data API stays **off**
+under Project Settings → Data API — that keeps `public` off the public internet,
+where RLS would be the only thing guarding it.
+
+Disabling it has a known Supabase bug, though: PostgREST is not actually stopped,
+it is handed an empty schema list. It substitutes a placeholder name,
+`pg_pgrst_no_exposed_schemas`, fails to load a schema cache for it, and retries
+every ~32s forever — about 2,700 `3F000` errors a day in the Postgres logs. Give
+it a real but empty schema to point at instead. In the **SQL Editor**:
+
+```sql
+create schema pgrst_no_exposed_schemas;
+alter role authenticator set pgrst.db_schemas = 'pgrst_no_exposed_schemas';
+notify pgrst;
+```
+
+The name deliberately drops the `pg_` prefix — that namespace is reserved, which
+is why you cannot simply create the schema PostgREST asks for. Nothing is
+exposed: the schema is empty and neither `anon` nor `authenticated` is granted
+`USAGE` on it. If the Data API is ever re-enabled, revert this first:
+
+```sql
+alter role authenticator reset pgrst.db_schemas;
+notify pgrst;
+```
+
+> **Not a migration, on purpose.** This is remote platform configuration, not
+> schema. In `supabase/migrations/` it would re-run on every `db reset` and
+> override `supabase/config.toml`, which exposes `public` locally so the local
+> stack works normally. Run it by hand, once per project. It is the one piece of
+> production database state this repo does not carry — see
+> [supabase/supabase#40617](https://github.com/supabase/supabase/issues/40617)
+> for the upstream bug.
+
 ### 2. Get the production database connection string
 
 Click **Connect** in the dashboard's top bar — the strings are there, not on the
@@ -774,6 +812,7 @@ neither belongs in the Container App's environment.
 | `db push` errors about migration versions | A migration was added with a short prefix | All 35 use 14-digit versions. Match that format — `supabase migration new` does it automatically |
 | `Cannot find project ref. Have you run supabase link?` | Not linked | Working as intended — see [Not pushing to the wrong database](#not-pushing-to-the-wrong-database). Link, push, unlink |
 | Harvest calls 401 or rate-limit | Token expired, or two replicas | Confirm `--max-replicas 1`; the rate limiter is per-process |
+| Thousands of `schema "pg_pgrst_no_exposed_schemas" does not exist` (`3F000`) a day | Supabase bug: disabling the Data API does not stop PostgREST, it just empties its schema list | Harmless, but noisy. Point it at an empty schema — see [step 1b](#1b-leave-the-data-api-disabled-and-silence-its-log-spam) |
 | `the --mount option requires BuildKit` during `containerapp up` | A BuildKit-only instruction reached ACR Tasks, which uses the classic builder | Remove it. Test with `DOCKER_BUILDKIT=0 docker build .` — see [step 3](#3-create-and-deploy-the-api) |
 | `MissingSubscriptionRegistration` naming a namespace | Fresh subscription, provider not registered | `az provider register --namespace <name>`, wait for `Registered`, retry. See [One-time prerequisites](#one-time-prerequisites) |
 | `deploy-api.sh` fails listing missing vault secrets | The secret is absent, or you lack a data-plane role | Add it, or grant yourself `Key Vault Secrets Officer`. RBAC takes ~60s to propagate |
