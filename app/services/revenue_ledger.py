@@ -101,10 +101,26 @@ async def list_clients(
 
     Both totals come back for the same reason: the number shown beside each
     name is whichever measure is currently on screen.
+
+    An entry whose project has left the Harvest cache is dropped — see the
+    predicate below for why that is a decision rather than a side effect.
     """
     conditions = [
         recognized_only_sql(),
-        "p.harvest_id IS NOT NULL",
+        # LEFT JOIN below, like every other read in this module, so the join
+        # type is no longer what decides an orphaned entry's fate — this is.
+        #
+        # An entry whose project is no longer in the Harvest cache has no
+        # client to be filed under, and this query feeds a list of *selectable*
+        # clients: `client_ids` is a list of ints, and `p.client_id = ANY(...)`
+        # in `list_entries` and `monthly_summary` can never match NULL. A "no
+        # client" option would therefore be one the reader could tick and get
+        # an empty grid back — the trap `ClientFilter` exists to avoid.
+        #
+        # So orphans are dropped here, exactly as the client filter drops them
+        # downstream. They still appear in the grid and the trend, which read
+        # unfiltered; the asymmetry is the price of not offering a dead option.
+        "p.client_id IS NOT NULL",
         not_excluded_sql(),
         "(e.recognized_amount <> 0 OR coalesce(e.logged_hours, 0) <> 0)",
     ]
@@ -125,7 +141,7 @@ async def list_clients(
                sum(e.logged_hours)      AS logged_hours,
                count(DISTINCT e.harvest_project_id) AS project_count
         FROM revenue_entries e
-        JOIN harvest_projects p ON p.harvest_id = e.harvest_project_id
+        LEFT JOIN harvest_projects p ON p.harvest_id = e.harvest_project_id
         WHERE {" AND ".join(conditions)}
         GROUP BY p.client_id
         ORDER BY max(p.client_name)
@@ -369,14 +385,43 @@ async def get_run(
         return None
 
     entries = await pool.fetch(
-        """
+        f"""
         SELECT e.id, e.period_month, e.harvest_project_id,
                e.harvest_project_name, e.revenue_type,
                e.recognized_amount, e.computed_amount,
-               e.logged_hours, e.scheduled_hours, e.percent_complete,
+               e.logged_hours,
+               -- The denominator of `percent_complete`, rebuilt so the row can
+               -- be checked against itself. `logged_hours` is the period's own,
+               -- while percent complete is a fraction of total effort, so a
+               -- month showing 25 hours at 100% complete looks wrong until the
+               -- 1,816 hours behind it are visible.
+               --
+               -- Must stay identical to `revenue_run._cumulative_hours`, which
+               -- is what the planner actually divided by: this period's hours
+               -- plus every recognized month before it. Drafts and abandoned
+               -- runs are excluded there and here — a proposal is not history,
+               -- and counting one would make the figure shift as other months
+               -- are planned.
+               coalesce(e.logged_hours, 0) + coalesce((
+                   SELECT sum(h.logged_hours)
+                   FROM revenue_entries h
+                   WHERE h.harvest_project_id = e.harvest_project_id
+                     AND h.period_month < e.period_month
+                     AND {recognized_only_sql("h")}
+               ), 0) AS cumulative_hours,
+               e.scheduled_hours, e.percent_complete,
                e.contracted_fees, e.invoiced_to_date, e.notes,
                e.override_reason, e.overridden_by, e.overridden_at,
-               p.client_name
+               p.client_name,
+               -- Read live rather than snapshotted, and that is the point: the
+               -- reviewer is being asked whether this project is finished
+               -- *now*. An archived project only reaches a run because it still
+               -- had a balance, and recognizing the rest of a contract assumes
+               -- the work completed — which is usually true and is catastrophic
+               -- when it is not, because a cancelled project looks identical to
+               -- a finished one once its Forecast bookings end. Null when the
+               -- project has left the snapshot entirely.
+               p.is_active AS project_is_active
         FROM revenue_entries e
         LEFT JOIN harvest_projects p ON p.harvest_id = e.harvest_project_id
         WHERE e.revenue_run_id = $1

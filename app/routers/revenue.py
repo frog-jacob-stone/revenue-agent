@@ -27,6 +27,7 @@ from app.auth import AuthUser, get_current_user
 from app.config import settings
 from app.db import get_pool
 from app.models.revenue import (
+    DeletedRun,
     LedgerEntry,
     OverrideEntryRequest,
     PlanRunRequest,
@@ -328,6 +329,29 @@ async def abandon_run(
     try:
         return RevenueRunDetail.model_validate(
             await revenue_run.abandon_run(pool, run_id, actor=_actor(user))
+        )
+    except revenue_run.RevenueRunConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except revenue_run.RevenueRunError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.delete("/runs/{run_id}", response_model=DeletedRun)
+async def delete_run(
+    run_id: UUID,
+    pool: asyncpg.Pool = Depends(_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Remove an abandoned run and its entries for good.
+
+    Abandoned only — 409 for a draft (abandon it first, which is the transition
+    that frees the month) and for a finalized one (deleting the ledger is a
+    restatement). The audit row goes in before the delete and carries what the
+    run was, since its id stops resolving the moment this returns.
+    """
+    try:
+        return DeletedRun.model_validate(
+            await revenue_run.delete_run(pool, run_id, actor=_actor(user))
         )
     except revenue_run.RevenueRunConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

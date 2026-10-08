@@ -11,6 +11,8 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
+from pydantic import field_validator
+
 from app.models.common import ORMBase
 
 RevenueType = Literal[
@@ -33,6 +35,14 @@ class RevenueEntry(ORMBase):
     # project has since left the cache.
     client_id: int | None = None
     client_name: str | None = None
+    #: Whether the project is still active in Harvest, read live like
+    #: `client_name` rather than snapshotted. An archived project only earns an
+    #: entry while it has revenue left to recognize, and recognizing the
+    #: remainder of a contract assumes the work *completed* — a judgement the
+    #: system cannot make, since a cancelled project and a finished one look
+    #: identical once their Forecast bookings end. Surfaced so the review screen
+    #: can say so. Null if the project has left the snapshot.
+    project_is_active: bool | None = None
     revenue_type: RevenueType
 
     #: Revenue recognized in this period. The only stored monetary fact.
@@ -43,6 +53,17 @@ class RevenueEntry(ORMBase):
 
     # Evidence of how the number was derived, not reporting fields.
     logged_hours: Decimal | None = None
+    #: Hours from project inception through this period — `logged_hours` plus
+    #: every recognized month before it. Summed at read time, like
+    #: `LedgerEntry.cumulative_recognized`, rather than stored.
+    #:
+    #: Here because `percent_complete` is a fraction of *total* effort while
+    #: `logged_hours` is the period's own, so the two numbers on a row could not
+    #: be reconciled with each other: 25 hours against 100% complete reads as an
+    #: error until you know the project has 1,816 hours behind it. Only the run
+    #: detail populates it — the one screen where a figure is checked before it
+    #: is booked.
+    cumulative_hours: Decimal | None = None
     scheduled_hours: Decimal | None = None
     percent_complete: Decimal | None = None
     contracted_fees: Decimal | None = None
@@ -158,6 +179,60 @@ class OverrideEntryRequest(ORMBase):
 
     recognized_amount: Decimal
     override_reason: str
+
+    @field_validator("recognized_amount", mode="before")
+    @classmethod
+    def _money_as_typed(cls, value: object) -> object:
+        """Accept an amount the way a person writes one.
+
+        The field is reached by typing a figure into a box on the review screen,
+        and the natural way to write a retainer is `$12,500.00`. Bare
+        `Decimal("$12,500.00")` raises, so the first real override attempted on
+        this screen came back a 422 — for a *formatting* difference, on the one
+        entry type that cannot be computed and therefore always has to be typed.
+
+        `$`, commas and surrounding space are stripped; everything else still
+        fails, so a genuine typo is still refused rather than coerced into a
+        number nobody meant. Done here rather than in the browser so it holds
+        for every caller, and so there is one definition of what a figure may
+        look like instead of two that can drift.
+        """
+        if not isinstance(value, str):
+            return value
+        cleaned = value.strip().replace("$", "").replace(",", "").strip()
+        if not cleaned:
+            raise ValueError(
+                "Enter an amount. A retainer that earned nothing this month is "
+                "an explicit 0, which is a decision; an empty box is not."
+            )
+        return cleaned
+
+    @field_validator("override_reason")
+    @classmethod
+    def _reason_is_not_blank(cls, value: str) -> str:
+        """Checked at the boundary as well as in the service.
+
+        `revenue_run.override_entry` raises `RevenueRunError` for a blank
+        reason, which the router maps to **404** — the status for a run that
+        does not exist. Validating here returns 422 with the reason, and leaves
+        that 404 meaning only what it says.
+        """
+        if not value.strip():
+            raise ValueError(
+                "An override needs a reason — it is the only record of why "
+                "this figure is not what was computed."
+            )
+        return value.strip()
+
+
+class DeletedRun(ORMBase):
+    """What was removed. Returned instead of a bare 204 so the screen can say
+    which month and how many entries went, rather than a row disappearing with
+    no account of what was in it."""
+
+    id: UUID
+    period_month: date
+    entry_count: int
 
 
 class RevenueRunDetail(ORMBase):

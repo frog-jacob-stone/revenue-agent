@@ -133,6 +133,10 @@ async def _compute_entries(
         invoice_data = invoice_totals_map.get(int(harvest_id or 0), {})
 
         billing_type = project.get("Billing Type")
+        # Sliced, not unpacked whole: `calc_revenue` grew a fourth field
+        # (`needs_decision`) that this Airtable-era path has no use for, and
+        # this module's test patches it with a lambda returning a bare 3-tuple.
+        # Attribute access would be tidier and would break that stub for nothing.
         revenue, percent_complete, notes = calc_revenue(
             revenue_type=_REVENUE_TYPE_BY_BILLING_TYPE.get(
                 billing_type, str(billing_type)
@@ -142,7 +146,7 @@ async def _compute_entries(
             contracted_fees=project.get("Contracted Fees"),
             invoiced_to_date=invoice_data.get("total_amount", 0.0),
             billable_expenses=invoice_data.get("billable_expenses", 0.0),
-        )
+        )[:3]
         total_projected = hours_logged + forecast_hours
         blended_rate = _round2(revenue / hours_logged) if hours_logged > 0 else None
 

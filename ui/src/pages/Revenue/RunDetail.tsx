@@ -1,7 +1,7 @@
 import { Fragment, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Check, Pencil, Trash2, TriangleAlert } from 'lucide-react';
+import { Archive, ArrowLeft, Check, Pencil, Trash2, TriangleAlert } from 'lucide-react';
 import { StatTile } from '../Invoices/components/Bits';
 import { RevenueTypeChip, RunStatusChip, PercentComplete } from './components/Bits';
 import { money, dateTime } from '../../invoicing';
@@ -28,6 +28,16 @@ import { monthLabel } from './periods';
 /** Needs a human before the month can close. Mirrors the server's rule in
  *  `revenue_run.finalize_run` — duplicated deliberately so the button can be
  *  disabled with a reason rather than the click returning a 409. */
+/** Takes back revenue booked in an earlier month.
+ *
+ *  Legitimate — a period amount goes negative when a closed month is corrected,
+ *  and absorbing corrections that way is why the ledger stores period amounts
+ *  rather than cumulative ones. It is flagged rather than blocked because it is
+ *  rare and consequential, not because it is wrong. */
+function reversesRevenue(e: RevenueEntry) {
+  return num(e.recognized_amount) < 0;
+}
+
 function needsDecision(e: RevenueEntry) {
   return e.revenue_type === 'retainer' && num(e.recognized_amount) === 0 && !e.overridden_at;
 }
@@ -219,7 +229,11 @@ export default function RunDetail() {
               <th className="text-right px-4 py-3 font-medium">Recognized</th>
               <th className="text-right px-4 py-3 font-medium">Computed</th>
               <th className="text-right px-4 py-3 font-medium">% complete</th>
-              <th className="text-right px-4 py-3 font-medium">Hours</th>
+              {/* Named for the period, because it is the period's own — the
+                  percentage next to it is a fraction of the project's whole
+                  effort, and an unqualified "Hours" invited reading the two as
+                  the same quantity. */}
+              <th className="text-right px-4 py-3 font-medium">Hours this month</th>
               <th className="text-right px-4 py-3 font-medium">Invoiced to date</th>
               <th className="px-4 py-3" />
             </tr>
@@ -250,6 +264,47 @@ export default function RunDetail() {
                           Retainers are not computed — enter what was earned
                         </span>
                       )}
+                      {/* An archived project is here only because it still had
+                          a balance, and clearing that balance assumes the work
+                          finished. The system cannot tell a completed project
+                          from a cancelled one — both stop being booked in
+                          Forecast, which is what drives completion to 100% —
+                          so the assumption is stated rather than made quietly.
+                          Shown whatever the amount: a zero on an archived
+                          project is just as much a claim about it. */}
+                      {e.project_is_active === false && (
+                        <span className="flex items-start gap-1 text-[11px] text-violet-700 mt-0.5 max-w-sm">
+                          <Archive className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                          <span>
+                            Archived in Harvest — included because it still had
+                            revenue to recognize. This assumes it was completed;
+                            if it was cancelled, override with a reason.
+                          </span>
+                        </span>
+                      )}
+                      {/* A negative period amount is legitimate — it is how a
+                          correction to a closed month is absorbed, which is the
+                          reason the ledger stores period amounts rather than
+                          cumulative ones. But it always means revenue booked
+                          earlier is being taken back, and it is rare enough to
+                          be worth a second look.
+
+                          Both defects found during the first live close read as
+                          large negatives and nothing distinguished them from an
+                          ordinary figure: retainers reversing their whole
+                          history, and fixed-fee projects reversing expenses
+                          that were never classified. Derived from the amount,
+                          so there is nothing to keep in sync. */}
+                      {reversesRevenue(e) && (
+                        <span className="flex items-start gap-1 text-[11px] text-red-700 mt-0.5 max-w-sm">
+                          <TriangleAlert className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                          <span>
+                            Reverses revenue recognized in an earlier month.
+                            Expected for a correction — otherwise check the
+                            figures before finalizing.
+                          </span>
+                        </span>
+                      )}
                       {isOverridden && (
                         <span className="block text-[11px] text-cyan-700 mt-0.5 max-w-sm">
                           {e.override_reason} — {e.overridden_by}
@@ -257,7 +312,9 @@ export default function RunDetail() {
                       )}
                     </td>
                     <td className="px-4 py-2.5"><RevenueTypeChip type={e.revenue_type} /></td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-slate-900 font-medium whitespace-nowrap">
+                    <td className={`px-4 py-2.5 text-right tabular-nums font-medium whitespace-nowrap ${
+                      reversesRevenue(e) ? 'text-red-700' : 'text-slate-900'
+                    }`}>
                       {money(num(e.recognized_amount))}
                     </td>
                     {/* Always shown, never overwritten. "What did it say, what
@@ -270,6 +327,12 @@ export default function RunDetail() {
                     <td className="px-4 py-2.5 text-right whitespace-nowrap">
                       <PercentComplete
                         value={e.percent_complete == null ? null : num(e.percent_complete)}
+                        loggedToDate={
+                          e.cumulative_hours == null ? null : num(e.cumulative_hours)
+                        }
+                        scheduled={
+                          e.scheduled_hours == null ? null : num(e.scheduled_hours)
+                        }
                       />
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-slate-600 whitespace-nowrap">

@@ -151,6 +151,89 @@ async def test_a_draft_is_still_readable_through_get_run(client):
     assert run["total_recognized"] == Decimal("500.00")
 
 
+# ── hours to date — the denominator percent complete came from ─────────────
+#
+# `logged_hours` is the period's own, while `percent_complete` is a fraction of
+# the project's whole effort. The review screen shows both on one row, so the
+# second number has to be derivable or the row cannot be checked against
+# itself: 25 hours beside 100% complete reads as a bug until the hours behind
+# it are visible.
+
+
+async def test_get_run_carries_hours_to_date_not_just_the_period(client):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        for period in (date(2026, 1, 1), date(2026, 2, 1)):
+            await _entry(conn, await _run(conn, period), period, "1000.00", hours="10")
+        draft = await _run(conn, date(2026, 3, 1), status="draft")
+        await _entry(conn, draft, date(2026, 3, 1), "500.00", hours="25")
+
+    entry = (await revenue_ledger.get_run(pool, draft))["entries"][0]
+    assert entry["logged_hours"] == Decimal("25.00")
+    assert entry["cumulative_hours"] == Decimal("45.00")
+
+
+async def test_hours_to_date_ignores_a_draft_month(client):
+    """Same rule as the money. A proposal is not history, and counting one
+    would make the figure move as other months are planned."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        january = await _run(conn, date(2026, 1, 1), status="draft")
+        await _entry(conn, january, date(2026, 1, 1), "1000.00", hours="10")
+        draft = await _run(conn, date(2026, 3, 1), status="draft")
+        await _entry(conn, draft, date(2026, 3, 1), "500.00", hours="25")
+
+    entry = (await revenue_ledger.get_run(pool, draft))["entries"][0]
+    assert entry["cumulative_hours"] == Decimal("25.00")
+
+
+async def test_hours_to_date_is_per_project(client):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        january = await _run(conn, date(2026, 1, 1))
+        await _entry(conn, january, date(2026, 1, 1), "1000.00", hours="10")
+        await _entry(
+            conn, january, date(2026, 1, 1), "1000.00",
+            project_id=BETA, name="Beta Rollout", hours="400",
+        )
+        draft = await _run(conn, date(2026, 2, 1), status="draft")
+        await _entry(conn, draft, date(2026, 2, 1), "500.00", hours="25")
+
+    entry = (await revenue_ledger.get_run(pool, draft))["entries"][0]
+    assert entry["cumulative_hours"] == Decimal("35.00")
+
+
+async def test_hours_to_date_matches_what_the_planner_divided_by(client):
+    """The number shown must be the number used.
+
+    Two SQL expressions compute this — the planner's, which feeds percent
+    complete, and the reader's, which explains it. They are in different
+    modules, and a row that explained itself with a *different* total would be
+    worse than one that did not explain itself at all.
+    """
+    from app.services import revenue_run
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        for period, hours in [(date(2026, 1, 1), "10"), (date(2026, 2, 1), "7.25")]:
+            await _entry(
+                conn, await _run(conn, period), period, "1000.00", hours=hours
+            )
+        # An abandoned month in between: counted by neither.
+        abandoned = await _run(conn, date(2026, 2, 1), status="abandoned")
+        await _entry(conn, abandoned, date(2026, 2, 1), "99.00", hours="99")
+
+        draft = await _run(conn, date(2026, 3, 1), status="draft")
+        await _entry(conn, draft, date(2026, 3, 1), "500.00", hours="25")
+
+        planner = await revenue_run._cumulative_hours(
+            conn, ACME, date(2026, 3, 1), {ACME: 25.0}
+        )
+
+    entry = (await revenue_ledger.get_run(pool, draft))["entries"][0]
+    assert float(entry["cumulative_hours"]) == planner == 42.25
+
+
 async def test_get_run_totals_an_empty_run_as_a_decimal(client):
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -494,6 +577,33 @@ async def test_a_draft_does_not_put_a_client_in_the_list(client):
         await _entry(conn, draft, date(2026, 1, 1), "9999.00")
 
     assert await revenue_ledger.list_clients(pool) == []
+
+
+async def test_a_project_missing_from_the_cache_is_not_offered(client):
+    """The join is LEFT, so the orphan reaches the GROUP BY with a null client.
+    It must not become an option: `client_ids` is a list of ints and the filter
+    matches on equality, so the reader could tick it and only empty the screen.
+
+    It still shows in the grid and the trend, which read unfiltered — asserted
+    here so the asymmetry is deliberate rather than discovered."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await _two_clients(conn)
+        # Recognized, non-zero, and with no row in `harvest_projects` — there
+        # is no FK, so the ledger keeps it after the snapshot stops listing it.
+        # Rides the run `_two_clients` already made: one live run per month.
+        run = await conn.fetchval(
+            "SELECT id FROM revenue_runs WHERE period_month = $1", date(2026, 1, 1)
+        )
+        await _entry(conn, run, date(2026, 1, 1), "250.00",
+                     project_id=999999, name="Gone From Harvest", hours="3")
+
+    assert [c["client_name"] for c in await revenue_ledger.list_clients(pool)] == [
+        "Acme", "Beta",
+    ]
+
+    names = [r["harvest_project_name"] for r in await revenue_ledger.list_entries(pool)]
+    assert "Gone From Harvest" in names
 
 
 async def test_excluded_clients_are_not_offered(client):

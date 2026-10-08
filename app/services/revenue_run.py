@@ -10,22 +10,31 @@ no vendor call at the end, so no in-flight state, no unknown outcome, and
 nothing to reconcile against Harvest afterwards. A month that goes wrong is
 abandoned and planned again.
 
-    plan_run       draft + one entry per in-scope project. Reads Harvest and
-                   Forecast; writes only our own tables.
+    plan_run       refresh the Harvest snapshot, then draft one entry per
+                   in-scope project. Reads Harvest and Forecast; writes only
+                   our own tables.
     override_entry a human replaces a computed figure. Draft only.
     finalize_run   the entries become the ledger.
     abandon_run    discard, freeing the month to be planned again.
+    delete_run     remove an abandoned run for good. Abandoned only.
 
 THE SUBTRACTION
 
-Every recognition method computes a *cumulative* figure — percent complete
-against the whole contract, or Harvest's invoiced-to-date. The period amount is
-that minus everything already recognized:
+Every *computed* recognition method produces a cumulative figure — percent
+complete against the whole contract, or Harvest's invoiced-to-date. The period
+amount is that minus everything already recognized:
 
     computed_amount = cumulative_target - prior_recognized(project, month)
 
 Which is why correcting a closed month is not a restatement: the correction
 changes the prior sum, so the next open month absorbs it automatically.
+
+A retainer is not computed — `calc_revenue` says so by returning
+`needs_decision` — and the subtraction does not apply to it. Its placeholder
+zero is written through as the period amount. Differencing it instead reads
+"nothing computed" as "nothing earned to date" and books the difference as a
+clawback of the project's entire history, which is what the live September
+draft did to two retainers before this was fixed.
 """
 from __future__ import annotations
 
@@ -42,6 +51,7 @@ from app.config import Settings
 from app.integrations import forecast, harvest
 from app.orchestrator import events
 from app.services import audit, revenue_config, revenue_ledger
+from app.services.billing import harvest_snapshot
 from app.services.revenue import calc_revenue
 
 
@@ -134,21 +144,33 @@ async def _gather_harvest_and_forecast(
     return hours_by_project, {int(k): float(v) for k, v in scheduled.items()}, invoiced
 
 
-async def _in_scope_projects(conn: Any) -> list[dict[str, Any]]:
-    """Billable, active, not an excluded client's, and configured.
+async def _recognizable_projects(conn: Any) -> list[dict[str, Any]]:
+    """Billable, not an excluded client's, configured — **archived included**.
 
     Joined to config rather than checked afterwards, so the planner reads one
-    row per project with everything it needs. The gate above has already
-    guaranteed every in-scope project has a row here.
+    row per project with everything it needs.
+
+    Deliberately not `IN_SCOPE_SQL`: that carries `p.is_active`, which is read
+    now and would decide a month that has already closed. A fixed-fee project
+    reaches 100% complete exactly when its Forecast bookings end — which is the
+    same month somebody archives it — so filtering on `is_active` removed
+    projects from the run precisely when their final true-up fell due. D&A
+    SOW #7 was archived at 99.80% recognized and stranded the last $110.
+
+    Including an archived project here does not mean it gets a row. The caller
+    writes one only if the project is active, or it has something left to say —
+    see `plan_run`. `is_active` comes back so it can decide, and so the review
+    screen can mark the row.
     """
     rows = await conn.fetch(
         f"""
         SELECT p.harvest_id AS harvest_project_id,
                p.name       AS harvest_project_name,
+               p.is_active,
                c.revenue_type, c.contracted_fees
         FROM harvest_projects p
         JOIN revenue_project_config c ON c.harvest_project_id = p.harvest_id
-        WHERE {revenue_config.IN_SCOPE_SQL}
+        WHERE {revenue_config.RECOGNIZABLE_SQL}
         ORDER BY p.name
         """
     )
@@ -161,6 +183,7 @@ async def plan_run(
     *,
     period_month: date,
     actor: str = "system",
+    refresh: bool = True,
 ) -> dict[str, Any]:
     """Draft a month. Read-only against Harvest and Forecast.
 
@@ -171,8 +194,31 @@ async def plan_run(
     `RevenueRunConflict` if a live run already owns the month — the latter from
     the partial unique index rather than a read-then-write check, so two people
     planning at once cannot both succeed.
+
+    `refresh=False` plans against the snapshot as it stands. For tests, and for
+    replanning against a known cache state — not for a real month.
     """
     period_month = period_month.replace(day=1)
+
+    # The roster first, before anything is read or decided.
+    #
+    # Scope is "billable, active, not an excluded client's" — evaluated against
+    # `harvest_projects`, which is a cache that nothing but an operator pressing
+    # a button used to refresh. Plan a month against a three-week-old snapshot
+    # and every project created since is not merely unconfigured but *absent*:
+    # the config gate below cannot flag a row that does not exist, so the run
+    # comes back clean and short. That is what happened to the live September
+    # close, which silently omitted three real projects.
+    #
+    # Billing's planner has refreshed since 0024 (`billing/planner.py:443`).
+    # This one never did, and the asymmetry had no reason behind it.
+    #
+    # Failure is not caught. Nothing has been written yet, so there is no run to
+    # lose, and planning a month against a roster you *know* you failed to
+    # refresh is the bug this exists to prevent — better a visible error than a
+    # quietly incomplete month.
+    if refresh:
+        await harvest_snapshot.refresh_snapshot(pool, cfg, actor=actor)
 
     # Outside the transaction: these are slow vendor reads, and holding a
     # transaction open across them would keep a connection pinned for the
@@ -185,10 +231,10 @@ async def plan_run(
             if missing:
                 raise RevenueConfigMissing(missing)
 
-            projects = await _in_scope_projects(conn)
+            projects = await _recognizable_projects(conn)
             if not projects:
                 raise RevenueRunError(
-                    "No billable, active projects are in scope for revenue "
+                    "No billable projects are in scope for revenue "
                     "recognition. Check the Harvest snapshot is current and "
                     "that the clients you expect are not excluded."
                 )
@@ -206,6 +252,7 @@ async def plan_run(
                 ) from exc
 
             total = Decimal("0.00")
+            written = 0
             for project in projects:
                 pid = project["harvest_project_id"]
                 invoice = invoiced.get(pid, {})
@@ -225,9 +272,41 @@ async def plan_run(
                     billable_expenses=float(invoice.get("billable_expenses", 0.0) or 0),
                 )
 
-                prior = await revenue_ledger.prior_recognized(conn, pid, period_month)
-                computed = _dec(round(result.amount - prior, 2)) or Decimal("0.00")
+                # The subtraction only applies to a cumulative figure. A
+                # retainer's is a placeholder for an amount a human types, and
+                # differencing it against the ledger turns "nothing computed"
+                # into "reverse everything ever recognized" — which is exactly
+                # what the live September draft did to two retainers, at
+                # -$19,841.25 and -$84,751.25. An undecided entry is written at
+                # zero, which is also what `finalize_run` looks for.
+                if result.needs_decision:
+                    computed = Decimal("0.00")
+                else:
+                    prior = await revenue_ledger.prior_recognized(
+                        conn, pid, period_month
+                    )
+                    computed = _dec(round(result.amount - prior, 2)) or Decimal("0.00")
+
+                # An archived project earns a row only while it still has
+                # something to say. It is here at all because archiving usually
+                # means *completing*, and completion is when a fixed-fee
+                # project's last true-up falls due — but once that is
+                # recognized the delta is zero, and the project drops out again
+                # of its own accord. No flag to set and nothing to clean up:
+                # the balance going to zero is what ends it.
+                #
+                # Active projects are unconditional, as before. A zero there is
+                # a real statement — this project earned nothing this month —
+                # and the grid is read expecting a row per engagement.
+                if (
+                    not project["is_active"]
+                    and computed == 0
+                    and not hours.get(pid, 0.0)
+                ):
+                    continue
+
                 total += computed
+                written += 1
 
                 await conn.execute(
                     """
@@ -248,6 +327,19 @@ async def plan_run(
                     contracted,
                     _dec(float(invoice.get("total_amount", 0.0) or 0)),
                     result.notes or None,
+                )
+
+            # Every candidate was an archived project with nothing left to
+            # recognize. A draft with no entries would be worse than an error:
+            # it occupies the month's one live-run slot, reports a $0 total that
+            # reads as a finding rather than an absence, and can be finalized
+            # into a month that says nothing happened. Raised inside the
+            # transaction, so the run row rolls back with it.
+            if written == 0:
+                raise RevenueRunError(
+                    f"Nothing to recognize for {period_month:%B %Y}. Every "
+                    "configured project is archived in Harvest with no "
+                    "remaining balance and no hours logged in the period."
                 )
 
             await audit.write_audit_event(
@@ -493,3 +585,82 @@ async def abandon_run(
             )
 
     return await revenue_ledger.get_run(pool, run_id)
+
+
+async def delete_run(
+    pool: asyncpg.Pool, run_id: UUID, *, actor: str = "system"
+) -> dict[str, Any]:
+    """Remove an abandoned run and its entries for good.
+
+    **Abandoned only.** A draft is live — it owns its month's one run slot, and
+    deleting it instead of abandoning it would skip the state transition that
+    frees the month on the record. A recognized run is the ledger: every
+    cumulative figure in the system is a sum over its entries, so deleting one
+    silently restates history, which is the thing this subsystem exists to make
+    impossible. Both are refused rather than cascaded.
+
+    Abandoning keeps the row deliberately — what was proposed and thrown away is
+    worth being able to look at (`abandon_run`). That reasoning holds for a
+    draft somebody reconsidered; it does not hold for the runs a defect
+    produced, which accumulate as noise in the one list the operator uses to
+    find real months. Keeping them is a default, not an invariant, so this makes
+    the default overridable by a human who can see what they are removing.
+
+    Entries go with it via `revenue_entries.revenue_run_id ... on delete
+    cascade`. They are already invisible to every reader — `recognized_only_sql`
+    excludes an abandoned run — so nothing that has been reported on changes.
+
+    The audit row is written *before* the delete and carries what the run was,
+    not just its id: the id is about to stop resolving, and a line saying a
+    thing you can no longer look up was deleted is not a record of anything.
+    """
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            run = await conn.fetchrow(
+                "SELECT period_month, status, created_at, created_by "
+                "FROM revenue_runs WHERE id = $1 FOR UPDATE",
+                run_id,
+            )
+            if run is None:
+                raise RevenueRunError("Revenue run not found.")
+            if run["status"] == "recognized":
+                raise RevenueRunConflict(
+                    "A finalized month cannot be deleted. Every cumulative "
+                    "figure is a sum over its entries, so removing it would "
+                    "restate history rather than correct it."
+                )
+            if run["status"] == "draft":
+                raise RevenueRunConflict(
+                    "A draft is live and owns this month. Abandon it first, "
+                    "then delete it."
+                )
+
+            summary = await conn.fetchrow(
+                """
+                SELECT count(*)                            AS entry_count,
+                       coalesce(sum(recognized_amount), 0) AS total_recognized
+                FROM revenue_entries WHERE revenue_run_id = $1
+                """,
+                run_id,
+            )
+
+            await audit.write_audit_event(
+                conn,
+                events.REVENUE_RUN_DELETED,
+                actor=actor,
+                payload={
+                    "revenue_run_id": str(run_id),
+                    "period_month": run["period_month"].isoformat(),
+                    "planned_at": run["created_at"].isoformat(),
+                    "planned_by": run["created_by"],
+                    "entry_count": summary["entry_count"],
+                    "total_proposed": str(summary["total_recognized"]),
+                },
+            )
+            await conn.execute("DELETE FROM revenue_runs WHERE id = $1", run_id)
+
+    return {
+        "id": run_id,
+        "period_month": run["period_month"],
+        "entry_count": summary["entry_count"],
+    }

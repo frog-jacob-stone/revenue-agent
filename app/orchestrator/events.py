@@ -153,6 +153,12 @@ class AuditEvent(StrEnum):
     REVENUE_RUN_PLANNED = "revenue.run.planned"
     REVENUE_RUN_FINALIZED = "revenue.run.finalized"
     REVENUE_RUN_ABANDONED = "revenue.run.abandoned"
+    # RUN_DELETED is the only revenue event whose subject no longer exists when
+    # you read it, so its payload carries what the run *was* — period, who
+    # planned it and when, how many entries, what they proposed. Abandoned runs
+    # only; the rows are gone from `revenue_runs` and `revenue_entries` and this
+    # line is all that is left of them.
+    REVENUE_RUN_DELETED = "revenue.run.deleted"
     # The payload carries computed and booked amounts both, plus the reason.
     # Every retainer passes through here — they compute to zero by design — so
     # this is the standing answer to "who decided what we booked for this, and
@@ -233,5 +239,6 @@ REVENUE_CONFIG_REMOVED = AuditEvent.REVENUE_CONFIG_REMOVED
 REVENUE_RUN_PLANNED = AuditEvent.REVENUE_RUN_PLANNED
 REVENUE_RUN_FINALIZED = AuditEvent.REVENUE_RUN_FINALIZED
 REVENUE_RUN_ABANDONED = AuditEvent.REVENUE_RUN_ABANDONED
+REVENUE_RUN_DELETED = AuditEvent.REVENUE_RUN_DELETED
 REVENUE_ENTRY_OVERRIDDEN = AuditEvent.REVENUE_ENTRY_OVERRIDDEN
 REVENUE_BACKFILL_IMPORTED = AuditEvent.REVENUE_BACKFILL_IMPORTED

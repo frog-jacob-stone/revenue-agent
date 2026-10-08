@@ -21,11 +21,24 @@ class RevenueResult(NamedTuple):
     a period amount by subtracting what has already been recognized. Doing that
     subtraction here would mean this function needed the ledger, which is the
     one thing that keeps it a pure function.
+
+    **Except when `needs_decision` is set**, where `amount` is not a cumulative
+    figure at all and the subtraction does not apply to it. That distinction
+    used to be implicit, and it cost a month: a retainer returned a cumulative
+    0.0 meaning "nothing computed", the runner dutifully subtracted prior
+    recognition from it, and every retainer with history planned as a clawback
+    the size of everything it had ever recognized — -$19,841.25 and -$84,751.25
+    on the live September draft.
     """
 
     amount: float
     percent_complete: float | None
     notes: str
+    #: The system could not compute this; a human has to supply the amount.
+    #: `amount` is then a placeholder rather than a cumulative target, so the
+    #: caller must write it as the period figure instead of differencing it.
+    #: Defaulted, so the three computed arms construct unchanged.
+    needs_decision: bool = False
 
 
 def calc_revenue(
@@ -73,12 +86,16 @@ def calc_revenue(
             # cumulative, so it is the cumulative figure directly.
             revenue = round(invoiced_to_date, 2)
         case "retainer":
+            # Not a cumulative figure — a placeholder for one a human types.
+            # `needs_decision` below is what stops the caller differencing it.
             revenue = 0.0
             notes = RETAINER_NOTE
         case _:
             raise ValueError(f"Unexpected revenue type: {revenue_type!r}")
 
-    return RevenueResult(revenue, percent_complete, notes)
+    return RevenueResult(
+        revenue, percent_complete, notes, revenue_type == "retainer"
+    )
 
 
 #: Ledger column -> the key an LLM sees. The renames are the point, not

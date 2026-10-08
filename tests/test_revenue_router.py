@@ -359,6 +359,135 @@ async def test_finalize_and_abandon_report_a_missing_run(client):
         assert res.status_code == 404
 
 
+async def test_deleting_a_missing_run_is_a_404(client):
+    res = await client.delete(f"/revenue/runs/{_MISSING}")
+    assert res.status_code == 404
+
+
+async def test_deleting_an_abandoned_run_reports_what_went(client):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        runs = await _seed(conn)
+        run_id = runs[date(2026, 1, 1)]
+        await conn.execute(
+            "UPDATE revenue_runs SET status = 'abandoned', abandoned_at = now(), "
+            "abandoned_by = 'test' WHERE id = $1",
+            run_id,
+        )
+
+    res = await client.delete(f"/revenue/runs/{run_id}")
+    assert res.status_code == 200
+    assert res.json() == {
+        "id": str(run_id),
+        "period_month": "2026-01-01",
+        "entry_count": 1,
+    }
+    assert (await client.get(f"/revenue/runs/{run_id}")).status_code == 404
+
+
+async def test_deleting_a_finalized_run_is_a_409(client):
+    """The ledger is not deletable through the API any more than through the
+    service. Checked here too because this is the reachable surface."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        runs = await _seed(conn)
+
+    res = await client.delete(f"/revenue/runs/{runs[date(2026, 1, 1)]}")
+    assert res.status_code == 409
+    assert len((await client.get("/revenue/entries")).json()) == 2
+
+
+async def _draft_entry(conn) -> tuple[str, str]:
+    """A draft run with one retainer entry at zero — the state an override is
+    always reached from, since a retainer is the one type nobody can compute."""
+    run_id = await conn.fetchval(
+        "INSERT INTO revenue_runs (period_month, status, created_by) "
+        "VALUES ('2026-03-01', 'draft', 'test') RETURNING id"
+    )
+    entry_id = await conn.fetchval(
+        """
+        INSERT INTO revenue_entries (
+            revenue_run_id, period_month, harvest_project_id,
+            harvest_project_name, revenue_type, recognized_amount,
+            computed_amount
+        ) VALUES ($1, '2026-03-01', $2, 'Acme Retainer', 'retainer', 0, 0)
+        RETURNING id
+        """,
+        run_id, ACME,
+    )
+    return run_id, entry_id
+
+
+async def test_an_amount_is_accepted_the_way_a_person_writes_one(client):
+    """`$12,500.00` is how a retainer gets typed, and `Decimal` rejects both the
+    sign and the separator. The first override attempted on the live screen came
+    back a 422 over the formatting of a figure that was otherwise correct."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        run_id, entry_id = await _draft_entry(conn)
+
+    for typed in ["$12,500.00", "12,500", " 12500.00 ", "12500"]:
+        res = await client.patch(
+            f"/revenue/runs/{run_id}/entries/{entry_id}",
+            json={"recognized_amount": typed, "override_reason": "September fee"},
+        )
+        assert res.status_code == 200, typed
+        assert Decimal(res.json()["recognized_amount"]) == Decimal("12500.00"), typed
+
+
+async def test_a_negative_override_is_still_allowed(client):
+    """Stripping `$` and commas must not become "only positive figures". A
+    negative is how a correction to a closed month is absorbed."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        run_id, entry_id = await _draft_entry(conn)
+
+    res = await client.patch(
+        f"/revenue/runs/{run_id}/entries/{entry_id}",
+        json={"recognized_amount": "-$1,250.00", "override_reason": "reverses August"},
+    )
+    assert res.status_code == 200
+    assert Decimal(res.json()["recognized_amount"]) == Decimal("-1250.00")
+
+
+async def test_a_422_says_what_is_wrong_with_it(client):
+    """The message is the whole point. This came back as a bare 422 with the
+    reason only in the server log, which is not a place anyone reviewing a month
+    is looking."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        run_id, entry_id = await _draft_entry(conn)
+
+    for typed, expected in [
+        ("", "Enter an amount"),
+        ("   ", "Enter an amount"),
+        ("twelve thousand", "valid decimal"),
+        ("1.2.3", "valid decimal"),
+    ]:
+        res = await client.patch(
+            f"/revenue/runs/{run_id}/entries/{entry_id}",
+            json={"recognized_amount": typed, "override_reason": "September fee"},
+        )
+        assert res.status_code == 422, typed
+        assert expected in str(res.json()["detail"]), typed
+
+
+async def test_a_blank_reason_is_a_422_not_a_404(client):
+    """The service refuses a blank reason with `RevenueRunError`, which the
+    router maps to 404 — the status for a run that does not exist. Validating at
+    the boundary keeps that 404 meaning only what it says."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        run_id, entry_id = await _draft_entry(conn)
+
+    res = await client.patch(
+        f"/revenue/runs/{run_id}/entries/{entry_id}",
+        json={"recognized_amount": "1000.00", "override_reason": "   "},
+    )
+    assert res.status_code == 422
+    assert "needs a reason" in str(res.json()["detail"])
+
+
 async def test_overriding_a_finalized_run_is_a_409(client):
     pool = await get_pool()
     async with pool.acquire() as conn:

@@ -392,9 +392,24 @@ async def get_invoice_totals_by_project(
     cfg: Settings, to_date: str
 ) -> dict[int, dict[str, Any]]:
     """Return invoice totals keyed by Harvest project ID, for invoices issued on
-    or before to_date. Used by the rev rec chain to compute T&M / MSF / Hosting
-    revenue from already-invoiced amounts. Each value:
+    or before to_date. Each value:
     `{"total_amount": float, "billable_expenses": float}`.
+
+    Both figures feed revenue recognition, and they feed *different* methods:
+
+    - `total_amount` is every line item, expenses included. T&M, MSF and hosting
+      recognize it directly — they are "recognized as invoiced".
+    - `billable_expenses` is the expense subset. Fixed fee recognizes
+      `contracted_fees × percent_complete` and adds this on top, because a
+      pass-through cost is not part of the contract value and so must not be
+      scaled by completion.
+
+    Nothing double counts: the fixed-fee path never reads `total_amount`, and
+    the as-invoiced paths never read `billable_expenses`.
+
+    Cumulative from the beginning of the account, bounded only above by
+    `to_date` — which matches what the caller needs, since every recognition
+    method computes a cumulative figure and the runner differences it.
     """
     invoices = await _get_all(cfg, "/invoices", "invoices")
     totals: dict[int, dict[str, Any]] = {}
@@ -413,7 +428,20 @@ async def get_invoice_totals_by_project(
                 totals[pid] = {"total_amount": 0.0, "billable_expenses": 0.0}
             amount = float(item.get("amount") or 0)
             totals[pid]["total_amount"] = round(totals[pid]["total_amount"] + amount, 2)
-            if str(item.get("kind", "")).lower() == "expense":
+            # `kind` is the Harvest *invoice item category name*, which every
+            # account configures for itself — not a fixed vocabulary. This one
+            # calls it "Billable Expense" (the account's four categories are
+            # Advanced Deposit, Billable Expense, Discount, Service; the billing
+            # side has them cached in `harvest_invoice_item_categories` and
+            # names them at `app/models/billing.py:280`).
+            #
+            # This used to test `== "expense"`, which matches none of those, so
+            # it never fired once: every fixed-fee project silently recognized
+            # its fee and none of its expenses. Substring rather than the exact
+            # name, because "Expenses" and "Reimbursable Expense" are equally
+            # plausible labels for the same thing and all three should count —
+            # guessing one literal is what broke this.
+            if "expense" in str(item.get("kind", "")).lower():
                 totals[pid]["billable_expenses"] = round(
                     totals[pid]["billable_expenses"] + amount, 2
                 )

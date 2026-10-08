@@ -515,7 +515,7 @@ migration is `.agent/plans/28.rev-rec-to-postgres.md`, and Phase 4 (deleting the
 Airtable integration) is still open.
 
     revenue_config.py   which projects recognize, and how (the run's gate)
-    revenue_run.py      plan → override → finalize | abandon
+    revenue_run.py      plan → override → finalize | abandon → delete
     revenue_ledger.py   every read
     revenue.py          calc_revenue, a pure function, plus the agent's slim read
 
@@ -569,12 +569,20 @@ is the payload an operator reads before finalizing, and under ADR-0004 that
 reading is what makes the click an authorization.
 
 **The run is operator-initiated, and finalizing touches nothing outside
-Postgres.** `plan_run` reads Harvest and Forecast and writes a `draft` — one
-entry per in-scope project, counting toward nothing. The operator reads those
-exact entries on the run detail screen, adjusts what needs judgement, and
-finalizes. That satisfies ADR-0004 without an approval row on all three counts:
-the payload is shown before the click, nothing here is agent-reachable, and
-every transition audits.
+Postgres.** `plan_run` refreshes the Harvest snapshot, reads Harvest and
+Forecast, and writes a `draft` — one entry per in-scope project, counting toward
+nothing. The operator reads those exact entries on the run detail screen,
+adjusts what needs judgement, and finalizes. That satisfies ADR-0004 without an
+approval row on all three counts: the payload is shown before the click, nothing
+here is agent-reachable, and every transition audits.
+
+The refresh is not a convenience. Scope is evaluated against `harvest_projects`,
+a cache that nothing but an operator pressing a button used to update, so a
+month planned against a stale snapshot omits every project created since the
+last sync — and omits them *silently*, because the config gate below can only
+flag rows that exist. The September 2026 close missed three real projects that
+way. Billing's planner has refreshed since migration 0024; revenue's doing so is
+the correction of an asymmetry that had no reason behind it.
 
 It is materially safer than `draws.invoice_draw`, the billing endpoint it is
 modelled on. There is no vendor call at the end, so no in-flight state, no
@@ -587,14 +595,78 @@ amount is a judgement call — so a zero there means nobody has decided, not tha
 nothing was earned, and letting it through would under-recognize a month with
 nothing downstream to catch it.
 
-Scope — billable, active, not an excluded client's — is one SQL fragment
-(`revenue_config.IN_SCOPE_SQL`) shared by the setup screen and the runner, so
-the screen cannot report "all configured" while a run refuses to start.
+**An abandoned run can be deleted; nothing else can.** Abandoning keeps the row
+on purpose — what was proposed and thrown away is worth being able to look at —
+but that is a default, not an invariant, and the runs a defect produced
+accumulate as noise in the one list used to find real months. `delete_run`
+(`DELETE /revenue/runs/{id}`) removes an abandoned run and cascades its entries,
+which were already invisible to every reader. A draft is refused because it is
+live and owns its month's one run slot, and abandoning is the transition that
+frees it; a finalized run is refused because every cumulative figure is a sum
+over its entries, so removing one restates history rather than correcting it.
+The audit row is written before the delete and carries the run itself — period,
+who planned it, entry count, proposed total — because its id stops resolving the
+moment the row goes, and a line saying something you can no longer look up was
+deleted records nothing.
+
+Scope is two fragments, split on the one condition that depends on *when* you
+ask. `revenue_config.RECOGNIZABLE_SQL` is billable and not an excluded client's;
+`IN_SCOPE_SQL` adds `p.is_active`.
+
+The setup screen and the config gate use `IN_SCOPE_SQL`, because "what needs
+configuring" is a question about today. The **runner uses `RECOGNIZABLE_SQL`**,
+because a run settles a month that has already closed, and `is_active` read now
+would let an archive performed in October change what September was allowed to
+recognize. That is not hypothetical: a fixed-fee project reaches 100% complete
+exactly when its Forecast bookings end — the same month somebody archives it on
+completion — so filtering the run on `is_active` dropped projects precisely when
+their final true-up fell due. D&A SOW #7 was archived at 99.80% recognized and
+stranded the last $110 of a $55,000 contract.
+
+An archived project is a *candidate*, not automatically a row: `plan_run` writes
+one only if the project is active, the period amount is non-zero, or hours were
+logged. So a finished engagement returns once, recognizes its remainder, and
+drops out again when the balance reaches zero — self-limiting, with no completion
+flag to set and nothing to clean up. If that filter leaves nothing at all, the
+run raises rather than creating an empty draft that would occupy the month's one
+live-run slot.
+
+What the two fragments still share is the invariant that matters: the gate
+demands configuration for active projects and so does the screen, so the screen
+cannot report "all configured" while a run refuses to start.
+
+Recognizing the remainder of a contract assumes the work *completed*, and the
+system cannot know that — a cancelled project and a finished one both stop being
+booked in Forecast. So `get_run` joins `harvest_projects.is_active` live and the
+review screen marks archived entries, stating the assumption rather than making
+it quietly.
 
 `calc_revenue` stays a pure function and returns a **cumulative** figure; the
 subtraction against `prior_recognized` happens in the runner. Doing it inside
 would mean the function needed the ledger, which is the one thing keeping it
 trivially testable.
+
+Fixed fee is the one method with two inputs rather than one: it earns
+`contracted_fees × percent_complete`, and adds **billable expenses in full** on
+top. Expenses are passed through at cost and are not part of the contract value,
+so scaling them by completion would be wrong. They come from
+`harvest.get_invoice_totals_by_project`, which classifies a line item by its
+Harvest *invoice item category name* — an account-configurable string, "Billable
+Expense" here — not by a fixed vocabulary. It matched a hardcoded `"expense"`
+for the subsystem's whole life, which matched nothing, so expenses were never
+recognized on any fixed-fee project until 2026-10-02. The same function's
+`total_amount` includes those expense lines, which is what T&M, MSF and hosting
+recognize; nothing double counts, because the fixed-fee branch never reads it.
+
+The exception is a retainer, which returns `needs_decision` and a placeholder
+zero that is **not** a cumulative figure — the runner writes it through as the
+period amount rather than differencing it. That distinction used to be implicit,
+and it cost a month: the runner subtracted prior recognition from the
+placeholder, so every retainer with history planned as a clawback the size of
+everything it had ever recognized (−$19,841.25 and −$84,751.25 on the September
+draft). Because neither figure was *equal* to zero, both then slipped past the
+finalize gate, which keys on exactly that. The zero a retainer now writes is
+what makes the gate work.
 
 ## Projects & Forecast snapshot
 

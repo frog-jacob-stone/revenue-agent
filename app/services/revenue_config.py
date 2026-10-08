@@ -35,13 +35,32 @@ REVENUE_TYPES = (
     "retainer",
 )
 
-#: Billable, active, and not an excluded client's. The same three conditions
-#: the runner applies, as one fragment so they cannot drift apart.
+#: Billable and not an excluded client's — the half of scope that does not
+#: depend on *when* you ask.
 #:
 #: `is_billable` alone is not enough: our own company is a Harvest client and
 #: some of its internal work is flagged billable, which is exactly why
 #: `excluded_harvest_clients` exists.
-IN_SCOPE_SQL = f"p.is_billable AND p.is_active AND {not_excluded_sql()}"
+RECOGNIZABLE_SQL = f"p.is_billable AND {not_excluded_sql()}"
+
+#: The above, plus active. What is in scope *today* — which is the right
+#: question for the setup screen ("what needs configuring") and the wrong one
+#: for a run.
+#:
+#: `is_active` is read at the moment you ask, but a run settles a month that has
+#: already closed. Archiving a project in October therefore changed what
+#: September was allowed to recognize: D&A SOW #7 was archived on completion at
+#: 99.80% recognized, dropped out of scope, and left its last $110 stranded. And
+#: that is the normal workflow, not an accident — percent complete reaches 100%
+#: precisely when the Forecast bookings end, so the final true-up falls due in
+#: the same month somebody archives the project.
+#:
+#: So the runner uses `RECOGNIZABLE_SQL` and decides inclusion per period (see
+#: `revenue_run._recognizable_projects`); only the forward-looking screens use
+#: this. The invariant the two still share is the one that matters: the gate
+#: demands configuration for active projects, and so does the screen, so the
+#: screen cannot report "all configured" while a run refuses to start.
+IN_SCOPE_SQL = f"{RECOGNIZABLE_SQL} AND p.is_active"
 
 
 class RevenueConfigError(Exception):

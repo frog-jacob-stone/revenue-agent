@@ -56,21 +56,62 @@ export function RunStatusChip({ status }: { status: RevenueRunStatus }) {
   );
 }
 
+const hrs = (n: number) =>
+  n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+
 /** Percent complete only means something for fixed fee — everything else has no
- *  fixed denominator to be a percentage of. */
-export function PercentComplete({ value }: { value: number | null }) {
+ *  fixed denominator to be a percentage of.
+ *
+ *  Pass `loggedToDate` and `scheduled` to show the fraction the percentage came
+ *  from. Worth the second line: the Hours column is the *month's* hours, while
+ *  this is a fraction of the project's whole effort, so the two numbers on a row
+ *  cannot be reconciled with each other — 25 hours beside 100% complete reads as
+ *  a bug until the 1,816 hours behind it are visible. Shown rather than hidden
+ *  behind a hover, because the point of the run detail is checking figures and a
+ *  figure you have to go looking for does not get checked.
+ */
+export function PercentComplete({
+  value,
+  loggedToDate = null,
+  scheduled = null,
+}: {
+  value: number | null;
+  /** Hours from inception through this period. */
+  loggedToDate?: number | null;
+  /** Still booked in Forecast — the rest of the denominator. */
+  scheduled?: number | null;
+}) {
   if (value === null) return <span className="text-slate-300">—</span>;
+  const remaining = scheduled ?? 0;
+  const projected = loggedToDate === null ? null : loggedToDate + remaining;
   return (
-    <span className="inline-flex items-center gap-2 justify-end">
-      <span className="w-14 h-1.5 rounded-full bg-slate-200 overflow-hidden">
+    <span className="inline-flex flex-col items-end gap-0.5">
+      <span className="inline-flex items-center gap-2">
+        <span className="w-14 h-1.5 rounded-full bg-slate-200 overflow-hidden">
+          <span
+            className="block h-full bg-cyan-500"
+            style={{ width: `${Math.round(value * 100)}%` }}
+          />
+        </span>
+        <span className="tabular-nums text-slate-700 w-9 text-right">
+          {Math.round(value * 100)}%
+        </span>
+      </span>
+      {projected !== null && loggedToDate !== null && (
         <span
-          className="block h-full bg-cyan-500"
-          style={{ width: `${Math.round(value * 100)}%` }}
-        />
-      </span>
-      <span className="tabular-nums text-slate-700 w-9 text-right">
-        {Math.round(value * 100)}%
-      </span>
+          className="text-[11px] text-slate-400 tabular-nums"
+          title={
+            `${hrs(loggedToDate)} hours logged since the project started` +
+            (remaining
+              ? `, ${hrs(remaining)} still scheduled in Forecast`
+              : ', none still scheduled in Forecast') +
+            ` — ${hrs(projected)} projected in total. Percent complete is the ` +
+            'first over the last, and the Hours column is this month alone.'
+          }
+        >
+          {hrs(loggedToDate)} of {hrs(projected)} hrs
+        </span>
+      )}
     </span>
   );
 }

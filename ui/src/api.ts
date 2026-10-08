@@ -68,6 +68,19 @@ export class ApiError extends Error {
 
   private static messageFrom(status: number, detail: unknown): string {
     if (typeof detail === 'string' && detail) return detail;
+    // FastAPI's 422: `detail` is a list of {loc, msg, type}, one per field that
+    // failed. Unhandled, every validation error on every form in this app read
+    // as "HTTP 422" — which is how a rejected override amount ended up being
+    // diagnosed from the server log instead of the screen. The first message is
+    // enough: these forms are small, and the first failure is the one to fix.
+    if (Array.isArray(detail)) {
+      const first = detail.find(
+        (d) => typeof (d as { msg?: unknown })?.msg === 'string',
+      ) as { msg: string } | undefined;
+      // Pydantic prefixes a custom validator's message with "Value error, ".
+      // Ours are written to be read by a person, so the prefix is noise.
+      if (first) return first.msg.replace(/^Value error,\s*/, '');
+    }
     if (detail && typeof detail === 'object') {
       const msg = (detail as { message?: unknown }).message;
       if (typeof msg === 'string' && msg) return msg;
@@ -1008,11 +1021,22 @@ export interface RevenueEntry {
   /** Joined live from the Harvest cache; both null if the project has left it. */
   client_id: number | null;
   client_name: string | null;
+  /** Still active in Harvest? Also read live, and deliberately so. An archived
+   *  project appears in a run only while it still has revenue to recognize, and
+   *  clearing that balance assumes the work completed — which the system cannot
+   *  know, since a cancelled project and a finished one both stop being booked
+   *  in Forecast. Null if the project has left the snapshot. */
+  project_is_active: boolean | null;
   revenue_type: RevenueType;
   recognized_amount: string;
   /** What the system computed before any override. */
   computed_amount: string;
   logged_hours: string | null;
+  /** Hours from inception through this period — this month's plus every
+   *  recognized month before it. The denominator of `percent_complete` is this
+   *  plus `scheduled_hours`, so the row can be checked against itself. Summed
+   *  at read time and only by the run detail endpoint; null elsewhere. */
+  cumulative_hours: string | null;
   scheduled_hours: string | null;
   /** 0–1, fixed fee only. */
   percent_complete: string | null;
@@ -1245,4 +1269,21 @@ export function finalizeRevenueRun(runId: string): Promise<RevenueRunDetail> {
 /** Discard a draft, freeing its month to be planned again. */
 export function abandonRevenueRun(runId: string): Promise<RevenueRunDetail> {
   return apiFetch<RevenueRunDetail>(`/revenue/runs/${runId}/abandon`, { method: 'POST' });
+}
+
+/** What a delete removed. Returned rather than a bare 204, so the screen can
+ *  say which month and how many entries went. */
+export interface DeletedRun {
+  id: string;
+  period_month: string;
+  entry_count: number;
+}
+
+/** Remove an abandoned run and its entries for good.
+ *
+ *  Abandoned only — the server returns 409 for a draft (abandon it first) and
+ *  for a finalized one (deleting the ledger would restate history). The audit
+ *  row carries what the run was, since its id stops resolving afterwards. */
+export function deleteRevenueRun(runId: string): Promise<DeletedRun> {
+  return apiFetch<DeletedRun>(`/revenue/runs/${runId}`, { method: 'DELETE' });
 }
