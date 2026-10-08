@@ -481,9 +481,20 @@ async def test_plan_snapshot_is_frozen_at_plan_time(fake):
 
 async def test_run_level_unmapped_flag_is_recorded(fake):
     """A billable project in no group is the failure mode that loses revenue,
-    so it must appear on the run itself, not just in config health."""
+    so it must appear on the run itself, not just in config health.
+
+    The time is dated relative to **today**, not to `AUGUST` like every other
+    test here. `reconcile.reconcile_config` defaults `as_of` to today and looks
+    back `UNMAPPED_LOOKBACK_DAYS`, deliberately — "is a billable project
+    accruing time with nowhere to bill it" is a question about now, not about
+    the month being planned. With the fixed 2026-07-06 the other tests use, this
+    one passed until 2026-10-04 and then started reporting
+    `UNMAPPED_PROJECT_NO_TIME` instead, having silently stopped testing what it
+    says it tests some days before anyone looked.
+    """
     pool = await get_pool()
-    fake.add_time(NW_DATA, spent_date="2026-07-06", hours=62.5, rate=185)
+    recent = (date.today() - timedelta(days=7)).isoformat()
+    fake.add_time(NW_DATA, spent_date=recent, hours=62.5, rate=185)
 
     run = await planner.get_run(
         pool, await planner.plan_run(pool, settings, run_month=AUGUST)
